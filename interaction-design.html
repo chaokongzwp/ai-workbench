@@ -1360,6 +1360,387 @@
           border-radius: 0;
         }
       }
+      /* iOS/iPadOS visual language override */
+      :root {
+        --line: rgba(60, 60, 67, 0.16);
+        --line-strong: rgba(60, 60, 67, 0.28);
+        --surface: #ffffff;
+        --surface-soft: #f2f2f7;
+        --text: #1c1c1e;
+        --muted: rgba(60, 60, 67, 0.68);
+        --faint: rgba(60, 60, 67, 0.42);
+        --blue: #007aff;
+        --blue-dark: #006ee6;
+        --blue-soft: rgba(0, 122, 255, 0.1);
+        --green: #34c759;
+        --green-soft: rgba(52, 199, 89, 0.12);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue",
+          Arial, sans-serif;
+      }
+
+      .prototype-shell {
+        background: #e5e5ea;
+      }
+
+      .prototype-toolbar {
+        border-bottom: 0.5px solid var(--line);
+        background: rgba(248, 248, 248, 0.86);
+        backdrop-filter: saturate(180%) blur(24px);
+      }
+
+      .segmented {
+        border: 0;
+        border-radius: 10px;
+        background: rgba(118, 118, 128, 0.12);
+      }
+
+      .segmented button.active {
+        color: #1c1c1e;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+      }
+
+      .device-frame {
+        background: #111114;
+      }
+
+      .app-surface {
+        --app-nav-height: 52px;
+        color: var(--text);
+        background: #f2f2f7;
+      }
+
+      .app-topbar {
+        align-items: end;
+        border-bottom: 0.5px solid var(--line);
+        background: rgba(248, 248, 248, 0.82);
+        backdrop-filter: saturate(180%) blur(24px);
+      }
+
+      .menu-button,
+      .icon-button {
+        border: 0;
+        border-radius: 999px;
+        color: var(--blue);
+        background: transparent;
+        font-size: 22px;
+      }
+
+      .mark {
+        border: 0;
+        border-radius: 9px;
+        background: #1c1c1e;
+        box-shadow: none;
+      }
+
+      .brand-copy strong {
+        font-size: 17px;
+        font-weight: 720;
+      }
+
+      .brand-copy span {
+        color: var(--muted);
+      }
+
+      .connection-pill,
+      .agent-select,
+      .raw-toggle {
+        border: 0;
+        border-radius: 999px;
+        background: rgba(118, 118, 128, 0.12);
+      }
+
+      .ghost-button,
+      .text-button {
+        border: 0;
+        color: var(--blue);
+        background: transparent;
+      }
+
+      .ghost-button {
+        background: rgba(118, 118, 128, 0.1);
+      }
+
+      .primary-button {
+        border: 0;
+        border-radius: 999px;
+        background: var(--blue);
+        box-shadow: none;
+      }
+
+      .ghost-button:active,
+      .primary-button:active,
+      .agent-row:active,
+      .rail-card:active,
+      .machine-card:active,
+      .settings-actions button:active {
+        transform: scale(0.98);
+      }
+
+      .tablet .app-body {
+        grid-template-columns: 286px minmax(0, 1fr);
+      }
+
+      .side-rail,
+      .drawer-panel {
+        border-right: 0.5px solid var(--line);
+        background: #f2f2f7;
+      }
+
+      .rail-title {
+        margin: 18px 14px 7px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .rail-card,
+      .agent-row {
+        border: 0;
+        border-bottom: 0.5px solid var(--line);
+        border-radius: 0;
+        background: #ffffff;
+      }
+
+      .rail-section {
+        gap: 0;
+        overflow: visible;
+        border-radius: 0;
+        background: transparent;
+      }
+
+      .rail-section .rail-title {
+        grid-column: 1 / -1;
+        margin: 18px 12px 7px;
+        padding-left: 0;
+        background: transparent;
+      }
+
+      .rail-section .rail-title + .rail-card {
+        border-radius: 14px;
+        border-bottom: 0;
+      }
+
+      .rail-section .rail-title + .agent-row {
+        border-top-left-radius: 14px;
+        border-top-right-radius: 14px;
+      }
+
+      .rail-section > :last-child {
+        border-bottom: 0;
+        border-bottom-right-radius: 14px;
+        border-bottom-left-radius: 14px;
+      }
+
+      .conversation-scroll {
+        padding: 14px 10px;
+      }
+
+      .tablet .conversation-scroll {
+        padding: 22px 28px;
+      }
+
+      .machine-hero,
+      .machine-card,
+      .status-panel {
+        border: 0;
+        border-radius: 18px;
+        background: #ffffff;
+        box-shadow: none;
+      }
+
+      .machine-hero {
+        padding: 18px;
+        background: #ffffff;
+      }
+
+      .eyebrow {
+        display: none;
+      }
+
+      .machine-hero h1,
+      .status-copy h1 {
+        font-size: 25px;
+        font-weight: 760;
+      }
+
+      .machine-hero p,
+      .status-copy p {
+        color: var(--muted);
+      }
+
+      .machine-card header {
+        min-height: 44px;
+      }
+
+      .status-badge {
+        color: #248a3d;
+        background: var(--green-soft);
+      }
+
+      #messages {
+        gap: 10px;
+      }
+
+      .chat-bubble {
+        max-width: min(84%, 560px);
+        padding: 10px 44px 24px 13px;
+        border-radius: 20px;
+      }
+
+      .chat-bubble.user {
+        background: var(--blue);
+        border-bottom-right-radius: 5px;
+      }
+
+      .chat-bubble.assistant {
+        border: 0;
+        background: #ffffff;
+        border-bottom-left-radius: 5px;
+      }
+
+      .copy-button {
+        top: auto;
+        right: 9px;
+        bottom: 5px;
+        border-radius: 999px;
+        font-weight: 650;
+      }
+
+      .chat-bubble.assistant .copy-button {
+        background: rgba(118, 118, 128, 0.12);
+      }
+
+      .composer {
+        border-top: 0.5px solid var(--line);
+        background: rgba(248, 248, 248, 0.86);
+        backdrop-filter: saturate(180%) blur(24px);
+      }
+
+      .tablet .composer {
+        border: 0.5px solid var(--line);
+        border-radius: 24px;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
+      }
+
+      .input-row textarea {
+        min-height: 44px;
+        border: 0;
+        border-radius: 20px;
+        background: rgba(118, 118, 128, 0.12);
+      }
+
+      .input-row textarea:focus,
+      .settings-field input:focus {
+        border-color: transparent;
+        box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.24);
+      }
+
+      .send-row .primary-button {
+        height: 44px;
+      }
+
+      .raw-panel {
+        border-top: 0;
+        background: #1c1c1e;
+      }
+
+      .settings-backdrop,
+      .drawer-backdrop {
+        background: rgba(0, 0, 0, 0.28);
+        backdrop-filter: blur(2px);
+      }
+
+      .settings-panel {
+        border: 0;
+        border-radius: 26px;
+        background: #f2f2f7;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+      }
+
+      .tablet .settings-panel {
+        width: 540px;
+        border-radius: 24px;
+      }
+
+      .settings-panel header {
+        border-bottom: 0;
+        background: rgba(242, 242, 247, 0.86);
+      }
+
+      .settings-title strong {
+        font-size: 22px;
+        font-weight: 760;
+      }
+
+      .settings-note {
+        border: 0;
+        border-radius: 14px;
+        color: #1d4f91;
+        background: rgba(0, 122, 255, 0.1);
+      }
+
+      .settings-grid {
+        gap: 0;
+        overflow: hidden;
+        margin: 14px;
+        padding: 0;
+        border-radius: 14px;
+        background: #ffffff;
+      }
+
+      .settings-field {
+        grid-template-columns: 104px minmax(0, 1fr);
+        align-items: center;
+        min-height: 48px;
+        gap: 12px;
+        padding: 0 12px;
+        border-bottom: 0.5px solid var(--line);
+      }
+
+      .settings-field:last-child {
+        border-bottom: 0;
+      }
+
+      .settings-field span {
+        color: #1c1c1e;
+        font-weight: 500;
+      }
+
+      .settings-field input {
+        height: 42px;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        text-align: right;
+        background: transparent;
+      }
+
+      .settings-field:has(.path-list) {
+        display: grid;
+        grid-template-columns: 1fr;
+        align-items: stretch;
+        padding: 12px;
+      }
+
+      .path-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .path-row input {
+        text-align: left;
+      }
+
+      .path-add {
+        margin-top: 8px;
+        justify-self: stretch;
+      }
+
+      .settings-actions {
+        border-top: 0;
+        background: rgba(242, 242, 247, 0.86);
+      }
     </style>
   </head>
   <body>
@@ -1367,7 +1748,7 @@
       <header class="prototype-toolbar">
         <div class="prototype-title">
           <strong>AI Workbench 交互设计稿</strong>
-          <span>模拟交互，不连接真实 ECS。用于先看信息架构和手感。</span>
+          <span>iPhone/iPad 原生感交互稿，可连接本地测试服务。</span>
         </div>
         <div class="segmented" aria-label="设备尺寸">
           <button class="active" type="button" data-device="phone">iPhone</button>
@@ -1384,7 +1765,7 @@
         <section class="device-frame phone" id="deviceFrame">
           <div class="app-surface" id="appSurface">
             <header class="app-topbar">
-              <button class="menu-button" type="button" data-action="open-drawer" aria-label="打开菜单">☰</button>
+              <button class="menu-button" type="button" data-action="open-drawer" aria-label="打开菜单">≡</button>
               <div class="brand">
                 <span class="mark">&gt;</span>
                 <div class="brand-copy">
@@ -1412,7 +1793,7 @@
                   </button>
                 </div>
                 <div class="rail-section">
-                  <p class="rail-title">AI</p>
+                  <p class="rail-title">模型</p>
                   <button class="agent-row" type="button" data-agent="codex">
                     <span class="mark">&gt;</span>
                     <span><strong>Codex</strong><small>写代码</small></span>
@@ -1527,7 +1908,7 @@
                   </button>
                 </div>
                 <div class="rail-section">
-                  <p class="rail-title">AI</p>
+                  <p class="rail-title">模型</p>
                   <button class="agent-row" type="button" data-agent="codex">
                     <span class="mark">&gt;</span>
                     <span><strong>Codex</strong><small>写代码</small></span>
@@ -1589,6 +1970,14 @@
         drawerOpen: false,
         settingsOpen: false,
       };
+
+      const initialParams = new URLSearchParams(location.search);
+      if (["phone", "tablet"].includes(initialParams.get("device"))) {
+        state.device = initialParams.get("device");
+      }
+      if (["machines", "connected", "output"].includes(initialParams.get("flow"))) {
+        state.flow = initialParams.get("flow");
+      }
 
       const flowCopy = {
         machines: {

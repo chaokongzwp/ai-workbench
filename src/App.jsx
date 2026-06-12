@@ -229,7 +229,7 @@ export function App() {
   const [connection, setConnection] = useState({
     state: "idle",
     label: "待配置",
-    detail: "填写 SSH 密码后即可连接",
+    detail: "添加服务器后即可开始",
   });
   const [diagnostics, setDiagnostics] = useState({});
   const [rawOutput, setRawOutput] = useState("原始输出会在测试连接或发送任务后显示。");
@@ -648,13 +648,13 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
   return (
     <header className="topbar">
       <button className="nav-trigger" type="button" aria-label="打开菜单" onClick={onOpenNav}>
-        <span>☰</span>
+        <span>≡</span>
       </button>
       <div className="brand">
         <ShellIcon label=">" />
         <div>
           <strong>AI Workbench</strong>
-          <span>{ready ? platformLabel : "需要 SSH 配置"}</span>
+          <span>{ready ? platformLabel : "添加服务器后开始"}</span>
         </div>
       </div>
       <div className={`connection-pill ${connection.state}`}>
@@ -667,7 +667,7 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
           测试
         </button>
         <button type="button" className="ghost-button" onClick={onOpenSettings}>
-          设置
+          服务器
         </button>
       </div>
     </header>
@@ -689,16 +689,14 @@ function NavigationPanel({
 
   return (
     <>
-      <SectionHeader title="远程主机" />
+      <SectionHeader title="服务器" />
       <button className="nav-card active" type="button" onClick={onOpenSettings}>
         <span className="nav-title">
           <StatusDot status={connected ? "connected" : "idle"} />
-          <strong>ECS</strong>
+          <strong>默认服务器</strong>
         </span>
-        <span className="nav-subtitle">
-          {profile.username}@{profile.host}:{profile.port}
-        </span>
-        <span className="ssh-badge">SSH</span>
+        <span className="nav-subtitle">{profile.host || "未添加"}</span>
+        <span className="ssh-badge">{connected ? "在线" : "待连接"}</span>
       </button>
 
       <SectionHeader title="会话" />
@@ -712,14 +710,14 @@ function NavigationPanel({
           >
             <span>
               <StatusDot status={activeAgentId === agent.id ? "connected" : "idle"} />
-              {sessionName(profile, agent.id)}
+              {agent.shortName} 会话
             </span>
-            <span>tmux</span>
+            <span>›</span>
           </button>
         ))}
       </div>
 
-      <SectionHeader title="智能体" />
+      <SectionHeader title="模型" />
       <div className="stack">
         {agents.map((agent) => (
           <button
@@ -730,23 +728,23 @@ function NavigationPanel({
           >
             <ShellIcon label={agent.id === "claude" ? "AI" : ">"} />
             <span>
-              <strong>{agent.name}</strong>
-              <small>{agentCommand(profile, agent)}</small>
+              <strong>{agent.shortName}</strong>
+              <small>{agent.id === "codex" ? "适合写代码和改工程" : "适合阅读和解释代码"}</small>
             </span>
           </button>
         ))}
       </div>
 
-      <SectionHeader title="诊断" />
+      <SectionHeader title="状态" />
       <div className="diagnostic-list">
-        <DiagnosticRow label="tmux" value={diagnostics.tmux_version || diagnostics.tmux || "未测试"} />
+        <DiagnosticRow label="环境" value={diagnostics.tmux_version || diagnostics.tmux || "未测试"} />
         <DiagnosticRow label="Codex" value={diagnostics.codex_version || diagnostics.codex || "未测试"} />
         <DiagnosticRow label="Claude" value={diagnostics.claude_version || diagnostics.claude || "未测试"} />
       </div>
 
       <div className="sidebar-footer">
         <button className="row-button" type="button" onClick={onRefreshOutput} disabled={busy}>
-          <span>刷新输出</span>
+          <span>刷新状态</span>
           <span>↻</span>
         </button>
         <label className="toggle-row">
@@ -758,7 +756,7 @@ function NavigationPanel({
           />
         </label>
         <button className="row-button" type="button" onClick={onOpenSettings}>
-          <span>连接配置</span>
+          <span>服务器设置</span>
           <span>›</span>
         </button>
       </div>
@@ -767,10 +765,10 @@ function NavigationPanel({
 }
 
 function ConnectionSummary({ profile, connection, diagnostics, profileReady: ready, busy, onOpenSettings, onTestConnection }) {
-  const title = ready ? "工作台就绪" : "先完成 SSH 配置";
+  const title = ready ? "工作台就绪" : "先添加服务器";
   const body = ready
-    ? "选择智能体，输入任务，App 会把内容发送到 ECS 上对应的 tmux 会话。"
-    : "当前缺少必要连接信息，填写 SSH 密码并测试通过后才能发送任务。";
+    ? "选择模型，输入任务，AI 会在你的云端工程里继续工作。"
+    : "第一次使用只需要填写服务器和登录密码，之后会直接进入对话。";
 
   return (
     <section className={`summary-strip ${ready ? "" : "setup-required"}`}>
@@ -780,17 +778,17 @@ function ConnectionSummary({ profile, connection, diagnostics, profileReady: rea
         <p>{body}</p>
         <div className="summary-actions">
           <button type="button" className="send-button" onClick={ready ? onTestConnection : onOpenSettings} disabled={busy}>
-            {ready ? "测试连接" : "填写 SSH 密码"}
+            {ready ? "检查服务器" : "添加服务器"}
           </button>
           <button type="button" className="ghost-button" onClick={onOpenSettings}>
-            连接设置
+            设置
           </button>
         </div>
       </div>
       <div className="summary-metrics">
-        <SummaryMetric label="目标" value={`${profile.username}@${profile.host}`} />
+        <SummaryMetric label="服务器" value={profile.host} />
         <SummaryMetric label="状态" value={connection.detail} />
-        <SummaryMetric label="目录" value={diagnostics.pwd || profile.workdir} mono />
+        <SummaryMetric label="路径" value={diagnostics.pwd || profile.workdir} mono />
       </div>
     </section>
   );
@@ -806,11 +804,20 @@ function SummaryMetric({ label, value, mono = false }) {
 }
 
 function MessageBubble({ message, activeAgent }) {
+  const copyText = message.output || message.body || "";
+
+  function copyMessage() {
+    if (!copyText || !navigator.clipboard) return;
+    navigator.clipboard.writeText(copyText);
+  }
+
   if (message.role === "user") {
     return (
       <article className="user-prompt">
         <p>{message.body}</p>
-        <time>{message.createdAt}</time>
+        <button type="button" className="copy-message" onClick={copyMessage}>
+          复制
+        </button>
       </article>
     );
   }
@@ -824,14 +831,17 @@ function MessageBubble({ message, activeAgent }) {
         <strong>{message.title || agent.name}</strong>
         <time>{message.createdAt}</time>
         <span className={`streaming ${message.status}`}>{statusLabel(message.status)}</span>
+        <button type="button" className="copy-message" onClick={copyMessage}>
+          复制
+        </button>
       </header>
       {message.body ? <p className="assistant-copy">{message.body}</p> : null}
       {message.output ? (
         <section className="preview-block emphasis">
           <header>
             <div>
-              <strong>远端输出</strong>
-              <span>stdout / stderr</span>
+              <strong>结果</strong>
+              <span>详情输出</span>
             </div>
           </header>
           <pre>{message.output}</pre>
@@ -878,9 +888,9 @@ function Composer({
             ))}
           </select>
         </label>
-        <span className="path-chip">{sessionName(profile, activeAgent.id)}</span>
+        <span className="path-chip">{profile.workdir}</span>
         <button type="button" className={`raw-chip ${rawOpen ? "active" : ""}`} onClick={() => setRawOpen(!rawOpen)}>
-          原始输出
+          详情
         </button>
         <span className="history-note">{historyEnabled ? "本地记录开启" : "不保存历史"}</span>
       </div>
@@ -892,17 +902,17 @@ function Composer({
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") onSend();
           }}
-          placeholder={ready ? `发送任务到 ${activeAgent.shortName}` : "先填写 SSH 密码后再发送任务"}
+          placeholder={ready ? `告诉 ${activeAgent.shortName} 你想做什么` : "先添加服务器后再发送任务"}
           rows={2}
         />
         <div className="input-actions">
           {ready ? (
             <button type="button" className="send-button" onClick={onSend} disabled={disabled || !composer.trim()}>
-              {busy ? "执行中" : "发送"}
+              {busy ? "等待" : "发送"}
             </button>
           ) : (
             <button type="button" className="send-button" onClick={onOpenSettings}>
-              配置 SSH
+              添加服务器
             </button>
           )}
         </div>
@@ -928,14 +938,14 @@ function RawOutput({
       <header>
         <button type="button" onClick={onToggle} className="raw-title">
           <span>{open ? "⌄" : "›"}</span>
-          <strong>原始输出</strong>
+          <strong>详情</strong>
           <StatusDot status={connection.state} />
           <span>{connection.label}</span>
         </button>
         {open ? (
           <div className="raw-meta">
-            <span>{agentCommand(profile, agent)}</span>
-            <span>tmux: {sessionName(profile, agent.id)}</span>
+            <span>{agent.shortName}</span>
+            <span>{sessionName(profile, agent.id)}</span>
             <button type="button" onClick={onRefresh} disabled={busy}>
               刷新
             </button>
@@ -970,34 +980,34 @@ function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, o
       <section className="settings-panel">
         <header>
           <div>
-            <strong>连接配置</strong>
-            <span>SSH 信息只保存在本机 Keychain</span>
+            <strong>服务器</strong>
+            <span>登录信息只保存在本机 Keychain</span>
           </div>
           <button type="button" className="text-button" onClick={onClose}>
-            关闭
+            完成
           </button>
         </header>
 
         {missingPassword ? (
-          <p className="settings-note">首次使用需要填写 SSH 密码。保存并测试通过后，才能发送任务到远端会话。</p>
+          <p className="settings-note">第一次使用填写登录密码即可，测试通过后就能开始对话。</p>
         ) : null}
 
         <div className="settings-grid">
-          <ConfigField label="ECS IP / 域名" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
+          <ConfigField label="服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
           <ConfigField
-            label="SSH 端口"
+            label="端口"
             value={draftProfile.port}
             inputMode="numeric"
             onChange={(value) => updateField("port", value)}
           />
           <ConfigField
-            label="SSH 用户"
+            label="用户名"
             value={draftProfile.username}
             autoComplete="username"
             onChange={(value) => updateField("username", value)}
           />
           <ConfigField
-            label="SSH 密码"
+            label="登录密码"
             type="password"
             value={draftProfile.password}
             autoComplete="current-password"
@@ -1005,26 +1015,32 @@ function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, o
             onChange={(value) => updateField("password", value)}
           />
           <ConfigField
-            label="远端工作目录"
+            label="工作路径"
             value={draftProfile.workdir}
             onChange={(value) => updateField("workdir", value)}
           />
-          <ConfigField
-            label="tmux 会话前缀"
-            value={draftProfile.tmuxSession}
-            onChange={(value) => updateField("tmuxSession", value)}
-          />
-          <ConfigField
-            label="Codex 启动命令"
-            value={draftProfile.codexCommand}
-            onChange={(value) => updateField("codexCommand", value)}
-          />
-          <ConfigField
-            label="Claude 启动命令"
-            value={draftProfile.claudeCommand}
-            onChange={(value) => updateField("claudeCommand", value)}
-          />
         </div>
+
+        <details className="advanced-settings">
+          <summary>高级设置</summary>
+          <div className="settings-grid">
+            <ConfigField
+              label="会话前缀"
+              value={draftProfile.tmuxSession}
+              onChange={(value) => updateField("tmuxSession", value)}
+            />
+            <ConfigField
+              label="Codex 命令"
+              value={draftProfile.codexCommand}
+              onChange={(value) => updateField("codexCommand", value)}
+            />
+            <ConfigField
+              label="Claude 命令"
+              value={draftProfile.claudeCommand}
+              onChange={(value) => updateField("claudeCommand", value)}
+            />
+          </div>
+        </details>
 
         <div className="settings-actions">
           <button type="button" className="danger-button" onClick={onClear} disabled={busy}>
@@ -1034,7 +1050,7 @@ function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, o
             保存
           </button>
           <button type="button" className="send-button" onClick={onTest} disabled={busy}>
-            保存并测试
+            连接
           </button>
         </div>
       </section>
