@@ -1,0 +1,1997 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>AI Workbench Interaction Design</title>
+    <style>
+      :root {
+        color: #17202b;
+        background: #eef1f5;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        font-size: 15px;
+        line-height: 1.45;
+        color-scheme: light;
+        --line: #d9dee7;
+        --line-strong: #c3ccd8;
+        --surface: #ffffff;
+        --surface-soft: #f5f7fa;
+        --text: #17202b;
+        --muted: #697789;
+        --faint: #8a95a6;
+        --blue: #1769e0;
+        --blue-dark: #1158c8;
+        --blue-soft: #eaf3ff;
+        --green: #18a765;
+        --green-soft: #e2f7ed;
+        --red: #bd2d2d;
+        --red-soft: #fff0f0;
+        --terminal: #111821;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-width: 320px;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      textarea,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .prototype-shell {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        height: 100dvh;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(238, 241, 245, 0.92)),
+          radial-gradient(circle at 20% 0%, rgba(23, 105, 224, 0.14), transparent 34%),
+          radial-gradient(circle at 88% 18%, rgba(24, 167, 101, 0.1), transparent 28%);
+      }
+
+      .prototype-toolbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 14px;
+        align-items: center;
+        min-width: 0;
+        padding: 14px 18px;
+        border-bottom: 1px solid rgba(195, 204, 216, 0.7);
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(22px);
+      }
+
+      .prototype-title {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .prototype-title strong {
+        overflow: hidden;
+        font-size: 16px;
+        font-weight: 850;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .prototype-title span {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .segmented {
+        display: inline-flex;
+        gap: 3px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .segmented button,
+      .toolbar-action {
+        height: 34px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        font-weight: 750;
+        cursor: pointer;
+      }
+
+      .segmented button {
+        padding: 0 12px;
+        color: #3a4658;
+      }
+
+      .segmented button.active {
+        color: #ffffff;
+        background: #17202b;
+      }
+
+      .toolbar-action {
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .prototype-stage {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 24px;
+      }
+
+      .device-frame {
+        width: min(100%, var(--device-width));
+        min-width: 320px;
+        height: min(calc(100dvh - 112px), var(--device-height));
+        min-height: 620px;
+        margin: 0 auto;
+        padding: 10px;
+        border: 1px solid rgba(23, 32, 43, 0.16);
+        border-radius: 34px;
+        background: #1c2430;
+        box-shadow:
+          0 34px 90px rgba(23, 32, 43, 0.22),
+          0 2px 0 rgba(255, 255, 255, 0.35) inset;
+      }
+
+      .device-frame.phone {
+        --device-width: 393px;
+        --device-height: 852px;
+        --app-safe-top: 38px;
+      }
+
+      .device-frame.tablet {
+        --device-width: 834px;
+        --device-height: 1050px;
+        --app-safe-top: 24px;
+        border-radius: 28px;
+      }
+
+      .app-surface {
+        position: relative;
+        display: grid;
+        --app-safe-top: 32px;
+        --app-nav-height: 58px;
+        grid-template-rows: calc(var(--app-safe-top) + var(--app-nav-height)) minmax(0, 1fr) auto;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border-radius: 25px;
+        color: var(--text);
+        background:
+          linear-gradient(180deg, #ffffff 0%, #fbfcfd 52%, #f4f6f8 100%);
+      }
+
+      .tablet .app-surface {
+        border-radius: 20px;
+      }
+
+      .app-topbar {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: end;
+        padding: var(--app-safe-top) 14px 10px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(18px);
+      }
+
+      .tablet .app-topbar {
+        grid-template-columns: minmax(230px, 0.7fr) minmax(220px, 1fr) auto;
+        padding: var(--app-safe-top) 18px 10px;
+      }
+
+      .menu-button,
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 38px;
+        height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+        font-weight: 850;
+        cursor: pointer;
+      }
+
+      .tablet .menu-button {
+        display: none;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 30px;
+        height: 30px;
+        border: 1px solid #cfd5df;
+        border-radius: 9px;
+        color: #ffffff;
+        background: #1b2531;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .brand-copy {
+        display: grid;
+        min-width: 0;
+      }
+
+      .brand-copy strong {
+        overflow: hidden;
+        font-size: 15px;
+        font-weight: 850;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .brand-copy span {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .connection-pill {
+        display: none;
+        align-items: center;
+        min-width: 0;
+        height: 36px;
+        gap: 8px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.84);
+      }
+
+      .tablet .connection-pill {
+        display: inline-flex;
+      }
+
+      .connection-pill b {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .ghost-button,
+      .primary-button,
+      .danger-button,
+      .text-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 36px;
+        min-width: 0;
+        padding: 0 13px;
+        border-radius: 12px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      .ghost-button,
+      .text-button {
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .text-button {
+        border-color: transparent;
+        background: transparent;
+      }
+
+      .primary-button {
+        border: 1px solid var(--blue-dark);
+        color: #ffffff;
+        background: var(--blue);
+        box-shadow: 0 1px 2px rgba(23, 105, 224, 0.2);
+      }
+
+      .primary-button:disabled {
+        border-color: #b8c4d4;
+        color: #ffffff;
+        background: #b8c4d4;
+        box-shadow: none;
+        cursor: not-allowed;
+      }
+
+      .danger-button {
+        border: 1px solid #f1b1b1;
+        color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .app-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .tablet .app-body {
+        grid-template-columns: 248px minmax(0, 1fr);
+      }
+
+      .side-rail {
+        display: none;
+        min-width: 0;
+        min-height: 0;
+        padding: 16px 12px;
+        border-right: 1px solid var(--line);
+        background: #f8f9fb;
+        overflow: auto;
+      }
+
+      .tablet .side-rail {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .rail-section {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 20px;
+      }
+
+      .rail-title {
+        margin: 0 6px;
+        color: #344054;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .rail-card,
+      .rail-row,
+      .agent-row {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        text-align: left;
+      }
+
+      .rail-card {
+        display: grid;
+        gap: 4px;
+        padding: 12px;
+      }
+
+      .rail-card strong,
+      .rail-card span,
+      .rail-row span,
+      .agent-row strong,
+      .agent-row small {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rail-card span,
+      .agent-row small {
+        color: var(--muted);
+      }
+
+      .rail-row,
+      .agent-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 40px;
+        padding: 0 10px;
+      }
+
+      .agent-row {
+        justify-content: flex-start;
+        min-height: 50px;
+      }
+
+      .agent-row > span:last-child {
+        display: grid;
+        min-width: 0;
+      }
+
+      .work-area {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .conversation-scroll {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 14px;
+      }
+
+      .tablet .conversation-scroll {
+        align-items: center;
+        padding: 20px 26px;
+      }
+
+      .machine-home {
+        display: none;
+        width: 100%;
+        max-width: 720px;
+        margin: 0 auto;
+        gap: 14px;
+      }
+
+      .app-surface[data-flow="machines"] .machine-home {
+        display: grid;
+      }
+
+      .app-surface[data-flow="machines"] .status-panel,
+      .app-surface[data-flow="machines"] #messages,
+      .app-surface[data-flow="machines"] .composer,
+      .app-surface[data-flow="machines"] .raw-panel {
+        display: none;
+      }
+
+      .raw-panel {
+        display: none;
+      }
+
+      .app-surface[data-flow="machines"] .work-area {
+        grid-template-rows: minmax(0, 1fr);
+      }
+
+      .app-surface[data-flow="connected"] .status-panel,
+      .app-surface[data-flow="running"] .status-panel,
+      .app-surface[data-flow="output"] .status-panel {
+        display: none;
+      }
+
+      .machine-hero,
+      .machine-card,
+      .empty-machine,
+      .wizard-card {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #ffffff;
+      }
+
+      .machine-hero {
+        display: grid;
+        gap: 16px;
+        padding: 18px;
+        background:
+          linear-gradient(180deg, #ffffff, #f7fbff);
+        box-shadow: 0 16px 36px rgba(23, 32, 43, 0.06);
+      }
+
+      .machine-hero h1 {
+        margin: 0;
+        font-size: 25px;
+        line-height: 1.12;
+        letter-spacing: 0;
+      }
+
+      .machine-hero p,
+      .empty-machine p,
+      .wizard-card p {
+        margin: 0;
+        color: #536173;
+        line-height: 1.56;
+      }
+
+      .machine-hero-actions,
+      .machine-card-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .machine-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .tablet .machine-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .machine-card {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        text-align: left;
+      }
+
+      .machine-card header,
+      .empty-machine header,
+      .wizard-card header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .machine-card-title {
+        display: grid;
+        min-width: 0;
+        gap: 2px;
+      }
+
+      .machine-card-title strong,
+      .machine-card-title span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .machine-card-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .machine-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .machine-meta span {
+        display: grid;
+        min-width: 0;
+        gap: 2px;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #f8fafc;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 760;
+      }
+
+      .machine-meta b {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .empty-machine {
+        display: grid;
+        gap: 12px;
+        padding: 16px;
+        border-style: dashed;
+        background: #fbfcfe;
+      }
+
+      .wizard-stepper {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        padding: 14px 14px 0;
+      }
+
+      .wizard-step {
+        display: grid;
+        gap: 6px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #f8fafc;
+        color: #526173;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .wizard-step.active {
+        border-color: #acd0ff;
+        color: #124f9d;
+        background: #eef6ff;
+      }
+
+      .wizard-step b {
+        color: inherit;
+      }
+
+      .auth-choice {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        padding: 0 14px;
+      }
+
+      .auth-choice label {
+        display: grid;
+        gap: 4px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #ffffff;
+      }
+
+      .auth-choice span {
+        font-size: 13px;
+        font-weight: 850;
+      }
+
+      .auth-choice small {
+        color: var(--muted);
+        line-height: 1.4;
+      }
+
+      .probe-list {
+        display: grid;
+        gap: 8px;
+        margin: 0 14px 14px;
+        padding: 12px;
+        border: 1px solid #c7ddff;
+        border-radius: 14px;
+        background: #f1f7ff;
+      }
+
+      .probe-list div {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: #31445c;
+        font-size: 12px;
+      }
+
+      .probe-list b {
+        color: #126843;
+      }
+
+      .advanced-settings {
+        margin: 0 14px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fbfcfe;
+        overflow: hidden;
+      }
+
+      .advanced-settings summary {
+        cursor: pointer;
+        padding: 12px;
+        color: #344054;
+        font-weight: 850;
+      }
+
+      .advanced-settings .settings-grid {
+        padding-top: 0;
+      }
+
+      .status-panel,
+      .message,
+      #messages,
+      .composer {
+        width: 100%;
+        max-width: 680px;
+      }
+
+      #messages {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin: 0 auto;
+      }
+
+      .chat-bubble {
+        position: relative;
+        width: fit-content;
+        max-width: min(86%, 560px);
+        padding: 12px 44px 12px 14px;
+        border-radius: 16px;
+      }
+
+      .chat-bubble p {
+        margin: 0;
+        line-height: 1.58;
+        white-space: pre-wrap;
+      }
+
+      .chat-bubble.user {
+        align-self: flex-end;
+        color: #ffffff;
+        background: var(--blue);
+        border-bottom-right-radius: 6px;
+      }
+
+      .chat-bubble.assistant {
+        align-self: flex-start;
+        border: 1px solid var(--line);
+        color: #223044;
+        background: #ffffff;
+        border-bottom-left-radius: 6px;
+      }
+
+      .chat-bubble.thinking {
+        color: var(--muted);
+        background: #f7f9fc;
+      }
+
+      .copy-button {
+        position: absolute;
+        top: 7px;
+        right: 7px;
+        height: 24px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 8px;
+        color: inherit;
+        background: rgba(255, 255, 255, 0.18);
+        font-size: 11px;
+        font-weight: 800;
+        opacity: 0.72;
+        cursor: pointer;
+      }
+
+      .chat-bubble.assistant .copy-button {
+        color: #455366;
+        background: #eef2f7;
+      }
+
+      .copy-button:active {
+        transform: translateY(1px);
+      }
+
+      .status-panel {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border: 1px solid #c7ddff;
+        border-radius: 18px;
+        background:
+          linear-gradient(180deg, #ffffff, #f6faff);
+        box-shadow: 0 12px 32px rgba(23, 32, 43, 0.06);
+      }
+
+      .tablet .status-panel {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .status-copy {
+        display: grid;
+        gap: 8px;
+      }
+
+      .eyebrow {
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .status-copy h1 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.16;
+        letter-spacing: 0;
+      }
+
+      .status-copy p {
+        margin: 0;
+        color: #445266;
+        line-height: 1.58;
+      }
+
+      .status-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+      .metric-list {
+        display: grid;
+        gap: 0;
+        min-width: 0;
+      }
+
+      .metric {
+        display: grid;
+        grid-template-columns: 46px minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .metric strong {
+        min-width: 0;
+        overflow: hidden;
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mono {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      .message {
+        display: grid;
+        gap: 10px;
+      }
+
+      .message.user {
+        align-self: flex-end;
+        max-width: 620px;
+        padding: 13px 15px;
+        border: 1px solid #b9d4f3;
+        border-radius: 16px;
+        background: var(--blue-soft);
+      }
+
+      .message-header {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .message-header strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-badge {
+        margin-left: auto;
+        padding: 3px 9px;
+        border-radius: 999px;
+        color: #126843;
+        background: var(--green-soft);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .status-badge.idle {
+        color: #5a6678;
+        background: #eef1f5;
+      }
+
+      .status-badge.running {
+        color: #1556b3;
+        background: var(--blue-soft);
+      }
+
+      .message p {
+        margin: 0;
+        color: #2f3b4c;
+        line-height: 1.62;
+      }
+
+      .output-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+      }
+
+      .output-card header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .output-card pre {
+        max-height: 240px;
+        margin: 0;
+        overflow: auto;
+        padding: 12px;
+        color: #254038;
+        background: #f8fafc;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.58;
+        white-space: pre-wrap;
+      }
+
+      .composer {
+        margin: 0 auto;
+        padding: 12px 14px 14px;
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(18px);
+      }
+
+      .tablet .composer {
+        width: min(680px, calc(100% - 52px));
+        margin-bottom: 18px;
+        border: 1px solid #c4ceda;
+        border-radius: 18px;
+        box-shadow: 0 16px 40px rgba(31, 42, 55, 0.12);
+      }
+
+      .composer-tools {
+        display: grid;
+        grid-template-columns: minmax(120px, 0.8fr) minmax(120px, 1fr) auto;
+        gap: 8px;
+        margin-bottom: 9px;
+      }
+
+      .session-action {
+        white-space: nowrap;
+      }
+
+      @media (max-width: 470px) {
+        .composer-tools {
+          grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .composer-tools label:nth-child(2) {
+          grid-column: 1 / -1;
+        }
+      }
+
+      .agent-select,
+      .raw-toggle {
+        display: inline-flex;
+        align-items: center;
+        height: 38px;
+        min-width: 0;
+        gap: 8px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #f8fafc;
+      }
+
+      .agent-select select {
+        min-width: 0;
+        width: 100%;
+        border: 0;
+        color: #2d3746;
+        background: transparent;
+        outline: 0;
+      }
+
+      .raw-toggle {
+        cursor: pointer;
+      }
+
+      .history-line {
+        grid-column: 1 / -1;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .input-row {
+        display: grid;
+        gap: 10px;
+      }
+
+      .input-row textarea {
+        width: 100%;
+        min-height: 76px;
+        max-height: 180px;
+        resize: none;
+        padding: 13px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        color: #1f2a37;
+        background: #ffffff;
+        outline: 0;
+      }
+
+      .input-row textarea:disabled {
+        color: #8792a3;
+        background: #f5f7fa;
+      }
+
+      .input-row textarea:focus,
+      .settings-field input:focus {
+        border-color: #8cb8f3;
+        box-shadow: 0 0 0 3px rgba(23, 105, 224, 0.12);
+      }
+
+      .send-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .send-row .primary-button {
+        height: 46px;
+      }
+
+      .raw-panel {
+        border-top: 1px solid #2a3342;
+        color: #d7dee9;
+        background: var(--terminal);
+      }
+
+      .raw-panel header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 44px;
+        padding: 0 14px;
+      }
+
+      .raw-title {
+        display: inline-flex;
+        align-items: center;
+        min-width: 0;
+        gap: 8px;
+        border: 0;
+        color: #ffffff;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .raw-actions {
+        display: none;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .raw-panel.open .raw-actions {
+        display: flex;
+      }
+
+      .raw-actions button,
+      .raw-view-button {
+        height: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 9px;
+        color: #d7dee9;
+        background: rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+      }
+
+      .raw-view-button {
+        min-width: 58px;
+      }
+
+      .raw-panel pre {
+        display: none;
+        max-height: 190px;
+        margin: 0;
+        overflow: auto;
+        padding: 12px 14px;
+        color: #e5ecf5;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .raw-panel.open pre {
+        display: block;
+      }
+
+      .dot {
+        display: inline-block;
+        flex: 0 0 auto;
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--green);
+        box-shadow: 0 0 0 3px rgba(24, 167, 101, 0.12);
+      }
+
+      .dot.idle {
+        background: #98a2b3;
+        box-shadow: none;
+      }
+
+      .dot.running {
+        background: var(--blue);
+        box-shadow: 0 0 0 3px rgba(23, 105, 224, 0.14);
+      }
+
+      .settings-layer {
+        position: absolute;
+        z-index: 10;
+        inset: 0;
+        display: none;
+      }
+
+      .settings-layer.open {
+        display: block;
+      }
+
+      .settings-backdrop {
+        position: absolute;
+        inset: 0;
+        border: 0;
+        background: rgba(14, 22, 33, 0.34);
+      }
+
+      .settings-panel {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        left: 10px;
+        max-height: calc(100% - 20px);
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: #ffffff;
+        box-shadow: 0 22px 80px rgba(17, 24, 39, 0.22);
+      }
+
+      .tablet .settings-panel {
+        right: 24px;
+        left: auto;
+        bottom: 24px;
+        width: 560px;
+        max-height: calc(100% - 48px);
+        border-radius: 20px;
+      }
+
+      .settings-panel header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 17px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(18px);
+      }
+
+      .settings-title {
+        display: grid;
+      }
+
+      .settings-title strong {
+        font-size: 18px;
+      }
+
+      .settings-title span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .settings-note {
+        margin: 14px 14px 0;
+        padding: 12px 13px;
+        border: 1px solid #c7ddff;
+        border-radius: 14px;
+        color: #24466f;
+        background: #f1f7ff;
+      }
+
+      .settings-grid {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+      }
+
+      .tablet .settings-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .settings-field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .settings-field span {
+        color: #344054;
+        font-size: 13px;
+        font-weight: 850;
+      }
+
+      .settings-field input {
+        width: 100%;
+        height: 42px;
+        padding: 0 11px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: #17202b;
+        background: #ffffff;
+        outline: 0;
+      }
+
+      .path-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .path-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
+
+      .path-row input {
+        min-width: 0;
+      }
+
+      .path-row .ghost-button {
+        height: 42px;
+        padding: 0 10px;
+      }
+
+      .path-add {
+        justify-self: start;
+      }
+
+      .settings-actions {
+        position: sticky;
+        bottom: 0;
+        display: grid;
+        grid-template-columns: 0.9fr 1.4fr;
+        gap: 8px;
+        padding: 12px 14px 14px;
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(18px);
+      }
+
+      .drawer {
+        position: absolute;
+        z-index: 9;
+        inset: 0;
+        display: none;
+      }
+
+      .drawer.open {
+        display: block;
+      }
+
+      .drawer-backdrop {
+        position: absolute;
+        inset: 0;
+        border: 0;
+        background: rgba(14, 22, 33, 0.34);
+      }
+
+      .drawer-panel {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: min(330px, 88%);
+        padding: 18px 12px;
+        border-right: 1px solid var(--line);
+        background: #f8f9fb;
+        box-shadow: 14px 0 50px rgba(15, 23, 42, 0.18);
+      }
+
+      .drawer-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 6px 14px;
+      }
+
+      @media (max-width: 860px) {
+        .prototype-toolbar {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 10px;
+        }
+
+        .segmented {
+          overflow-x: auto;
+        }
+
+        .prototype-stage {
+          padding: 14px;
+        }
+
+        .device-frame.tablet {
+          --device-width: 760px;
+        }
+      }
+
+      @media (max-width: 470px) {
+        .prototype-stage {
+          padding: 0;
+        }
+
+        .device-frame {
+          width: 100%;
+          height: calc(100dvh - 150px);
+          min-height: 620px;
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+        }
+
+        .app-surface {
+          border-radius: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="prototype-shell">
+      <header class="prototype-toolbar">
+        <div class="prototype-title">
+          <strong>AI Workbench 交互设计稿</strong>
+          <span>模拟交互，不连接真实 ECS。用于先看信息架构和手感。</span>
+        </div>
+        <div class="segmented" aria-label="设备尺寸">
+          <button class="active" type="button" data-device="phone">iPhone</button>
+          <button type="button" data-device="tablet">iPad</button>
+        </div>
+        <div class="segmented" aria-label="流程状态">
+          <button class="active" type="button" data-flow="machines">首页</button>
+          <button type="button" data-flow="connected">对话</button>
+          <button type="button" data-flow="output">结果</button>
+        </div>
+      </header>
+
+      <main class="prototype-stage">
+        <section class="device-frame phone" id="deviceFrame">
+          <div class="app-surface" id="appSurface">
+            <header class="app-topbar">
+              <button class="menu-button" type="button" data-action="open-drawer" aria-label="打开菜单">☰</button>
+              <div class="brand">
+                <span class="mark">&gt;</span>
+                <div class="brand-copy">
+                  <strong>AI Workbench</strong>
+                  <span id="platformLabel">选择云服务器</span>
+                </div>
+              </div>
+              <div class="connection-pill">
+                <span class="dot idle" id="topDot"></span>
+                <span id="topStatus">未连接</span>
+                <b id="topHost">未连接</b>
+              </div>
+              <div class="topbar-actions">
+                <button class="ghost-button" type="button" data-action="open-settings">连接</button>
+              </div>
+            </header>
+
+            <div class="app-body">
+              <aside class="side-rail">
+                <div class="rail-section">
+                  <p class="rail-title">连接</p>
+                  <button class="rail-card" type="button" data-flow="connected">
+                    <strong>我的云服务器</strong>
+                    <span>已连接</span>
+                  </button>
+                </div>
+                <div class="rail-section">
+                  <p class="rail-title">AI</p>
+                  <button class="agent-row" type="button" data-agent="codex">
+                    <span class="mark">&gt;</span>
+                    <span><strong>Codex</strong><small>写代码</small></span>
+                  </button>
+                  <button class="agent-row" type="button" data-agent="claude">
+                    <span class="mark">AI</span>
+                    <span><strong>Claude</strong><small>读代码</small></span>
+                  </button>
+                </div>
+              </aside>
+
+              <section class="work-area">
+                <div class="conversation-scroll" id="conversation">
+                  <section class="machine-home" id="machineHome">
+                    <div class="machine-hero">
+                      <span class="eyebrow">AI Workbench</span>
+                      <h1>连接云服务器，开始对话</h1>
+                      <p>第一次只需要填一次服务器信息。以后打开 App，会直接进入对话。</p>
+                      <div class="machine-hero-actions">
+                        <button class="primary-button" type="button" data-action="open-settings">连接我的云服务器</button>
+                        <button class="ghost-button" type="button" data-flow="connected">进入对话</button>
+                      </div>
+                    </div>
+
+                    <div class="machine-grid">
+                      <button class="machine-card" type="button" data-flow="connected">
+                        <header>
+                          <span class="machine-card-title">
+                            <strong>我的云服务器</strong>
+                            <span>已连接，可以开始工作</span>
+                          </span>
+                          <span class="status-badge">可用</span>
+                        </header>
+                        <div class="machine-card-actions">
+                          <span class="ghost-button">继续对话</span>
+                        </div>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="status-panel">
+                    <div class="status-copy">
+                      <span class="eyebrow">AI Workbench</span>
+                      <h1 id="statusTitle">开始和 AI 一起工作</h1>
+                      <p id="statusBody">选择 Codex 或 Claude，然后直接描述你要做什么。</p>
+                      <div class="status-actions">
+                        <button class="primary-button" type="button" data-action="primary-cta" id="primaryCta">连接云服务器</button>
+                        <button class="ghost-button" type="button" data-flow="machines">返回首页</button>
+                      </div>
+                    </div>
+                    <div class="metric-list">
+                      <div class="metric"><span>状态</span><strong id="metricStatus">未连接</strong></div>
+                    </div>
+                  </section>
+                  <div id="messages"></div>
+                </div>
+
+                <footer class="composer">
+                  <div class="composer-tools">
+                    <label class="agent-select">
+                      <span class="mark" id="composerMark">&gt;</span>
+                      <select id="agentSelect">
+                        <option value="codex">Codex</option>
+                        <option value="claude">Claude</option>
+                      </select>
+                    </label>
+                    <label class="agent-select">
+                      <select id="pathSelect" aria-label="工程路径"></select>
+                    </label>
+                    <button class="ghost-button session-action" type="button" data-action="new-session">新会话</button>
+                  </div>
+                  <div class="input-row">
+                    <textarea id="taskInput" placeholder="告诉 AI 你想做什么"></textarea>
+                    <div class="send-row">
+                      <button class="primary-button" type="button" data-action="send" id="sendButton">添加机器</button>
+                    </div>
+                  </div>
+                </footer>
+              </section>
+            </div>
+
+            <section class="raw-panel" id="rawPanel">
+              <header>
+                <button class="raw-title" type="button" data-action="toggle-raw">
+                  <span id="rawChevron">›</span>
+                  <strong>状态</strong>
+                  <span class="dot idle" id="rawDot"></span>
+                  <span id="rawLabel">未连接</span>
+                </button>
+                <div class="raw-actions">
+                  <button type="button" data-action="refresh">刷新</button>
+                  <button type="button" data-action="interrupt">中断</button>
+                  <button type="button" data-action="close-session">关闭</button>
+                </div>
+                <button class="raw-view-button" type="button" data-action="toggle-raw">查看</button>
+              </header>
+              <pre id="rawText"></pre>
+            </section>
+
+            <div class="drawer" id="drawer">
+              <button class="drawer-backdrop" type="button" data-action="close-drawer" aria-label="关闭菜单"></button>
+              <aside class="drawer-panel">
+                <div class="drawer-head">
+                  <strong>AI Workbench</strong>
+                  <button class="text-button" type="button" data-action="close-drawer">完成</button>
+                </div>
+                <div class="rail-section">
+                  <p class="rail-title">连接</p>
+                  <button class="rail-card" type="button" data-flow="connected">
+                    <strong>我的云服务器</strong>
+                    <span>已连接</span>
+                  </button>
+                </div>
+                <div class="rail-section">
+                  <p class="rail-title">AI</p>
+                  <button class="agent-row" type="button" data-agent="codex">
+                    <span class="mark">&gt;</span>
+                    <span><strong>Codex</strong><small>写代码</small></span>
+                  </button>
+                  <button class="agent-row" type="button" data-agent="claude">
+                    <span class="mark">AI</span>
+                    <span><strong>Claude</strong><small>读代码</small></span>
+                  </button>
+                </div>
+              </aside>
+            </div>
+
+            <div class="settings-layer" id="settingsLayer">
+              <button class="settings-backdrop" type="button" data-action="close-settings" aria-label="关闭设置"></button>
+              <section class="settings-panel">
+                <header>
+                  <div class="settings-title">
+                    <strong>连接云服务器</strong>
+                    <span>只需要第一次填写</span>
+                  </div>
+                  <button class="text-button" type="button" data-action="close-settings">关闭</button>
+                </header>
+                <p class="settings-note">填完后点连接。成功后会直接进入对话页面。</p>
+                <div class="settings-grid">
+                  <label class="settings-field"><span>服务器地址</span><input id="hostInput" value="47.236.117.100" /></label>
+                  <label class="settings-field"><span>用户名</span><input id="usernameInput" value="root" /></label>
+                  <label class="settings-field"><span>登录密码</span><input id="passwordInput" type="password" placeholder="输入后测试连接" /></label>
+                  <div class="settings-field">
+                    <span>工程路径</span>
+                    <div class="path-list" id="pathList"></div>
+                    <button class="ghost-button path-add" type="button" data-action="add-path">添加工程路径</button>
+                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button class="ghost-button" type="button" data-action="close-settings">取消</button>
+                  <button class="primary-button" type="button" data-action="save-test">连接</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const state = {
+        device: "phone",
+        flow: "machines",
+        agent: "codex",
+        lastPrompt: "",
+        lastReply: "",
+        apiToken: "",
+        clientSessionId: "",
+        remoteSessionId: "",
+        realMode: location.protocol.startsWith("http"),
+        paths: ["/opt/limpet-workspace"],
+        activePathIndex: 0,
+        rawOpen: false,
+        drawerOpen: false,
+        settingsOpen: false,
+      };
+
+      const flowCopy = {
+        machines: {
+          platform: "云服务器",
+          label: "未选择",
+          host: "未连接",
+          title: "连接云服务器，开始对话",
+          body: "第一次连接后，下次会直接进入对话。",
+          metric: "未连接",
+          cta: "连接云服务器",
+          raw: "",
+          dot: "idle",
+          composer: "先连接云服务器",
+          send: "连接",
+        },
+        setup: {
+          platform: "连接中",
+          label: "待测试",
+          host: "未连接",
+          title: "连接云服务器",
+          body: "填写地址、用户名和密码即可。",
+          metric: "未连接",
+          cta: "连接云服务器",
+          raw: "",
+          dot: "idle",
+          composer: "先连接云服务器",
+          send: "连接",
+        },
+        connected: {
+          platform: "已连接",
+          label: "已连接",
+          host: "我的云服务器",
+          title: "工作台就绪",
+          body: "直接告诉 AI 你想做什么。",
+          metric: "可以开始",
+          cta: "重新测试",
+          raw: "",
+          dot: "connected",
+          composer: "发送任务到 Codex",
+          send: "发送",
+        },
+        running: {
+          platform: "已连接",
+          label: "处理中",
+          host: "我的云服务器",
+          title: "AI 正在处理",
+          body: "结果会像聊天回复一样显示在这里。",
+          metric: "正在处理",
+          cta: "刷新输出",
+          raw: "",
+          dot: "running",
+          composer: "继续追加任务",
+          send: "发送",
+        },
+        output: {
+          platform: "已连接",
+          label: "已完成",
+          host: "我的云服务器",
+          title: "任务已完成",
+          body: "你可以继续追问，或者发送一个新任务。",
+          metric: "Codex 输出完成",
+          cta: "刷新输出",
+          raw: "",
+          dot: "connected",
+          composer: "继续发送任务到 Codex",
+          send: "发送",
+        },
+      };
+
+      const agentCopy = {
+        codex: { name: "Codex", short: "Codex", mark: ">", session: "codex" },
+        claude: { name: "Claude", short: "Claude", mark: "AI", session: "claude" },
+      };
+
+      const $ = (selector) => document.querySelector(selector);
+      const $$ = (selector) => [...document.querySelectorAll(selector)];
+      const escapeHTML = (value) =>
+        value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+
+      function copyText(text, button) {
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => {
+            const oldText = button.textContent;
+            button.textContent = "已复制";
+            window.setTimeout(() => {
+              button.textContent = oldText;
+            }, 1200);
+          })
+          .catch(() => {
+            alert("复制失败，请手动选择文字复制。");
+          });
+      }
+
+      async function postApi(path, payload) {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "请求失败");
+        return data;
+      }
+
+      function activeWorkdir() {
+        return state.paths[state.activePathIndex] || state.paths[0] || "/opt/limpet-workspace";
+      }
+
+      function renderPaths() {
+        const pathList = $("#pathList");
+        if (pathList) {
+          pathList.innerHTML = state.paths
+            .map(
+              (path, index) => `
+                <label class="path-row">
+                  <input data-path-index="${index}" value="${escapeHTML(path)}" aria-label="工程路径 ${index + 1}" />
+                  <button class="ghost-button" type="button" data-action="remove-path" data-path-index="${index}" ${state.paths.length === 1 ? "disabled" : ""}>移除</button>
+                </label>
+              `,
+            )
+            .join("");
+        }
+
+        const pathSelect = $("#pathSelect");
+        if (pathSelect) {
+          pathSelect.innerHTML = state.paths
+            .map((path, index) => `<option value="${index}">${escapeHTML(path || `工程路径 ${index + 1}`)}</option>`)
+            .join("");
+          pathSelect.value = String(Math.min(state.activePathIndex, state.paths.length - 1));
+        }
+      }
+
+      function syncComposerState() {
+        const connected = state.flow !== "setup" && state.flow !== "machines";
+        const waitingForReply = state.flow === "running";
+        const hasText = $("#taskInput").value.trim().length > 0;
+        $("#sendButton").disabled = !connected || waitingForReply || !hasText;
+      }
+
+      async function connectServer() {
+        if (!state.realMode) {
+          state.flow = "connected";
+          state.settingsOpen = false;
+          render();
+          return;
+        }
+
+        state.flow = "setup";
+        render();
+        try {
+          const data = await postApi("/api/connect", {
+            host: $("#hostInput").value.trim(),
+            username: $("#usernameInput").value.trim(),
+            password: $("#passwordInput").value,
+            workdir: activeWorkdir(),
+          });
+          state.apiToken = data.token;
+          state.clientSessionId = data.sessionId || "";
+          state.flow = "connected";
+          state.settingsOpen = false;
+          state.lastReply = data.message || "已连接";
+        } catch (error) {
+          state.flow = "machines";
+          state.settingsOpen = true;
+          state.lastReply = error.message || "连接失败";
+          alert(state.lastReply);
+        }
+        render();
+      }
+
+      function setFlow(flow) {
+        state.flow = flow;
+        state.rawOpen = flow === "running";
+        state.settingsOpen = false;
+        state.drawerOpen = false;
+        render();
+      }
+
+      function setDevice(device) {
+        state.device = device;
+        state.drawerOpen = false;
+        render();
+      }
+
+      function renderMessages() {
+        const messages = $("#messages");
+        const active = agentCopy[state.agent];
+        const items = [];
+
+        if (state.flow === "running" || state.flow === "output") {
+          const promptRaw = state.lastPrompt || "检查项目并给出下一步开发计划。";
+          const prompt = escapeHTML(promptRaw);
+          const replyRaw = state.flow === "running" ? `${active.short} 正在回复...` : state.lastReply || "已完成。";
+          const reply = escapeHTML(replyRaw);
+          items.push(`
+            <article class="chat-bubble user" data-copy-text="${prompt}">
+              <button class="copy-button" type="button" data-action="copy-message">复制</button>
+              <p>${prompt}</p>
+            </article>
+          `);
+          items.push(`
+            <article class="chat-bubble assistant ${state.flow === "running" ? "thinking" : ""}" data-copy-text="${reply}">
+              <button class="copy-button" type="button" data-action="copy-message">复制</button>
+              <p>${reply}</p>
+            </article>
+          `);
+        }
+
+        messages.innerHTML = items.join("");
+      }
+
+      function render() {
+        const copy = flowCopy[state.flow];
+        const agent = agentCopy[state.agent];
+        const connected = state.flow !== "setup" && state.flow !== "machines";
+        const waitingForReply = state.flow === "running";
+
+        $("#deviceFrame").className = `device-frame ${state.device}`;
+        $("#appSurface").dataset.flow = state.flow;
+        $("#platformLabel").textContent = copy.platform;
+        $("#topStatus").textContent = copy.label;
+        $("#topHost").textContent = copy.host;
+        $("#statusTitle").textContent = copy.title;
+        $("#statusBody").textContent = copy.body;
+        $("#metricStatus").textContent = copy.metric;
+        $("#primaryCta").textContent = copy.cta;
+        $("#taskInput").placeholder = waitingForReply ? "等待 AI 回复后再继续" : connected ? `发送任务到 ${agent.short}` : copy.composer;
+        $("#taskInput").disabled = !connected || waitingForReply;
+        $("#sendButton").textContent = waitingForReply ? "等待回复" : connected ? copy.send : copy.send;
+        $("#composerMark").textContent = agent.mark;
+        $("#agentSelect").value = state.agent;
+        $("#rawText").textContent = copy.raw;
+        $("#rawLabel").textContent = copy.label;
+        $("#rawChevron").textContent = state.rawOpen ? "⌄" : "›";
+        $("#rawPanel").classList.toggle("open", state.rawOpen);
+        $(".raw-view-button").style.display = state.rawOpen ? "none" : "inline-flex";
+        $("#settingsLayer").classList.toggle("open", state.settingsOpen);
+        $("#drawer").classList.toggle("open", state.drawerOpen);
+
+        $("#topDot").className = `dot ${copy.dot === "connected" ? "" : copy.dot}`;
+        $("#rawDot").className = `dot ${copy.dot === "connected" ? "" : copy.dot}`;
+
+        $$("[data-device]").forEach((button) => button.classList.toggle("active", button.dataset.device === state.device));
+        $$("[data-flow]").forEach((button) => button.classList.toggle("active", button.dataset.flow === state.flow));
+        $$("[data-agent]").forEach((button) => button.classList.toggle("active", button.dataset.agent === state.agent));
+
+        renderMessages();
+        renderPaths();
+        syncComposerState();
+      }
+
+      async function simulateSend() {
+        if (state.flow === "setup" || state.flow === "machines") {
+          state.settingsOpen = true;
+          render();
+          return;
+        }
+        if (state.flow === "running") return;
+
+        const prompt = $("#taskInput").value.trim();
+        if (!prompt) {
+          $("#taskInput").focus();
+          return;
+        }
+
+        state.lastPrompt = prompt;
+        state.lastReply = "";
+        state.flow = "running";
+        state.rawOpen = false;
+        $("#taskInput").value = "";
+        render();
+
+        if (!state.realMode) {
+          window.setTimeout(() => {
+            state.lastReply = "已完成。我建议先完善继续对话，再加入文件浏览和常用任务模板。";
+            state.flow = "output";
+            state.rawOpen = false;
+            render();
+          }, 1100);
+          return;
+        }
+
+        try {
+          const data = await postApi("/api/send", {
+            token: state.apiToken,
+            agent: state.agent,
+            prompt,
+            workdir: activeWorkdir(),
+          });
+          state.remoteSessionId = data.remoteSessionId || state.remoteSessionId;
+          state.lastReply = data.output || "已完成。";
+          state.flow = "output";
+          state.rawOpen = false;
+          render();
+        } catch (error) {
+          state.lastReply = error.message || "发送失败";
+          state.flow = "output";
+          render();
+        }
+      }
+
+      document.addEventListener("click", async (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+
+        const { action, flow, device, agent, pathIndex } = button.dataset;
+        if (flow === "connected" && state.realMode && !state.apiToken) {
+          state.settingsOpen = true;
+          render();
+          return;
+        }
+        if (flow) setFlow(flow);
+        if (device) setDevice(device);
+        if (agent) {
+          state.agent = agent;
+          state.drawerOpen = false;
+          render();
+        }
+
+        if (action === "open-settings") state.settingsOpen = true;
+        if (action === "copy-message") {
+          const bubble = button.closest(".chat-bubble");
+          copyText(bubble?.dataset.copyText || bubble?.innerText || "", button);
+          return;
+        }
+        if (action === "primary-cta") {
+          if (state.flow === "setup" || state.flow === "machines") {
+            state.settingsOpen = true;
+          } else {
+            state.rawOpen = true;
+          }
+        }
+        if (action === "close-settings") state.settingsOpen = false;
+        if (action === "save-settings") state.settingsOpen = false;
+        if (action === "save-test" || action === "test") {
+          await connectServer();
+          return;
+        }
+        if (action === "reset-flow") state.flow = "machines", state.settingsOpen = false, state.rawOpen = false;
+        if (action === "add-path") {
+          state.paths.push("");
+          state.activePathIndex = state.paths.length - 1;
+        }
+        if (action === "remove-path" && state.paths.length > 1) {
+          state.paths.splice(Number(pathIndex), 1);
+          state.activePathIndex = Math.max(0, Math.min(state.activePathIndex, state.paths.length - 1));
+        }
+        if (action === "new-session") {
+          if (state.realMode && state.apiToken) {
+            try {
+              const data = await postApi("/api/new-session", { token: state.apiToken });
+              state.clientSessionId = data.sessionId || "";
+              state.remoteSessionId = "";
+            } catch (error) {
+              alert(error.message || "新会话失败");
+            }
+          }
+          state.flow = "connected";
+          state.lastPrompt = "";
+          state.lastReply = "";
+          state.rawOpen = false;
+          state.drawerOpen = false;
+          $("#taskInput").value = "";
+        }
+        if (action === "toggle-raw") state.rawOpen = !state.rawOpen;
+        if (action === "open-drawer") state.drawerOpen = true;
+        if (action === "close-drawer") state.drawerOpen = false;
+        if (action === "send") {
+          await simulateSend();
+          return;
+        }
+        if (action === "refresh") state.rawOpen = true;
+        if (action === "interrupt") state.flow = "connected", state.rawOpen = true;
+        if (action === "close-session") state.flow = "connected", state.rawOpen = true;
+
+        if (action && action !== "send") render();
+      });
+
+      $("#agentSelect").addEventListener("change", (event) => {
+        state.agent = event.target.value;
+        render();
+      });
+
+      $("#pathSelect").addEventListener("change", (event) => {
+        state.activePathIndex = Number(event.target.value) || 0;
+        render();
+      });
+
+      document.addEventListener("input", (event) => {
+        const pathInput = event.target.closest("[data-path-index]");
+        if (pathInput) {
+          state.paths[Number(pathInput.dataset.pathIndex)] = pathInput.value;
+          return;
+        }
+        if (event.target === $("#taskInput")) syncComposerState();
+      });
+
+      $("#taskInput").addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") simulateSend();
+      });
+
+      render();
+    </script>
+  </body>
+</html>
