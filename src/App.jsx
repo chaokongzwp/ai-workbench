@@ -1,20 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
+function desktopBridge() {
+  return typeof window !== "undefined" ? window.aiWorkbench : undefined;
+}
+
 const SSHWorkbench = registerPlugin("SSHWorkbench", {
   web: () => ({
-    async runCommand() {
+    async runCommand(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.runCommand) return bridge.runCommand(payload);
       throw new Error("浏览器预览不能直接发起 SSH，请在 iPhone 或 iPad App 中测试。");
     },
     async saveProfile({ profile }) {
+      const bridge = desktopBridge();
+      if (bridge?.saveProfile) return bridge.saveProfile({ profile });
       localStorage.setItem("ai-workbench-profile", JSON.stringify(profile ?? {}));
       return { ok: true };
     },
     async loadProfile() {
+      const bridge = desktopBridge();
+      if (bridge?.loadProfile) return bridge.loadProfile();
       const raw = localStorage.getItem("ai-workbench-profile");
       return { profile: raw ? JSON.parse(raw) : {} };
     },
     async clearProfile() {
+      const bridge = desktopBridge();
+      if (bridge?.clearProfile) return bridge.clearProfile();
       localStorage.removeItem("ai-workbench-profile");
       return { ok: true };
     },
@@ -76,8 +88,8 @@ function normalizeProfile(profile) {
 
 function profileIssue(profile) {
   if (!String(profile?.host || "").trim()) return "请填写 ECS IP 或域名";
-  if (!String(profile?.username || "").trim()) return "请填写 SSH 用户名";
-  if (!String(profile?.password || "").trim()) return "请先填写 SSH 密码";
+  if (!String(profile?.username || "").trim()) return "请填写登录用户名";
+  if (!String(profile?.password || "").trim()) return "请先填写登录密码";
   return "";
 }
 
@@ -238,7 +250,7 @@ export function App() {
     createMessage({
       role: "assistant",
       title: "准备开始远程工作",
-      body: "先完成 SSH 配置，然后把任务发送到 ECS 上的 Codex 或 Claude tmux 会话。",
+      body: "连接云服务器后，直接选择 Codex 或 Claude，把任务发到对应会话里。",
       status: "idle",
     }),
   ]);
@@ -347,7 +359,7 @@ export function App() {
         createMessage({
           role: "assistant",
           title: "ECS 连接通过",
-          body: `工作目录 ${parsed.pwd || nextProfile.workdir} 可用，tmux、Codex 与 Claude 已完成探测。`,
+          body: `工作目录 ${parsed.pwd || nextProfile.workdir} 可用，Codex 与 Claude 已完成探测。`,
           status: "done",
         }),
       ]);
@@ -511,10 +523,25 @@ export function App() {
     setConnection({ state: "idle", label: "待配置", detail: profileIssue(defaultProfile) });
   }
 
-  const platformLabel = Capacitor.getPlatform() === "ios" ? "iOS 原生 SSH" : "Web 预览";
+  const bridge = desktopBridge();
+  const platform = Capacitor.getPlatform();
+  const desktopPreview =
+    !bridge &&
+    platform === "web" &&
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(min-width: 1024px) and (hover: hover)").matches;
+
+  const platformLabel =
+    bridge?.platform === "mac"
+      ? "macOS 本机调试"
+      : platform === "ios"
+        ? "iOS 原生 SSH"
+        : "Web 预览";
+
+  const shellClassName = `app-shell ${bridge?.platform === "mac" || desktopPreview ? "mac-shell" : ""}`;
 
   return (
-    <main className="app-shell">
+    <main className={shellClassName}>
       <TopBar
         connection={connection}
         profile={profile}
@@ -651,7 +678,7 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
         <span>≡</span>
       </button>
       <div className="brand">
-        <ShellIcon label=">" />
+        <WorkbenchLogo />
         <div>
           <strong>AI Workbench</strong>
           <span>{ready ? platformLabel : "添加服务器后开始"}</span>
@@ -709,37 +736,12 @@ function NavigationPanel({
             onClick={() => setActiveAgentId(agent.id)}
           >
             <span>
-              <StatusDot status={activeAgentId === agent.id ? "connected" : "idle"} />
+              <AgentLogo agentId={agent.id} compact />
               {agent.shortName} 会话
             </span>
             <span>›</span>
           </button>
         ))}
-      </div>
-
-      <SectionHeader title="模型" />
-      <div className="stack">
-        {agents.map((agent) => (
-          <button
-            className={`agent-button ${activeAgentId === agent.id ? "active" : ""}`}
-            type="button"
-            key={agent.id}
-            onClick={() => setActiveAgentId(agent.id)}
-          >
-            <ShellIcon label={agent.id === "claude" ? "AI" : ">"} />
-            <span>
-              <strong>{agent.shortName}</strong>
-              <small>{agent.id === "codex" ? "适合写代码和改工程" : "适合阅读和解释代码"}</small>
-            </span>
-          </button>
-        ))}
-      </div>
-
-      <SectionHeader title="状态" />
-      <div className="diagnostic-list">
-        <DiagnosticRow label="环境" value={diagnostics.tmux_version || diagnostics.tmux || "未测试"} />
-        <DiagnosticRow label="Codex" value={diagnostics.codex_version || diagnostics.codex || "未测试"} />
-        <DiagnosticRow label="Claude" value={diagnostics.claude_version || diagnostics.claude || "未测试"} />
       </div>
 
       <div className="sidebar-footer">
@@ -765,9 +767,9 @@ function NavigationPanel({
 }
 
 function ConnectionSummary({ profile, connection, diagnostics, profileReady: ready, busy, onOpenSettings, onTestConnection }) {
-  const title = ready ? "工作台就绪" : "先添加服务器";
+  const title = ready ? "工作台就绪" : "连接云服务器";
   const body = ready
-    ? "选择模型，输入任务，AI 会在你的云端工程里继续工作。"
+    ? "选择会话，输入任务，AI 会在你的云端工程里继续工作。"
     : "第一次使用只需要填写服务器和登录密码，之后会直接进入对话。";
 
   return (
@@ -827,7 +829,7 @@ function MessageBubble({ message, activeAgent }) {
   return (
     <article className={`agent-response ${message.status}`}>
       <header className="message-header">
-        <ShellIcon label={agent.id === "claude" ? "AI" : ">"} />
+        <AgentLogo agentId={agent.id} compact />
         <strong>{message.title || agent.name}</strong>
         <time>{message.createdAt}</time>
         <span className={`streaming ${message.status}`}>{statusLabel(message.status)}</span>
@@ -879,7 +881,7 @@ function Composer({
     <footer className="composer">
       <div className="composer-tools">
         <label className="select-shell">
-          <ShellIcon label={activeAgent.id === "claude" ? "AI" : ">"} />
+          <AgentLogo agentId={activeAgent.id} compact />
           <select value={activeAgentId} onChange={(event) => setActiveAgentId(event.target.value)} disabled={!ready}>
             {agents.map((item) => (
               <option value={item.id} key={item.id}>
@@ -1090,8 +1092,22 @@ function SectionHeader({ title }) {
   );
 }
 
-function ShellIcon({ label }) {
-  return <span className="shell-icon">{label}</span>;
+function AgentLogo({ agentId, compact = false }) {
+  const normalized = agentId === "claude" ? "claude" : "codex";
+  const label = normalized === "claude" ? "Claude" : "Codex";
+  return (
+    <span className={`agent-logo ${normalized} ${compact ? "compact" : ""}`} aria-label={label}>
+      <img src={`/icons/${normalized}.svg`} alt="" />
+    </span>
+  );
+}
+
+function WorkbenchLogo() {
+  return (
+    <span className="workbench-logo" aria-label="AI Workbench">
+      <img src="/icons/workbench.png" alt="" />
+    </span>
+  );
 }
 
 function StatusDot({ status = "connected" }) {

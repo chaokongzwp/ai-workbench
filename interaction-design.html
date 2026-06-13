@@ -1741,6 +1741,243 @@
         border-top: 0;
         background: rgba(242, 242, 247, 0.86);
       }
+
+      .agent-logo,
+      .workbench-logo {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        overflow: hidden;
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        background: #ffffff;
+      }
+
+      .agent-logo {
+        border: 0.5px solid rgba(60, 60, 67, 0.14);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+
+      .agent-logo.codex-logo {
+        background: #f8f8fb;
+      }
+
+      .agent-logo.claude-logo {
+        background: #fff7f1;
+      }
+
+      .agent-logo img {
+        display: block;
+        width: 66%;
+        height: 66%;
+        object-fit: contain;
+      }
+
+      .workbench-logo {
+        width: 40px;
+        height: 40px;
+        border-radius: 11px;
+        background: #ffffff;
+        box-shadow:
+          0 1px 3px rgba(0, 0, 0, 0.12),
+          0 1px 0 rgba(255, 255, 255, 0.88) inset;
+      }
+
+      .workbench-logo img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      /* Apple app polish for the reviewable prototype. */
+      .prototype-shell {
+        background: #f2f2f7;
+      }
+
+      .app-surface {
+        background:
+          linear-gradient(180deg, #f7f7fb 0%, #f2f2f7 52%, #efeff4 100%);
+      }
+
+      .app-topbar {
+        min-height: calc(var(--app-safe-top) + var(--app-nav-height));
+      }
+
+      .brand-copy strong,
+      .machine-hero h1,
+      .status-copy h1,
+      .settings-title strong {
+        font-variation-settings: "wght" 720;
+      }
+
+      .machine-hero,
+      .machine-card,
+      .status-panel,
+      .chat-bubble.assistant,
+      .settings-grid,
+      .settings-panel {
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.78) inset;
+      }
+
+      .machine-hero,
+      .status-panel {
+        align-self: center;
+        width: min(100%, 680px);
+      }
+
+      .machine-hero-actions .primary-button,
+      .machine-hero-actions .ghost-button,
+      .status-actions .primary-button,
+      .status-actions .ghost-button {
+        height: 40px;
+        font-weight: 650;
+      }
+
+      .chat-bubble {
+        animation: bubble-in 180ms ease-out both;
+      }
+
+      @keyframes bubble-in {
+        from {
+          opacity: 0;
+          transform: translateY(4px) scale(0.99);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      .copy-button,
+      .ghost-button,
+      .primary-button,
+      .text-button,
+      .agent-row,
+      .rail-card,
+      .machine-card,
+      .raw-actions button,
+      .raw-view-button {
+        -webkit-user-select: none;
+        user-select: none;
+        transition:
+          transform 160ms ease,
+          background 160ms ease,
+          opacity 160ms ease;
+      }
+
+      .copy-button:focus-visible,
+      .ghost-button:focus-visible,
+      .primary-button:focus-visible,
+      .text-button:focus-visible,
+      .agent-row:focus-visible,
+      .rail-card:focus-visible,
+      .machine-card:focus-visible,
+      .raw-actions button:focus-visible,
+      .raw-view-button:focus-visible,
+      textarea:focus-visible,
+      input:focus-visible {
+        outline: 3px solid rgba(0, 122, 255, 0.28);
+        outline-offset: 2px;
+      }
+
+      .composer {
+        transition:
+          background 180ms ease,
+          box-shadow 180ms ease;
+      }
+
+      .composer:focus-within {
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow:
+          0 16px 36px rgba(0, 0, 0, 0.1),
+          0 0 0 1px rgba(0, 122, 255, 0.1);
+      }
+
+      .raw-panel:not(.open) {
+        display: none;
+      }
+
+      .raw-panel.open {
+        width: min(760px, calc(100% - 48px));
+        margin: 0 auto;
+        overflow: hidden;
+        border-radius: 22px 22px 0 0;
+        box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.2);
+      }
+
+      .raw-panel.open header {
+        background: rgba(28, 28, 30, 0.96);
+        backdrop-filter: saturate(180%) blur(24px);
+      }
+
+      .settings-panel {
+        outline: 0.5px solid rgba(255, 255, 255, 0.6);
+      }
+
+      @media (max-width: 470px) {
+        .prototype-toolbar {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 8px;
+          padding: 10px;
+        }
+
+        .prototype-title strong {
+          font-size: 15px;
+        }
+
+        .prototype-title span {
+          font-size: 11px;
+        }
+
+        .segmented {
+          width: 100%;
+          overflow-x: auto;
+          border-radius: 12px;
+        }
+
+        .segmented button {
+          flex: 1 0 auto;
+          min-width: 86px;
+        }
+
+        .machine-hero,
+        .status-panel {
+          display: none;
+        }
+
+        .connection-pill {
+          display: none;
+        }
+
+        .chat-bubble {
+          max-width: 90%;
+        }
+
+        .composer-tools {
+          display: flex;
+          overflow-x: auto;
+          padding-bottom: 2px;
+          scrollbar-width: none;
+        }
+
+        .composer-tools::-webkit-scrollbar {
+          display: none;
+        }
+
+        .agent-select,
+        .session-action {
+          flex: 0 0 auto;
+        }
+
+        .raw-panel.open {
+          width: 100%;
+          margin: 0;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1767,7 +2004,9 @@
             <header class="app-topbar">
               <button class="menu-button" type="button" data-action="open-drawer" aria-label="打开菜单">≡</button>
               <div class="brand">
-                <span class="mark">&gt;</span>
+                <span class="workbench-logo" aria-label="AI Workbench">
+                  <img src="public/icons/workbench.png" alt="" />
+                </span>
                 <div class="brand-copy">
                   <strong>AI Workbench</strong>
                   <span id="platformLabel">选择云服务器</span>
@@ -1795,11 +2034,11 @@
                 <div class="rail-section">
                   <p class="rail-title">模型</p>
                   <button class="agent-row" type="button" data-agent="codex">
-                    <span class="mark">&gt;</span>
+                    <span class="agent-logo codex-logo"><img src="public/icons/codex.svg" alt="" /></span>
                     <span><strong>Codex</strong><small>写代码</small></span>
                   </button>
                   <button class="agent-row" type="button" data-agent="claude">
-                    <span class="mark">AI</span>
+                    <span class="agent-logo claude-logo"><img src="public/icons/claude.svg" alt="" /></span>
                     <span><strong>Claude</strong><small>读代码</small></span>
                   </button>
                 </div>
@@ -1854,7 +2093,7 @@
                 <footer class="composer">
                   <div class="composer-tools">
                     <label class="agent-select">
-                      <span class="mark" id="composerMark">&gt;</span>
+                      <span class="agent-logo codex-logo" id="composerMark"><img src="public/icons/codex.svg" alt="" /></span>
                       <select id="agentSelect">
                         <option value="codex">Codex</option>
                         <option value="claude">Claude</option>
@@ -1910,11 +2149,11 @@
                 <div class="rail-section">
                   <p class="rail-title">模型</p>
                   <button class="agent-row" type="button" data-agent="codex">
-                    <span class="mark">&gt;</span>
+                    <span class="agent-logo codex-logo"><img src="public/icons/codex.svg" alt="" /></span>
                     <span><strong>Codex</strong><small>写代码</small></span>
                   </button>
                   <button class="agent-row" type="button" data-agent="claude">
-                    <span class="mark">AI</span>
+                    <span class="agent-logo claude-logo"><img src="public/icons/claude.svg" alt="" /></span>
                     <span><strong>Claude</strong><small>读代码</small></span>
                   </button>
                 </div>
@@ -2048,8 +2287,8 @@
       };
 
       const agentCopy = {
-        codex: { name: "Codex", short: "Codex", mark: ">", session: "codex" },
-        claude: { name: "Claude", short: "Claude", mark: "AI", session: "claude" },
+        codex: { name: "Codex", short: "Codex", session: "codex" },
+        claude: { name: "Claude", short: "Claude", session: "claude" },
       };
 
       const $ = (selector) => document.querySelector(selector);
@@ -2085,6 +2324,11 @@
 
       function activeWorkdir() {
         return state.paths[state.activePathIndex] || state.paths[0] || "/opt/limpet-workspace";
+      }
+
+      function agentLogoHTML(agentId) {
+        const normalized = agentId === "claude" ? "claude" : "codex";
+        return `<img src="public/icons/${normalized}.svg" alt="" />`;
       }
 
       function renderPaths() {
@@ -2208,7 +2452,8 @@
         $("#taskInput").placeholder = waitingForReply ? "等待 AI 回复后再继续" : connected ? `发送任务到 ${agent.short}` : copy.composer;
         $("#taskInput").disabled = !connected || waitingForReply;
         $("#sendButton").textContent = waitingForReply ? "等待回复" : connected ? copy.send : copy.send;
-        $("#composerMark").textContent = agent.mark;
+        $("#composerMark").className = `agent-logo ${state.agent === "claude" ? "claude-logo" : "codex-logo"}`;
+        $("#composerMark").innerHTML = agentLogoHTML(state.agent);
         $("#agentSelect").value = state.agent;
         $("#rawText").textContent = copy.raw;
         $("#rawLabel").textContent = copy.label;

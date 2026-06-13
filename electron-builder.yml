@@ -1,0 +1,18 @@
+appId: com.beexofficial.beex.test.mac
+productName: AI Workbench
+directories:
+  output: build/mac
+files:
+  - dist/**/*
+  - electron/**/*
+  - public/icons/**/*
+  - package.json
+mac:
+  icon: public/icons/workbench.icns
+  category: public.app-category.developer-tools
+  target:
+    - dir
+asar: true
+npmRebuild: false
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
