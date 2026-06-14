@@ -140,6 +140,13 @@ function agentCommand(profile, agent) {
   return profile[agent.commandKey] || defaultProfile[agent.commandKey];
 }
 
+function dirnameRemote(path) {
+  const normalized = String(path || "").replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) return ".";
+  return normalized.slice(0, index);
+}
+
 function buildHealthCommand(profile) {
   const codexProbe = commandName(profile.codexCommand);
   const claudeProbe = commandName(profile.claudeCommand);
@@ -178,13 +185,42 @@ function buildAgentSendCommand(profile, agent, prompt) {
   const targetSession = sessionName(profile, agent.id);
   const encodedPrompt = toBase64Utf8(prompt);
   const command = agentCommand(profile, agent);
+  const starterPath = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench/start-${targetSession}.sh`;
+  const starterScript = `#!/usr/bin/env bash
+cd ${shQuote(profile.workdir)}
+printf 'AI Workbench: 正在启动 ${agent.shortName}...\\n'
+${command}
+code=$?
+printf '\\nAI Workbench: ${agent.shortName} 已退出，退出码 %s。\\n' "$code"
+printf '请在服务器上单独运行 ${commandName(command) || agent.shortName} 查看启动原因。\\n'
+exec bash -l
+`;
 
   return bashCommand(`
 set -e
 mkdir -p ${shQuote(profile.workdir)}
+mkdir -p ${shQuote(dirnameRemote(starterPath))}
+cat > ${shQuote(starterPath)} <<'AIWB_STARTER'
+${starterScript}
+AIWB_STARTER
+chmod 700 ${shQuote(starterPath)}
+
+if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
+  CURRENT_COMMAND=$(tmux display-message -p -t ${shQuote(targetSession)} '#{pane_current_command}' 2>/dev/null || true)
+  if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
+    tmux kill-session -t ${shQuote(targetSession)}
+  fi
+fi
+
 if ! tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
-  tmux new-session -d -s ${shQuote(targetSession)} -c ${shQuote(profile.workdir)} ${shQuote(command)}
-  sleep 2
+  tmux new-session -d -s ${shQuote(targetSession)} -c ${shQuote(profile.workdir)} ${shQuote(starterPath)}
+  sleep 1.8
+fi
+
+CURRENT_COMMAND=$(tmux display-message -p -t ${shQuote(targetSession)} '#{pane_current_command}' 2>/dev/null || true)
+if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
+  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
+  exit 46
 fi
 AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
 tmux set-buffer -b aiwb-prompt "$AIWB_PROMPT"
@@ -233,6 +269,23 @@ fi
 
 function shortError(error) {
   return error?.message || String(error || "未知错误");
+}
+
+function detectAgentIssue(output, agent) {
+  const text = String(output || "");
+  if (/tmux session not running/i.test(text)) {
+    return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
+  }
+  if (text.includes(`AI Workbench: ${agent.shortName} 已退出`)) {
+    return `${agent.shortName} 没有启动成功。原始原因已放在“详情”里，通常是服务器上的命令路径、登录状态或工具配置需要处理。`;
+  }
+  return "";
+}
+
+function cleanAgentOutput(output) {
+  return String(output || "")
+    .replace(/^AI Workbench: 正在启动 .*\n?/gm, "")
+    .trim();
 }
 
 export function App() {
@@ -398,30 +451,49 @@ export function App() {
         role: "assistant",
         agentId: activeAgent.id,
         title: `已发送到 ${activeAgent.shortName}`,
-        body: `tmux: ${sessionName(currentProfile, activeAgent.id)}，正在等待远端输出。`,
+        body: `正在等待 ${activeAgent.shortName} 回复。`,
         status: "running",
       }),
     ]);
+
+    const applyAgentOutput = (output, final = false) => {
+      const raw = String(output || "").trim();
+      setRawOutput(raw);
+
+      const issue = detectAgentIssue(raw, activeAgent);
+      if (issue) {
+        setRawOpen(true);
+        updateAssistantMessage(assistantMessageId, {
+          title: `${activeAgent.shortName} 没有启动成功`,
+          body: issue,
+          output: "",
+          status: "error",
+        });
+        setConnection({ state: "error", label: "启动失败", detail: activeAgent.shortName });
+        return false;
+      }
+
+      const visibleOutput = cleanAgentOutput(raw);
+      updateAssistantMessage(assistantMessageId, {
+        title: final ? `${activeAgent.shortName} 回复` : `等待 ${activeAgent.shortName} 回复`,
+        body: visibleOutput ? "" : `正在等待 ${activeAgent.shortName} 回复。`,
+        output: visibleOutput,
+        status: final ? "done" : "running",
+      });
+      return true;
+    };
 
     try {
       const firstOutput = await runRemoteCommand(
         buildAgentSendCommand(currentProfile, activeAgent, text),
         2_097_152,
       );
-      setRawOutput(firstOutput.trim());
-      updateAssistantMessage(assistantMessageId, {
-        output: firstOutput.trim(),
-        status: "running",
-      });
+      if (!applyAgentOutput(firstOutput)) return;
 
       for (let index = 0; index < 5; index += 1) {
         await sleep(1800);
         const output = await runRemoteCommand(buildCaptureCommand(currentProfile, activeAgent), 2_097_152);
-        setRawOutput(output.trim());
-        updateAssistantMessage(assistantMessageId, {
-          output: output.trim(),
-          status: index === 4 ? "done" : "running",
-        });
+        if (!applyAgentOutput(output, index === 4)) return;
       }
 
       setConnection({
@@ -464,8 +536,8 @@ export function App() {
           role: "assistant",
           agentId: activeAgent.id,
           title: `${activeAgent.shortName} 输出已刷新`,
-          body: `tmux: ${sessionName(currentProfile, activeAgent.id)}`,
-          output: output.trim(),
+          body: `已读取 ${activeAgent.shortName} 当前输出。`,
+          output: cleanAgentOutput(output),
         }),
       ]);
     } catch (error) {
