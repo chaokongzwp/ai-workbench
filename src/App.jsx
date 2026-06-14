@@ -62,6 +62,12 @@ const agents = [
   },
 ];
 
+const assetBase = import.meta.env.BASE_URL || "./";
+
+function assetPath(path) {
+  return `${assetBase}${path.replace(/^\/+/, "")}`;
+}
+
 let messageCounter = 0;
 
 function createMessage(partial) {
@@ -1097,7 +1103,7 @@ function AgentLogo({ agentId, compact = false }) {
   const label = normalized === "claude" ? "Claude" : "Codex";
   return (
     <span className={`agent-logo ${normalized} ${compact ? "compact" : ""}`} aria-label={label}>
-      <img src={`/icons/${normalized}.svg`} alt="" />
+      <img src={assetPath(`icons/${normalized}.svg`)} alt="" />
     </span>
   );
 }
@@ -1105,7 +1111,7 @@ function AgentLogo({ agentId, compact = false }) {
 function WorkbenchLogo() {
   return (
     <span className="workbench-logo" aria-label="AI Workbench">
-      <img src="/icons/workbench.png" alt="" />
+      <img src={assetPath("icons/workbench.png")} alt="" />
     </span>
   );
 }
