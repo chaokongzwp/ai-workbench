@@ -222,6 +222,30 @@ if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
   tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
   exit 46
 fi
+
+for AIWB_PROMPT_TRY in 1 2; do
+  AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
+  if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
+     printf '%s' "$AIWB_PANE" | grep -Fq 'Choose how' &&
+     printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
+    if [ "$AIWB_PROMPT_TRY" = "1" ]; then
+      tmux send-keys -t ${shQuote(targetSession)} C-m
+    else
+      tmux send-keys -t ${shQuote(targetSession)} 1 C-m
+    fi
+    sleep 1.4
+  else
+    break
+  fi
+done
+
+AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
+if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
+   printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
+  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
+  exit 47
+fi
+
 AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
 tmux set-buffer -b aiwb-prompt "$AIWB_PROMPT"
 tmux paste-buffer -t ${shQuote(targetSession)} -b aiwb-prompt
@@ -273,6 +297,9 @@ function shortError(error) {
 
 function detectAgentIssue(output, agent) {
   const text = String(output || "");
+  if (/Introducing GPT-5\.5/i.test(text) && /Use existing model/i.test(text)) {
+    return `${agent.shortName} 正在等待模型选择，任务还没有发出去。我已经尝试自动确认；如果仍然出现，请先在“详情”里点中断后重试。`;
+  }
   if (/tmux session not running/i.test(text)) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
   }
@@ -285,6 +312,7 @@ function detectAgentIssue(output, agent) {
 function cleanAgentOutput(output) {
   return String(output || "")
     .replace(/^AI Workbench: 正在启动 .*\n?/gm, "")
+    .replace(/Introducing GPT-5\.5[\s\S]*?press enter to confirm\s*/gi, "")
     .trim();
 }
 
