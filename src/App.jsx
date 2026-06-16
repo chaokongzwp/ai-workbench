@@ -435,14 +435,7 @@ export function App() {
   const [diagnostics, setDiagnostics] = useState({});
   const [rawOutput, setRawOutput] = useState("原始输出会在测试连接或发送任务后显示。");
   const [busy, setBusy] = useState(false);
-  const [messages, setMessages] = useState([
-    createMessage({
-      role: "assistant",
-      title: "准备开始远程工作",
-      body: "连接云服务器后，直接选择 Codex 或 Claude，把任务发到对应会话里。",
-      status: "idle",
-    }),
-  ]);
+  const [messages, setMessages] = useState([]);
 
   const activeAgent = useMemo(
     () => agents.find((item) => item.id === activeAgentId) ?? agents[0],
@@ -786,15 +779,18 @@ export function App() {
 
         <section className="conversation">
           <div className="conversation-scroll">
-            <ConnectionSummary
-              profile={profile}
-              connection={connection}
-              diagnostics={diagnostics}
-              profileReady={isProfileReady}
-              busy={busy}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onTestConnection={testConnection}
-            />
+            {messages.length === 0 ? (
+              <ConnectionSummary
+                profile={profile}
+                connection={connection}
+                diagnostics={diagnostics}
+                profileReady={isProfileReady}
+                busy={busy}
+                activeAgent={activeAgent}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onTestConnection={testConnection}
+              />
+            ) : null}
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} activeAgent={activeAgent} />
             ))}
@@ -1010,16 +1006,27 @@ function NavigationPanel({
   );
 }
 
-function ConnectionSummary({ profile, connection, diagnostics, profileReady: ready, busy, onOpenSettings, onTestConnection }) {
-  const title = ready ? "工作台就绪" : "连接云服务器";
+function ConnectionSummary({
+  profile,
+  connection,
+  diagnostics,
+  profileReady: ready,
+  busy,
+  activeAgent,
+  onOpenSettings,
+  onTestConnection,
+}) {
+  const title = ready ? `问 ${activeAgent.shortName} 一个任务` : "连接云服务器";
   const body = ready
-    ? "选择会话，输入任务，AI 会在你的云端工程里继续工作。"
-    : "第一次使用只需要填写服务器和登录密码，之后会直接进入对话。";
+    ? `当前工作路径 ${diagnostics.pwd || profile.workdir}。`
+    : "添加服务器后即可开始对话。";
 
   return (
-    <section className={`summary-strip ${ready ? "" : "setup-required"}`}>
+    <section className={`summary-strip codex-intro ${ready ? "" : "setup-required"}`}>
       <div className="summary-main">
-        <span className="eyebrow">Remote AI Workbench</span>
+        <div className="intro-mark">
+          <AgentLogo agentId={activeAgent.id} compact />
+        </div>
         <h1>{title}</h1>
         <p>{body}</p>
         <div className="summary-actions">
