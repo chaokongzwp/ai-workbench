@@ -424,7 +424,6 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
-  const [historyEnabled, setHistoryEnabled] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState("codex");
   const [composer, setComposer] = useState("");
   const [connection, setConnection] = useState({
@@ -765,11 +764,7 @@ export function App() {
           <NavigationPanel
             profile={profile}
             connection={connection}
-            activeAgentId={activeAgentId}
             diagnostics={diagnostics}
-            historyEnabled={historyEnabled}
-            setActiveAgentId={setActiveAgentId}
-            setHistoryEnabled={setHistoryEnabled}
             onOpenSettings={() => setSettingsOpen(true)}
             onTestConnection={testConnection}
             onRefreshOutput={refreshOutput}
@@ -800,14 +795,10 @@ export function App() {
             activeAgent={activeAgent}
             activeAgentId={activeAgentId}
             composer={composer}
-            historyEnabled={historyEnabled}
-            rawOpen={rawOpen}
             busy={busy}
-            profile={profile}
             profileReady={isProfileReady}
             setActiveAgentId={setActiveAgentId}
             setComposer={setComposer}
-            setRawOpen={setRawOpen}
             onOpenSettings={() => setSettingsOpen(true)}
             onSend={sendTask}
           />
@@ -845,11 +836,7 @@ export function App() {
             <NavigationPanel
               profile={profile}
               connection={connection}
-              activeAgentId={activeAgentId}
               diagnostics={diagnostics}
-              historyEnabled={historyEnabled}
-              setActiveAgentId={setActiveAgentId}
-              setHistoryEnabled={setHistoryEnabled}
               onOpenSettings={() => {
                 setSettingsOpen(true);
                 setMobileNavOpen(false);
@@ -918,11 +905,7 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
 function NavigationPanel({
   profile,
   connection,
-  activeAgentId,
   diagnostics,
-  historyEnabled,
-  setActiveAgentId,
-  setHistoryEnabled,
   onOpenSettings,
   onTestConnection,
   onRefreshOutput,
@@ -966,40 +949,19 @@ function NavigationPanel({
         </button>
       </div>
 
-      <SectionHeader title="会话" />
-      <div className="stack compact">
-        {agents.map((agent) => (
-          <button
-            className={`row-button ${activeAgentId === agent.id ? "active" : ""}`}
-            type="button"
-            key={agent.id}
-            onClick={() => setActiveAgentId(agent.id)}
-          >
-            <span>
-              <AgentLogo agentId={agent.id} compact />
-              {agent.shortName} 会话
-            </span>
-            <span>›</span>
-          </button>
-        ))}
+      <div className="sidebar-meta" aria-label="当前工作区">
+        <div>
+          <span>工作区</span>
+          <strong>{diagnostics.pwd || profile.workdir}</strong>
+        </div>
       </div>
 
-      <div className="sidebar-footer">
-        <button className="row-button" type="button" onClick={onRefreshOutput} disabled={busy}>
-          <span>刷新状态</span>
-          <span>↻</span>
+      <div className="sidebar-actions">
+        <button className="sidebar-action" type="button" onClick={onRefreshOutput} disabled={busy}>
+          刷新
         </button>
-        <label className="toggle-row">
-          <span>不保存聊天历史</span>
-          <input
-            type="checkbox"
-            checked={!historyEnabled}
-            onChange={(event) => setHistoryEnabled(!event.target.checked)}
-          />
-        </label>
-        <button className="row-button" type="button" onClick={onOpenSettings}>
-          <span>服务器设置</span>
-          <span>›</span>
+        <button className="sidebar-action" type="button" onClick={onOpenSettings}>
+          设置
         </button>
       </div>
     </>
@@ -1109,14 +1071,10 @@ function Composer({
   activeAgent,
   activeAgentId,
   composer,
-  historyEnabled,
-  rawOpen,
   busy,
-  profile,
   profileReady: ready,
   setActiveAgentId,
   setComposer,
-  setRawOpen,
   onOpenSettings,
   onSend,
 }) {
@@ -1135,11 +1093,6 @@ function Composer({
             ))}
           </select>
         </label>
-        <span className="path-chip">{profile.workdir}</span>
-        <button type="button" className={`raw-chip ${rawOpen ? "active" : ""}`} onClick={() => setRawOpen(!rawOpen)}>
-          详情
-        </button>
-        <span className="history-note">{historyEnabled ? "本地记录开启" : "不保存历史"}</span>
       </div>
       <div className="input-row">
         <textarea
