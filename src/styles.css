@@ -358,7 +358,7 @@ textarea:disabled {
   width: 100%;
   gap: 4px;
   min-height: 68px;
-  padding: 12px 42px 12px 12px;
+  padding: 12px 86px 12px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
   text-align: left;
@@ -412,6 +412,46 @@ textarea:disabled {
   background: var(--green-soft);
   font-size: 12px;
   font-weight: 800;
+}
+
+.connect-badge {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  min-width: 52px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--blue);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 180ms ease, transform 180ms ease, opacity 180ms ease;
+}
+
+.connect-badge:hover {
+  background: var(--blue-hover);
+}
+
+.connect-badge:active {
+  transform: scale(0.97);
+}
+
+.connect-badge.connected {
+  color: #147a47;
+  background: var(--green-soft);
+}
+
+.connect-badge.error {
+  color: #a11f1f;
+  background: var(--red-soft);
+}
+
+.connect-badge.testing {
+  color: #1857a6;
+  background: var(--blue-soft);
 }
 
 .row-button {
@@ -1542,7 +1582,7 @@ body {
 .nav-card {
   min-height: 74px;
   margin: 0;
-  padding: 14px 44px 14px 14px;
+  padding: 14px 88px 14px 14px;
   border-radius: 14px;
 }
 
@@ -1578,6 +1618,10 @@ body {
   color: #248a3d;
   background: var(--green-soft);
   font-size: 11px;
+}
+
+.connect-badge {
+  bottom: 14px;
 }
 
 .diagnostic-row {
@@ -2043,6 +2087,7 @@ body {
 .text-button,
 .danger-button,
 .copy-message,
+.connect-badge,
 .raw-meta button,
 .raw-expand {
   -webkit-user-select: none;
@@ -2057,6 +2102,7 @@ body {
 .text-button:focus-visible,
 .danger-button:focus-visible,
 .copy-message:focus-visible,
+.connect-badge:focus-visible,
 .raw-meta button:focus-visible,
 .raw-expand:focus-visible,
 .input-row textarea:focus-visible,
@@ -2363,7 +2409,14 @@ body {
 
 .mac-shell .nav-card {
   min-height: 64px;
-  padding: 12px 42px 12px 12px;
+  padding: 12px 84px 12px 12px;
+}
+
+.mac-shell .connect-badge {
+  height: 30px;
+  min-width: 50px;
+  bottom: 12px;
+  padding: 0 11px;
 }
 
 .mac-shell .row-button {

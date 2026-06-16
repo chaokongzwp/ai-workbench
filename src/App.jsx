@@ -635,12 +635,14 @@ export function App() {
         <aside className="sidebar desktop-sidebar">
           <NavigationPanel
             profile={profile}
+            connection={connection}
             activeAgentId={activeAgentId}
             diagnostics={diagnostics}
             historyEnabled={historyEnabled}
             setActiveAgentId={setActiveAgentId}
             setHistoryEnabled={setHistoryEnabled}
             onOpenSettings={() => setSettingsOpen(true)}
+            onTestConnection={testConnection}
             onRefreshOutput={refreshOutput}
             busy={busy}
           />
@@ -710,6 +712,7 @@ export function App() {
             </div>
             <NavigationPanel
               profile={profile}
+              connection={connection}
               activeAgentId={activeAgentId}
               diagnostics={diagnostics}
               historyEnabled={historyEnabled}
@@ -719,6 +722,7 @@ export function App() {
                 setSettingsOpen(true);
                 setMobileNavOpen(false);
               }}
+              onTestConnection={testConnection}
               onRefreshOutput={refreshOutput}
               busy={busy}
             />
@@ -781,28 +785,54 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
 
 function NavigationPanel({
   profile,
+  connection,
   activeAgentId,
   diagnostics,
   historyEnabled,
   setActiveAgentId,
   setHistoryEnabled,
   onOpenSettings,
+  onTestConnection,
   onRefreshOutput,
   busy,
 }) {
-  const connected = Boolean(diagnostics.host);
+  const connected = connection.state === "connected" || Boolean(diagnostics.host);
+  const connectLabel =
+    connection.state === "testing" ? "连接中" : connected ? "重连" : connection.state === "error" ? "重试" : "连接";
+
+  function openSettingsFromCard(event) {
+    if (event.key && event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onOpenSettings();
+  }
 
   return (
     <>
       <SectionHeader title="服务器" />
-      <button className="nav-card active" type="button" onClick={onOpenSettings}>
+      <div
+        className="nav-card server-card active"
+        role="button"
+        tabIndex={0}
+        onClick={onOpenSettings}
+        onKeyDown={openSettingsFromCard}
+      >
         <span className="nav-title">
           <StatusDot status={connected ? "connected" : "idle"} />
           <strong>默认服务器</strong>
         </span>
         <span className="nav-subtitle">{profile.host || "未添加"}</span>
-        <span className="ssh-badge">{connected ? "在线" : "待连接"}</span>
-      </button>
+        <button
+          className={`connect-badge ${connection.state}`}
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onTestConnection();
+          }}
+          disabled={busy || connection.state === "testing"}
+        >
+          {connectLabel}
+        </button>
+      </div>
 
       <SectionHeader title="会话" />
       <div className="stack compact">
