@@ -63,9 +63,21 @@ const agents = [
 ];
 
 const assetBase = import.meta.env.BASE_URL || "./";
+const finalAnswerStart = "AIWB_FINAL_START";
+const finalAnswerEnd = "AIWB_FINAL_END";
 
 function assetPath(path) {
   return `${assetBase}${path.replace(/^\/+/, "")}`;
+}
+
+function formatAgentPrompt(prompt) {
+  return `${String(prompt || "").trim()}
+
+请只在任务完成后，把最终给用户看的回答放在下面两个标记之间。标记中不要放命令行日志、过程、菜单、tmux 输出或工具调用记录。
+
+${finalAnswerStart}
+这里写最终回答
+${finalAnswerEnd}`;
 }
 
 let messageCounter = 0;
@@ -183,7 +195,7 @@ function parseHealth(output) {
 
 function buildAgentSendCommand(profile, agent, prompt) {
   const targetSession = sessionName(profile, agent.id);
-  const encodedPrompt = toBase64Utf8(prompt);
+  const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
   const command = agentCommand(profile, agent);
   const starterPath = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench/start-${targetSession}.sh`;
   const starterScript = `#!/usr/bin/env bash
@@ -309,11 +321,101 @@ function detectAgentIssue(output, agent) {
   return "";
 }
 
-function cleanAgentOutput(output) {
-  return String(output || "")
+function stripTerminalControl(text) {
+  return String(text || "")
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+    .replace(/\r/g, "\n")
+    .replace(/\u0000/g, "");
+}
+
+function trimVisibleText(text) {
+  return String(text || "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extractMarkedFinalOutput(text) {
+  const pattern = new RegExp(`${finalAnswerStart}\\s*([\\s\\S]*?)\\s*${finalAnswerEnd}`, "gi");
+  let match;
+  let answer = "";
+
+  while ((match = pattern.exec(text))) {
+    const candidate = trimVisibleText(match[1]);
+    if (candidate && !candidate.includes("这里写最终回答")) answer = candidate;
+  }
+
+  if (answer) return answer;
+
+  const lastStart = text.lastIndexOf(finalAnswerStart);
+  if (lastStart < 0) return "";
+
+  const openAnswer = trimVisibleText(text.slice(lastStart + finalAnswerStart.length).replace(finalAnswerEnd, ""));
+  return openAnswer && !openAnswer.includes("这里写最终回答") ? openAnswer : "";
+}
+
+function looksLikeTerminalNoise(line, prompt = "") {
+  const text = String(line || "").trim();
+  const userPrompt = String(prompt || "").trim();
+
+  if (!text) return false;
+  if (userPrompt && text === userPrompt) return true;
+  if (text === finalAnswerStart || text === finalAnswerEnd || text === "这里写最终回答") return true;
+  if (/^(请只在任务完成后|标记中不要放命令行日志)/.test(text)) return true;
+  if (/^[╭╮╰╯│┃─━┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬\s]+$/.test(text)) return true;
+  if (/^(›|▌|>_|\$|#)\s*/.test(text)) return true;
+  if (/^(Introducing GPT-5\.5|Learn more:|Choose how|Use ↑|1\. Try new model|2\. Use existing model)/i.test(text)) {
+    return true;
+  }
+  if (/^(AI Workbench:|tmux session not running|Missing required field:)/i.test(text)) return true;
+  if (/^(thinking|working|running|reading|edited|applied|searched|opened|ran|tool|shell)\b/i.test(text)) return true;
+  if (/^(ctrl|shift|enter|esc|press enter)\b/i.test(text)) return true;
+  if (/^[\w.-]+@[\w.-]+:[~/\w.-]*[$#]/.test(text)) return true;
+  if (/^\d+% context left/i.test(text)) return true;
+
+  return false;
+}
+
+function fallbackFinalOutput(text, prompt = "") {
+  const lines = stripTerminalControl(text)
     .replace(/^AI Workbench: 正在启动 .*\n?/gm, "")
     .replace(/Introducing GPT-5\.5[\s\S]*?press enter to confirm\s*/gi, "")
-    .trim();
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+
+  const filtered = [];
+  for (const line of lines) {
+    if (looksLikeTerminalNoise(line, prompt)) continue;
+    filtered.push(line);
+  }
+
+  let startIndex = 0;
+  const userPrompt = String(prompt || "").trim();
+  if (userPrompt) {
+    for (let index = filtered.length - 1; index >= 0; index -= 1) {
+      if (filtered[index].includes(userPrompt)) {
+        startIndex = index + 1;
+        break;
+      }
+    }
+  }
+
+  return trimVisibleText(filtered.slice(startIndex).slice(-80).join("\n"));
+}
+
+function extractAgentFinalOutput(output, prompt = "") {
+  const normalized = stripTerminalControl(output);
+  const marked = extractMarkedFinalOutput(normalized);
+  if (marked) return { text: marked, final: true };
+
+  return {
+    text: fallbackFinalOutput(normalized, prompt),
+    final: false,
+  };
+}
+
+function cleanAgentOutput(output, prompt = "") {
+  return extractAgentFinalOutput(output, prompt).text;
 }
 
 export function App() {
@@ -501,12 +603,18 @@ export function App() {
         return false;
       }
 
-      const visibleOutput = cleanAgentOutput(raw);
+      const extracted = extractAgentFinalOutput(raw, text);
+      const visibleOutput = extracted.text;
+      const done = extracted.final || (final && Boolean(visibleOutput));
       updateAssistantMessage(assistantMessageId, {
-        title: final ? `${activeAgent.shortName} 回复` : `等待 ${activeAgent.shortName} 回复`,
-        body: visibleOutput ? "" : `正在等待 ${activeAgent.shortName} 回复。`,
+        title: done ? `${activeAgent.shortName} 回复` : `等待 ${activeAgent.shortName} 回复`,
+        body: visibleOutput
+          ? ""
+          : final
+            ? `还没有拿到最终回复，稍后点“刷新状态”。`
+            : `正在等待 ${activeAgent.shortName} 回复。`,
         output: visibleOutput,
-        status: final ? "done" : "running",
+        status: done ? "done" : "running",
       });
       return true;
     };
@@ -975,13 +1083,7 @@ function MessageBubble({ message, activeAgent }) {
       </header>
       {message.body ? <p className="assistant-copy">{message.body}</p> : null}
       {message.output ? (
-        <section className="preview-block emphasis">
-          <header>
-            <div>
-              <strong>结果</strong>
-              <span>详情输出</span>
-            </div>
-          </header>
+        <section className="assistant-answer">
           <pre>{message.output}</pre>
         </section>
       ) : null}

@@ -763,6 +763,21 @@ textarea:disabled {
   line-height: 1.64;
 }
 
+.assistant-answer {
+  margin: 6px 0 0 41px;
+  min-width: 0;
+}
+
+.assistant-answer pre {
+  margin: 0;
+  color: #202936;
+  background: transparent;
+  font: inherit;
+  line-height: 1.68;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .preview-block {
   margin-top: 12px;
   margin-left: 41px;
@@ -1226,6 +1241,7 @@ textarea:disabled {
   }
 
   .assistant-copy,
+  .assistant-answer,
   .preview-block {
     margin-left: 0;
   }
@@ -2148,7 +2164,8 @@ body {
 }
 
 .user-prompt p,
-.assistant-copy {
+.assistant-copy,
+.assistant-answer pre {
   font-size: 15px;
 }
 
@@ -2497,6 +2514,7 @@ body {
 }
 
 .mac-shell .assistant-copy,
+.mac-shell .assistant-answer pre,
 .mac-shell .user-prompt p {
   font-size: 14px;
   line-height: 1.55;
