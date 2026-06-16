@@ -2295,6 +2295,22 @@ body {
   min-height: 52px;
   padding: 0 16px 0 78px;
   grid-template-columns: minmax(220px, 0.7fr) minmax(220px, 0.78fr) auto;
+  -webkit-app-region: drag;
+}
+
+.mac-shell button,
+.mac-shell input,
+.mac-shell textarea,
+.mac-shell select,
+.mac-shell label,
+.mac-shell .topbar-actions,
+.mac-shell .nav-trigger,
+.mac-shell .settings-layer,
+.mac-shell .mobile-drawer,
+.mac-shell .composer,
+.mac-shell .sidebar,
+.mac-shell .raw-output {
+  -webkit-app-region: no-drag;
 }
 
 .mac-shell .brand {
