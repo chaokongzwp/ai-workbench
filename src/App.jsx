@@ -71,13 +71,8 @@ function assetPath(path) {
 }
 
 function formatAgentPrompt(prompt) {
-  return `${String(prompt || "").trim()}
-
-请只在任务完成后，把最终给用户看的回答放在下面两个标记之间。标记中不要放命令行日志、过程、菜单、tmux 输出或工具调用记录。
-
-${finalAnswerStart}
-这里写最终回答
-${finalAnswerEnd}`;
+  const userTask = JSON.stringify(String(prompt || "").trim());
+  return `请完成这个用户任务。用户任务是一个 JSON 字符串，请先解析它再执行：${userTask}。输出要求：只输出最终给用户看的答案，不要复述本段规则，不要输出过程、菜单、命令行日志或工具调用记录；最终答案必须放在 ${finalAnswerStart} 和 ${finalAnswerEnd} 之间。`;
 }
 
 let messageCounter = 0;
@@ -422,7 +417,7 @@ function extractMarkedFinalOutput(text) {
 
   while ((match = pattern.exec(text))) {
     const candidate = trimVisibleText(match[1]);
-    if (candidate && !candidate.includes("这里写最终回答")) answer = candidate;
+    if (candidate && candidate !== "和" && !candidate.includes("这里写最终回答")) answer = candidate;
   }
 
   if (answer) return answer;
@@ -441,6 +436,8 @@ function looksLikeTerminalNoise(line, prompt = "") {
   if (!text) return false;
   if (userPrompt && text === userPrompt) return true;
   if (text === finalAnswerStart || text === finalAnswerEnd || text === "这里写最终回答") return true;
+  if (text.includes(finalAnswerStart) || text.includes(finalAnswerEnd)) return true;
+  if (/^明白[。，.].*(最终|标记|AIWB_FINAL)/.test(text)) return true;
   if (/^(请只在任务完成后|标记中不要放命令行日志)/.test(text)) return true;
   if (/^[╭╮╰╯│┃─━┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬\s]+$/.test(text)) return true;
   if (/^(›|▌|>_|\$|#)\s*/.test(text)) return true;
