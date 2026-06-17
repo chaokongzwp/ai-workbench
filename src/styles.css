@@ -139,6 +139,29 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.topbar-session {
+  display: none;
+  min-width: 0;
+  justify-self: center;
+  max-width: min(420px, 100%);
+  padding: 0 14px;
+  color: #111827;
+  text-align: center;
+}
+
+.topbar-session strong {
+  display: block;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-session.visible {
+  display: block;
+}
+
 .shell-icon {
   display: inline-flex;
   align-items: center;
@@ -3117,6 +3140,31 @@ body {
   grid-template-columns: 72px minmax(0, 1fr);
 }
 
+.topbar {
+  grid-template-columns: minmax(210px, 0.85fr) minmax(180px, 1fr) auto;
+}
+
+.topbar .connection-pill,
+.topbar .topbar-test {
+  display: none;
+}
+
+.app-shell:not(.sidebar-collapsed) .topbar-session {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .topbar-session.visible {
+  display: block;
+}
+
+.mac-shell .topbar {
+  grid-template-columns: minmax(210px, 0.7fr) minmax(220px, 1fr) auto;
+}
+
+.mac-shell .topbar-session strong {
+  font-size: 14px;
+}
+
 .sidebar.collapsed {
   align-items: stretch;
   padding: 14px 10px;
@@ -3188,6 +3236,10 @@ body {
 }
 
 @media (max-width: 820px) {
+  .app-shell:not(.sidebar-collapsed) .topbar-session.visible {
+    display: block;
+  }
+
   .conversation .conversation-scroll {
     padding: 18px 14px 150px;
   }

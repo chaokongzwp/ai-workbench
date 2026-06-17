@@ -1492,28 +1492,19 @@ export function App() {
     typeof window !== "undefined" &&
     window.matchMedia?.("(min-width: 1024px) and (hover: hover)").matches;
 
-  const platformLabel =
-    bridge?.platform === "mac"
-      ? "macOS 本机调试"
-      : platform === "ios"
-        ? "iOS 原生 SSH"
-        : "Web 预览";
-
   const shellClassName = `app-shell ${bridge?.platform === "mac" || desktopPreview ? "mac-shell" : ""} ${
     sidebarCollapsed ? "sidebar-collapsed" : ""
   }`;
+  const activeServerIndex = servers.findIndex((server) => server.id === activeServerId);
+  const activeSessionName = serverDisplayName(activeServer, activeServerIndex >= 0 ? activeServerIndex : 0);
 
   return (
     <main className={shellClassName}>
       <TopBar
-        connection={connection}
-        profile={profile}
-        profileReady={isProfileReady}
-        platformLabel={platformLabel}
+        sessionName={activeSessionName}
+        showSessionName={sidebarCollapsed || platform === "ios" || !desktopPreview}
         onOpenNav={() => setMobileNavOpen(true)}
         onOpenSettings={() => openServerSettings()}
-        onTestConnection={testConnection}
-        busy={busy}
       />
 
       <div className="workspace">
@@ -1660,7 +1651,7 @@ export function App() {
   );
 }
 
-function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpenNav, onOpenSettings, onTestConnection, busy }) {
+function TopBar({ sessionName: currentSessionName, showSessionName, onOpenNav, onOpenSettings }) {
   return (
     <header className="topbar">
       <button className="nav-trigger" type="button" aria-label="打开菜单" onClick={onOpenNav}>
@@ -1670,18 +1661,13 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
         <WorkbenchLogo />
         <div>
           <strong>AI Workbench</strong>
-          <span>{ready ? platformLabel : "添加服务器后开始"}</span>
+          <span>AI sessions</span>
         </div>
       </div>
-      <div className={`connection-pill ${connection.state}`}>
-        <StatusDot status={connection.state} />
-        <span>{connection.label}</span>
-        <b>{ready ? profile.host : "未连接"}</b>
+      <div className={`topbar-session ${showSessionName ? "visible" : ""}`} aria-hidden={!showSessionName}>
+        <strong>{currentSessionName}</strong>
       </div>
       <div className="topbar-actions">
-        <button type="button" className="ghost-button topbar-test" onClick={onTestConnection} disabled={busy}>
-          测试
-        </button>
         <button type="button" className="ghost-button" onClick={onOpenSettings}>
           服务器
         </button>
