@@ -122,6 +122,10 @@ function commandName(command) {
   return String(command || "").trim().split(/\s+/)[0] || "";
 }
 
+function sanitizeId(value) {
+  return String(value || "session").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48);
+}
+
 function toBase64Utf8(text) {
   const bytes = new TextEncoder().encode(text);
   let binary = "";
@@ -188,7 +192,62 @@ function parseHealth(output) {
   return result;
 }
 
+function buildCodexExecCommand(profile, agent, prompt) {
+  const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
+  const command = agentCommand(profile, agent);
+  const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
+  const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.session`;
+
+  return bashCommand(`
+set -e
+mkdir -p ${shQuote(profile.workdir)}
+mkdir -p ${shQuote(stateDir)}
+cd ${shQuote(profile.workdir)}
+
+AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
+AIWB_OUTPUT=$(mktemp /tmp/aiwb-codex-output.XXXXXX)
+AIWB_LOG=$(mktemp /tmp/aiwb-codex-log.XXXXXX)
+AIWB_SESSION=""
+if [ -s ${shQuote(sessionFile)} ]; then
+  AIWB_SESSION=$(cat ${shQuote(sessionFile)} 2>/dev/null | tr -d '[:space:]' || true)
+fi
+
+set +e
+if printf '%s' "$AIWB_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
+  ${shQuote(command)} exec --skip-git-repo-check --sandbox read-only --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+else
+  ${shQuote(command)} exec --skip-git-repo-check --sandbox read-only --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+fi
+AIWB_STATUS=$?
+set -e
+
+if [ "$AIWB_STATUS" -ne 0 ]; then
+  cat "$AIWB_LOG"
+  rm -f "$AIWB_OUTPUT" "$AIWB_LOG"
+  exit "$AIWB_STATUS"
+fi
+
+printf '__AIWB_RESPONSE_START__\\n'
+cat "$AIWB_OUTPUT"
+printf '\\n__AIWB_RESPONSE_END__\\n'
+
+AIWB_NEXT_SESSION=$(grep -Eo 'session id: [0-9a-fA-F-]{36}' "$AIWB_LOG" | tail -n 1 | awk '{print $3}' || true)
+if [ -z "$AIWB_NEXT_SESSION" ]; then
+  AIWB_LATEST=$(find "$HOME/.codex/sessions" -type f -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+  AIWB_NEXT_SESSION=$(basename "$AIWB_LATEST" 2>/dev/null | grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | tail -n 1 || true)
+fi
+if printf '%s' "$AIWB_NEXT_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
+  printf '%s\\n' "$AIWB_NEXT_SESSION" > ${shQuote(sessionFile)}
+  printf '\\n__AIWB_SESSION__%s\\n' "$AIWB_NEXT_SESSION"
+fi
+
+rm -f "$AIWB_OUTPUT" "$AIWB_LOG"
+`);
+}
+
 function buildAgentSendCommand(profile, agent, prompt) {
+  if (agent.id === "codex") return buildCodexExecCommand(profile, agent, prompt);
+
   const targetSession = sessionName(profile, agent.id);
   const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
   const command = agentCommand(profile, agent);
@@ -429,6 +488,11 @@ function extractMarkedFinalOutput(text) {
   return openAnswer && !openAnswer.includes("这里写最终回答") ? openAnswer : "";
 }
 
+function extractWorkbenchResponse(text) {
+  const match = String(text || "").match(/__AIWB_RESPONSE_START__\n([\s\S]*?)\n__AIWB_RESPONSE_END__/);
+  return match ? trimVisibleText(match[1]) : "";
+}
+
 function looksLikeTerminalNoise(line, prompt = "") {
   const text = String(line || "").trim();
   const userPrompt = String(prompt || "").trim();
@@ -488,11 +552,14 @@ function fallbackFinalOutput(text, prompt = "") {
 
 function extractAgentFinalOutput(output, prompt = "") {
   const normalized = stripTerminalControl(output);
-  const marked = extractMarkedFinalOutput(normalized);
+  const workbenchResponse = extractWorkbenchResponse(normalized);
+  const answerSource = workbenchResponse || normalized;
+  const marked = extractMarkedFinalOutput(answerSource);
   if (marked) return { text: marked, final: true };
+  if (workbenchResponse) return { text: workbenchResponse, final: true };
 
   return {
-    text: fallbackFinalOutput(normalized, prompt),
+    text: fallbackFinalOutput(answerSource, prompt),
     final: false,
   };
 }
@@ -657,6 +724,20 @@ export function App() {
         return false;
       }
 
+      if (agent.id === "codex" && /401 Unauthorized|Missing bearer|authentication/i.test(raw)) {
+        setRawOpen(false);
+        updateAssistantMessage(assistantMessageId, {
+          title: `${agent.shortName} 需要登录`,
+          body: "远端 Codex 登录已过期。生成设备码后，在浏览器完成一次登录即可继续使用。",
+          output: "",
+          status: "login",
+          loginAction: { prompt: text, agentId: agent.id },
+          modelChoice: undefined,
+        });
+        setConnection({ state: "idle", label: "需要登录", detail: agent.shortName });
+        return false;
+      }
+
       if (isCodexModelChoicePrompt(raw)) {
         setRawOpen(false);
         updateAssistantMessage(assistantMessageId, {
@@ -705,7 +786,16 @@ export function App() {
     };
 
     const firstOutput = await runRemoteCommand(buildAgentSendCommand(currentProfile, agent, text), 2_097_152);
-    if (!applyAgentOutput(firstOutput)) return false;
+    if (!applyAgentOutput(firstOutput, agent.id === "codex")) return false;
+
+    if (agent.id === "codex") {
+      setConnection({
+        state: "connected",
+        label: "会话已完成",
+        detail: sessionName(currentProfile, agent.id),
+      });
+      return true;
+    }
 
     for (let index = 0; index < 5; index += 1) {
       await sleep(1800);
