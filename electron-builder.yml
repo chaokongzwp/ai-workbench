@@ -10,6 +10,9 @@ files:
 mac:
   icon: public/icons/workbench.icns
   category: public.app-category.developer-tools
+  extendInfo:
+    NSMicrophoneUsageDescription: AI Workbench 使用麦克风把语音转成任务文本。
+    NSSpeechRecognitionUsageDescription: AI Workbench 使用语音识别把你的语音转成文字。
   target:
     - dir
 asar: true

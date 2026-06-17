@@ -6,6 +6,7 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const classList = new Set(config.packageClassList ?? []);
 
 classList.add("SSHWorkbenchPlugin");
+classList.add("VoiceWorkbenchPlugin");
 config.packageClassList = [...classList];
 
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, "\t")}\n`);

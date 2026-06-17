@@ -1145,7 +1145,7 @@ textarea:disabled {
 
 .input-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
 }
@@ -1192,6 +1192,17 @@ textarea:disabled {
   font-size: 20px;
   font-weight: 750;
   line-height: 1;
+}
+
+.voice-hint {
+  margin: 8px 9px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.voice-hint.error {
+  color: var(--red);
 }
 
 .raw-output {
@@ -1554,7 +1565,12 @@ textarea:disabled {
   }
 
   .input-actions .send-button {
-    width: 100%;
+    flex: 1;
+    height: 46px;
+  }
+
+  .input-actions .voice-button {
+    flex: 0 0 82px;
     height: 46px;
   }
 
@@ -1717,6 +1733,7 @@ body {
 .text-button,
 .danger-button,
 .send-button,
+.voice-button,
 .raw-meta button,
 .raw-expand {
   transition:
@@ -1730,6 +1747,7 @@ body {
 .text-button:active,
 .danger-button:active,
 .send-button:active,
+.voice-button:active,
 .row-button:active,
 .agent-button:active,
 .nav-card:active,
@@ -1801,6 +1819,33 @@ body {
   border: 0;
   color: var(--red);
   background: var(--red-soft);
+}
+
+.voice-button {
+  height: 42px;
+  min-width: 54px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 14px;
+  color: #3f4652;
+  background: rgba(118, 118, 128, 0.12);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.voice-button:hover {
+  background: rgba(118, 118, 128, 0.18);
+}
+
+.voice-button.listening {
+  color: #ffffff;
+  background: var(--red);
+}
+
+.voice-button.listening:hover {
+  background: #e3342b;
 }
 
 .send-button {
@@ -2358,6 +2403,7 @@ body {
 .toggle-row,
 .ghost-button,
 .send-button,
+.voice-button,
 .text-button,
 .danger-button,
 .copy-message,
@@ -2375,6 +2421,7 @@ body {
 .nav-card:focus-visible,
 .ghost-button:focus-visible,
 .send-button:focus-visible,
+.voice-button:focus-visible,
 .text-button:focus-visible,
 .danger-button:focus-visible,
 .copy-message:focus-visible,
@@ -3021,7 +3068,7 @@ body {
 }
 
 .conversation .input-row {
-  grid-template-columns: minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
 }

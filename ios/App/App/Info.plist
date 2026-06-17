@@ -24,6 +24,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AI Workbench 使用麦克风把语音转成任务文本。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>AI Workbench 使用语音识别把你的语音转成文字。</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

@@ -33,6 +33,61 @@ const SSHWorkbench = registerPlugin("SSHWorkbench", {
   }),
 });
 
+const VoiceWorkbench = registerPlugin("VoiceWorkbench", {
+  web: () => {
+    let recognition = null;
+
+    return {
+      async start({ locale = "zh-CN" } = {}) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          throw new Error("当前环境不支持语音识别，请在 iPhone 或 iPad App 中使用。");
+        }
+
+        if (recognition) recognition.stop();
+
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          let transcript = "";
+          recognition = new SpeechRecognition();
+          recognition.lang = locale;
+          recognition.interimResults = true;
+          recognition.continuous = false;
+
+          recognition.onresult = (event) => {
+            let text = "";
+            for (let index = 0; index < event.results.length; index += 1) {
+              text += event.results[index][0]?.transcript || "";
+            }
+            transcript = text.trim();
+          };
+
+          recognition.onerror = (event) => {
+            if (settled) return;
+            settled = true;
+            recognition = null;
+            const message = event?.error === "not-allowed" ? "没有麦克风权限。" : "语音识别失败。";
+            reject(new Error(message));
+          };
+
+          recognition.onend = () => {
+            recognition = null;
+            if (settled) return;
+            settled = true;
+            resolve({ ok: true, text: transcript });
+          };
+
+          recognition.start();
+        });
+      },
+      async stop() {
+        if (recognition) recognition.stop();
+        return { ok: true };
+      },
+    };
+  },
+});
+
 const serverPlatformDefaults = {
   linux: {
     workdir: "/opt/limpet-workspace",
@@ -877,6 +932,8 @@ export function App() {
   const [rawOpen, setRawOpen] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState("codex");
   const [composer, setComposer] = useState("");
+  const [voiceState, setVoiceState] = useState("idle");
+  const [voiceError, setVoiceError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const activeAgent = useMemo(
@@ -1294,6 +1351,39 @@ export function App() {
     }
   }
 
+  async function toggleVoiceInput() {
+    if (voiceState === "listening") {
+      setVoiceState("stopping");
+      try {
+        await VoiceWorkbench.stop();
+      } catch {
+        setVoiceState("idle");
+      }
+      return;
+    }
+
+    if (voiceState !== "idle" || busy || hasPendingAction || !isProfileReady) return;
+
+    setVoiceError("");
+    setVoiceState("listening");
+    try {
+      const result = await VoiceWorkbench.start({ locale: "zh-CN" });
+      const text = String(result?.text || "").trim();
+      if (text) {
+        setComposer((current) => {
+          const existing = current.trim();
+          return existing ? `${existing}\n${text}` : text;
+        });
+      } else {
+        setVoiceError("没有识别到内容。");
+      }
+    } catch (error) {
+      setVoiceError(shortError(error));
+    } finally {
+      setVoiceState("idle");
+    }
+  }
+
   async function chooseCodexModel(message, choice) {
     if (busy || !message?.modelChoice) return;
 
@@ -1560,10 +1650,13 @@ export function App() {
             busy={busy}
             pendingAction={hasPendingAction}
             profileReady={isProfileReady}
+            voiceState={voiceState}
+            voiceError={voiceError}
             setActiveAgentId={setActiveAgentId}
             setComposer={setComposer}
             onOpenSettings={() => openServerSettings()}
             onSend={sendTask}
+            onVoice={toggleVoiceInput}
           />
         </section>
       </div>
@@ -2063,12 +2156,18 @@ function Composer({
   busy,
   pendingAction,
   profileReady: ready,
+  voiceState,
+  voiceError,
   setActiveAgentId,
   setComposer,
   onOpenSettings,
   onSend,
+  onVoice,
 }) {
   const disabled = busy || pendingAction || !ready;
+  const voiceActive = voiceState === "listening" || voiceState === "stopping";
+  const voiceDisabled = !ready || pendingAction || (busy && !voiceActive);
+  const voiceLabel = voiceState === "listening" ? "停止" : voiceState === "stopping" ? "停止中" : "语音";
 
   return (
     <footer className="composer">
@@ -2095,7 +2194,9 @@ function Composer({
           placeholder={
             pendingAction
               ? "先完成上面的操作"
-              : ready
+              : voiceState === "listening"
+                ? "正在听..."
+                : ready
                 ? `告诉 ${activeAgent.shortName} 你想做什么`
                 : "先添加服务器后再发送任务"
           }
@@ -2103,9 +2204,20 @@ function Composer({
         />
         <div className="input-actions">
           {ready ? (
-            <button type="button" className="send-button" onClick={onSend} disabled={disabled || !composer.trim()}>
-              {busy ? "等待" : "发送"}
-            </button>
+            <>
+              <button
+                type="button"
+                className={`voice-button ${voiceActive ? "listening" : ""}`}
+                onClick={onVoice}
+                disabled={voiceDisabled}
+                aria-label={voiceActive ? "停止语音输入" : "语音输入"}
+              >
+                {voiceLabel}
+              </button>
+              <button type="button" className="send-button" onClick={onSend} disabled={disabled || !composer.trim()}>
+                {busy ? "等待" : "发送"}
+              </button>
+            </>
           ) : (
             <button type="button" className="send-button" onClick={onOpenSettings}>
               添加服务器
@@ -2113,6 +2225,7 @@ function Composer({
           )}
         </div>
       </div>
+      {voiceError ? <p className="voice-hint error">{voiceError}</p> : null}
     </footer>
   );
 }
