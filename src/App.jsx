@@ -1093,7 +1093,7 @@ function NavigationPanel({
 }) {
   const connected = connection.state === "connected" || Boolean(diagnostics.host);
   const connectLabel =
-    connection.state === "testing" ? "连接中" : connected ? "重连" : connection.state === "error" ? "重试" : "连接";
+    connection.state === "testing" ? "连接中" : connected ? "已连接" : connection.state === "error" ? "重试" : "连接";
 
   function openSettingsFromCard(event) {
     if (event.key && event.key !== "Enter" && event.key !== " ") return;
