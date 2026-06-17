@@ -910,14 +910,70 @@ textarea:disabled {
   min-width: 0;
 }
 
-.assistant-answer pre {
-  margin: 0;
+.rich-message {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
   color: #111827;
+  font-size: 15px;
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+
+.rich-message p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.rich-message strong {
+  font-weight: 700;
+}
+
+.rich-message ul,
+.rich-message ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.rich-message li {
+  padding-left: 2px;
+}
+
+.rich-message code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 7px;
+  color: inherit;
+  background: rgba(118, 118, 128, 0.18);
+  font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+  line-height: 1.35;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+
+.rich-message pre {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  color: #111827;
+  background: #f4f4f5;
+  font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.rich-message pre code {
+  display: block;
+  padding: 0;
+  border-radius: 0;
   background: transparent;
   font: inherit;
-  line-height: 1.72;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .preview-block {
@@ -2321,7 +2377,7 @@ body {
 
 .user-prompt p,
 .assistant-copy,
-.assistant-answer pre {
+.rich-message {
   font-size: 15px;
 }
 
@@ -2670,7 +2726,7 @@ body {
 }
 
 .mac-shell .assistant-copy,
-.mac-shell .assistant-answer pre,
+.mac-shell .rich-message,
 .mac-shell .user-prompt p {
   font-size: 14px;
   line-height: 1.55;
@@ -2852,10 +2908,9 @@ body {
   line-height: 1.7;
 }
 
-.conversation .assistant-answer pre {
+.conversation .rich-message {
   color: #111827;
-  background: transparent;
-  font: inherit;
+  font-size: 15px;
   line-height: 1.72;
 }
 

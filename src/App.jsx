@@ -1375,11 +1375,143 @@ function MessageBubble({ message, activeAgent, busy, onModelChoice, onCodexLogin
       ) : null}
       {message.output ? (
         <section className="assistant-answer">
-          <pre>{message.output}</pre>
+          <RichMessage text={message.output} />
         </section>
       ) : null}
     </article>
   );
+}
+
+function RichMessage({ text }) {
+  const blocks = useMemo(() => parseRichMessage(text), [text]);
+
+  if (!blocks.length) return null;
+
+  return (
+    <div className="rich-message">
+      {blocks.map((block, index) => {
+        if (block.type === "code") {
+          return (
+            <pre key={`code-${index}`}>
+              <code>{block.text}</code>
+            </pre>
+          );
+        }
+
+        if (block.type === "ul" || block.type === "ol") {
+          const ListTag = block.type;
+          return (
+            <ListTag key={`list-${index}`}>
+              {block.items.map((item, itemIndex) => (
+                <li key={`item-${index}-${itemIndex}`}>{renderInlineMessage(item, `item-${index}-${itemIndex}`)}</li>
+              ))}
+            </ListTag>
+          );
+        }
+
+        return <p key={`paragraph-${index}`}>{renderInlineMessage(block.text, `paragraph-${index}`)}</p>;
+      })}
+    </div>
+  );
+}
+
+function parseRichMessage(value) {
+  const lines = String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n");
+  const blocks = [];
+  let paragraph = [];
+  let list = null;
+  let code = null;
+
+  function flushParagraph() {
+    if (!paragraph.length) return;
+    blocks.push({ type: "paragraph", text: paragraph.join(" ") });
+    paragraph = [];
+  }
+
+  function flushList() {
+    if (!list) return;
+    blocks.push(list);
+    list = null;
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (code) {
+        blocks.push({ type: "code", text: code.join("\n") });
+        code = null;
+      } else {
+        flushParagraph();
+        flushList();
+        code = [];
+      }
+      continue;
+    }
+
+    if (code) {
+      code.push(line);
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const unordered = line.match(/^\s*[-*•]\s+(.+)$/);
+    const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    const listMatch = unordered || ordered;
+
+    if (listMatch) {
+      const type = unordered ? "ul" : "ol";
+      flushParagraph();
+      if (!list || list.type !== type) flushList();
+      if (!list) list = { type, items: [] };
+      list.items.push(listMatch[1].trim());
+      continue;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  if (code) blocks.push({ type: "code", text: code.join("\n") });
+  flushParagraph();
+  flushList();
+
+  return blocks;
+}
+
+function renderInlineMessage(text, keyPrefix) {
+  const source = String(text || "");
+  const nodes = [];
+  const tokenPattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+  let lastIndex = 0;
+  let matchIndex = 0;
+  let match;
+
+  while ((match = tokenPattern.exec(source))) {
+    if (match.index > lastIndex) {
+      nodes.push(source.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(<code key={`${keyPrefix}-code-${matchIndex}`}>{token.slice(1, -1)}</code>);
+    } else {
+      nodes.push(<strong key={`${keyPrefix}-strong-${matchIndex}`}>{token.slice(2, -2)}</strong>);
+    }
+
+    lastIndex = match.index + token.length;
+    matchIndex += 1;
+  }
+
+  if (lastIndex < source.length) nodes.push(source.slice(lastIndex));
+  return nodes;
 }
 
 function statusLabel(status) {
