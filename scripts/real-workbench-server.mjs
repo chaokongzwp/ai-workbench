@@ -128,7 +128,7 @@ set -e
 mkdir -p ${shQuote(profile.workdir)}
 cd ${shQuote(profile.workdir)}
 set +e
-${shQuote(profile.codexCommand)} exec --skip-git-repo-check --sandbox read-only --cd ${shQuote(profile.workdir)} --output-last-message ${shQuote(outputFile)} ${resumeArgs} ${shQuote(prompt)} >${shQuote(logFile)} 2>&1
+${shQuote(profile.codexCommand)} exec --skip-git-repo-check --sandbox workspace-write --cd ${shQuote(profile.workdir)} --output-last-message ${shQuote(outputFile)} ${resumeArgs} ${shQuote(prompt)} >${shQuote(logFile)} 2>&1
 AIWB_STATUS=$?
 set -e
 if [ "$AIWB_STATUS" -ne 0 ]; then

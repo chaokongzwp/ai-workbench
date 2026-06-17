@@ -214,9 +214,9 @@ fi
 
 set +e
 if printf '%s' "$AIWB_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
-  ${shQuote(command)} exec --skip-git-repo-check --sandbox read-only --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+  ${shQuote(command)} exec --skip-git-repo-check --sandbox workspace-write --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
 else
-  ${shQuote(command)} exec --skip-git-repo-check --sandbox read-only --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+  ${shQuote(command)} exec --skip-git-repo-check --sandbox workspace-write --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
 fi
 AIWB_STATUS=$?
 set -e
