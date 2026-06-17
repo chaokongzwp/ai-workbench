@@ -1075,6 +1075,38 @@ export function App() {
     setSettingsOpen(true);
   }
 
+  async function duplicateServer(serverId = activeServerIdRef.current) {
+    if (busy) return;
+    const sourceIndex = servers.findIndex((server) => server.id === serverId);
+    const source = sourceIndex >= 0 ? servers[sourceIndex] : activeServer;
+    if (!source) return;
+
+    const sourceName = serverDisplayName(source, sourceIndex >= 0 ? sourceIndex : 0);
+    const duplicateName = `${sourceName} 副本`;
+    const duplicateProfile = normalizeProfile({
+      ...source.profile,
+      name: duplicateName,
+    });
+    const duplicate = createServerSession(
+      {
+        name: duplicateName,
+        profile: duplicateProfile,
+      },
+      servers.length,
+    );
+    const nextServers = [...servers, duplicate];
+
+    setServers(nextServers);
+    setActiveServerId(duplicate.id);
+    activeServerIdRef.current = duplicate.id;
+    setEditingServerId(duplicate.id);
+    setDraftProfile(duplicate.profile);
+    profileRef.current = duplicate.profile;
+    setRawOpen(false);
+    setSettingsOpen(true);
+    await saveWorkspace(nextServers, duplicate.id);
+  }
+
   async function testConnection() {
     const nextProfile = await saveCurrentProfile();
     if (showProfileIssue(nextProfile)) return;
@@ -1496,6 +1528,7 @@ export function App() {
             onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
             onSelectServer={selectServer}
             onAddServer={openNewServerSettings}
+            onDuplicateServer={() => duplicateServer()}
             onOpenSettings={() => openServerSettings()}
             onTestConnection={testConnection}
             onRefreshOutput={refreshOutput}
@@ -1586,6 +1619,10 @@ export function App() {
                 openNewServerSettings();
                 setMobileNavOpen(false);
               }}
+              onDuplicateServer={async () => {
+                await duplicateServer();
+                setMobileNavOpen(false);
+              }}
               onOpenSettings={() => {
                 openServerSettings();
                 setMobileNavOpen(false);
@@ -1605,6 +1642,7 @@ export function App() {
           canDelete={servers.length > 1}
           setDraftProfile={setDraftProfile}
           onClose={() => setSettingsOpen(false)}
+          onDuplicate={() => duplicateServer(editingServerId || activeServerId)}
           onSave={async () => {
             const saved = await saveCurrentProfile();
             setConnection(
@@ -1662,6 +1700,7 @@ function NavigationPanel({
   onToggleCollapse,
   onSelectServer,
   onAddServer,
+  onDuplicateServer,
   onOpenSettings,
   onTestConnection,
   onRefreshOutput,
@@ -1691,6 +1730,18 @@ function NavigationPanel({
             disabled={busy}
           >
             +
+          </button>
+        ) : null}
+        {onDuplicateServer ? (
+          <button
+            className="sidebar-duplicate"
+            type="button"
+            aria-label="复制当前服务器"
+            title="复制当前服务器"
+            onClick={onDuplicateServer}
+            disabled={busy}
+          >
+            复制
           </button>
         ) : null}
         {onToggleCollapse ? (
@@ -2133,7 +2184,7 @@ function RawOutput({
   );
 }
 
-function SettingsPanel({ draftProfile, busy, canDelete, setDraftProfile, onClose, onSave, onTest, onClear }) {
+function SettingsPanel({ draftProfile, busy, canDelete, setDraftProfile, onClose, onDuplicate, onSave, onTest, onClear }) {
   function updateField(field, value) {
     if (field === "platform") {
       const nextPlatform = normalizeServerPlatform(value);
@@ -2243,6 +2294,9 @@ function SettingsPanel({ draftProfile, busy, canDelete, setDraftProfile, onClose
         <div className="settings-actions">
           <button type="button" className="danger-button" onClick={onClear} disabled={busy}>
             {canDelete ? "删除" : "清空"}
+          </button>
+          <button type="button" className="ghost-button" onClick={onDuplicate} disabled={busy}>
+            复制
           </button>
           <button type="button" className="ghost-button" onClick={onSave} disabled={busy}>
             保存

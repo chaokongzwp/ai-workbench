@@ -2330,6 +2330,7 @@ body {
 .copy-message:focus-visible,
 .connect-badge:focus-visible,
 .sidebar-add:focus-visible,
+.sidebar-duplicate:focus-visible,
 .sidebar-collapse:focus-visible,
 .sidebar-action:focus-visible,
 .model-choice-actions button:focus-visible,
@@ -3023,6 +3024,7 @@ body {
 }
 
 .sidebar-add,
+.sidebar-duplicate,
 .sidebar-collapse {
   display: inline-flex;
   align-items: center;
@@ -3040,17 +3042,27 @@ body {
   transition: background 160ms ease, transform 160ms ease;
 }
 
+.sidebar-duplicate {
+  width: auto;
+  padding: 0 9px;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .sidebar-add {
   color: var(--blue);
   font-size: 18px;
 }
 
 .sidebar-add:hover,
+.sidebar-duplicate:hover,
 .sidebar-collapse:hover {
   background: rgba(118, 118, 128, 0.18);
 }
 
 .sidebar-add:active,
+.sidebar-duplicate:active,
 .sidebar-collapse:active {
   transform: scale(0.96);
 }
@@ -3126,6 +3138,10 @@ body {
 }
 
 .sidebar.collapsed .sidebar-add {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-duplicate {
   display: none;
 }
 
