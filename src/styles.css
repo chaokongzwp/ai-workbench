@@ -864,6 +864,11 @@ textarea:disabled {
   background: #fff3cd;
 }
 
+.message-header .streaming.login {
+  color: #7c4d00;
+  background: #fff3cd;
+}
+
 .message-header .streaming.error {
   color: var(--red);
   background: var(--red-soft);

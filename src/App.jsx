@@ -236,6 +236,13 @@ if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
 fi
 
 AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
+if printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with ChatGPT' &&
+   printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with Device Code'; then
+  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
+  exit 48
+fi
+
+AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
 if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
    printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
   tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
@@ -248,6 +255,20 @@ tmux paste-buffer -t ${shQuote(targetSession)} -b aiwb-prompt
 tmux send-keys -t ${shQuote(targetSession)} C-m
 sleep 1
 tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
+`);
+}
+
+function buildCodexLoginDeviceCommand(profile, agent) {
+  const targetSession = sessionName(profile, agent.id);
+
+  return bashCommand(`
+if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
+  tmux send-keys -t ${shQuote(targetSession)} 2 C-m
+  sleep 5
+  tmux capture-pane -t ${shQuote(targetSession)} -p -S -180
+else
+  printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
+fi
 `);
 }
 
@@ -306,13 +327,39 @@ function shortError(error) {
   return error?.message || String(error || "未知错误");
 }
 
+function isCodexLoginPrompt(output) {
+  const text = String(output || "");
+  return /Sign in with ChatGPT/i.test(text) && /Sign in with Device Code/i.test(text);
+}
+
 function isCodexModelChoicePrompt(output) {
   const text = String(output || "");
   return /Introducing GPT-5\.5/i.test(text) && /Try new model/i.test(text) && /Use existing model/i.test(text);
 }
 
+function extractCodexLoginInstructions(output) {
+  const text = stripTerminalControl(output);
+  const url = text.match(/https:\/\/auth\.openai\.com\/codex\/device/i)?.[0] || "";
+  const code = text.match(/\b[A-Z0-9]{4}-[A-Z0-9]{5}\b/)?.[0] || "";
+
+  if (!url && !code) return trimVisibleText(text);
+
+  return trimVisibleText(
+    [
+      url ? `登录链接：${url}` : "",
+      code ? `验证码：${code}` : "",
+      "完成浏览器登录后，回到 AI Workbench 重新发送任务。",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
 function detectAgentIssue(output, agent) {
   const text = String(output || "");
+  if (/401 Unauthorized/i.test(text)) {
+    return `${agent.shortName} 登录已过期。请先生成设备码完成登录，然后重新发送任务。`;
+  }
   if (/tmux session not running/i.test(text)) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
   }
@@ -442,7 +489,7 @@ export function App() {
     [activeAgentId],
   );
   const isProfileReady = useMemo(() => profileReady(profile), [profile]);
-  const hasPendingChoice = messages.some((message) => message.status === "choice");
+  const hasPendingAction = messages.some((message) => message.status === "choice" || message.status === "login");
   const profileRef = useRef(profile);
 
   useEffect(() => {
@@ -561,6 +608,20 @@ export function App() {
       const raw = String(output || "").trim();
       setRawOutput(raw);
 
+      if (isCodexLoginPrompt(raw)) {
+        setRawOpen(false);
+        updateAssistantMessage(assistantMessageId, {
+          title: `${agent.shortName} 需要登录`,
+          body: "远端 Codex 登录已过期。生成设备码后，在浏览器完成一次登录即可继续使用。",
+          output: "",
+          status: "login",
+          loginAction: { prompt: text, agentId: agent.id },
+          modelChoice: undefined,
+        });
+        setConnection({ state: "idle", label: "需要登录", detail: agent.shortName });
+        return false;
+      }
+
       if (isCodexModelChoicePrompt(raw)) {
         setRawOpen(false);
         updateAssistantMessage(assistantMessageId, {
@@ -568,6 +629,7 @@ export function App() {
           body: "Codex CLI 检测到 GPT-5.5 可用。选择后会继续发送刚才的任务。",
           output: "",
           status: "choice",
+          loginAction: undefined,
           modelChoice: { prompt: text, agentId: agent.id },
         });
         setConnection({ state: "idle", label: "等待选择", detail: agent.shortName });
@@ -582,6 +644,7 @@ export function App() {
           body: issue,
           output: "",
           status: "error",
+          loginAction: undefined,
           modelChoice: undefined,
         });
         setConnection({ state: "error", label: "启动失败", detail: agent.shortName });
@@ -600,6 +663,7 @@ export function App() {
             : `正在等待 ${agent.shortName} 回复。`,
         output: visibleOutput,
         status: done ? "done" : "running",
+        loginAction: undefined,
         modelChoice: undefined,
       });
       return true;
@@ -624,7 +688,7 @@ export function App() {
 
   async function sendTask() {
     const text = composer.trim();
-    if (!text || busy || hasPendingChoice) return;
+    if (!text || busy || hasPendingAction) return;
 
     const currentProfile = normalizeProfile(profileRef.current);
     if (showProfileIssue(currentProfile)) return;
@@ -657,6 +721,7 @@ export function App() {
         title: "远端执行失败",
         body: message,
         status: "error",
+        loginAction: undefined,
         modelChoice: undefined,
       });
       setConnection({ state: "error", label: "执行失败", detail: message });
@@ -699,6 +764,53 @@ export function App() {
         modelChoice: undefined,
       });
       setConnection({ state: "error", label: "选择失败", detail });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startCodexDeviceLogin(message) {
+    if (busy || !message?.loginAction) return;
+
+    const currentProfile = normalizeProfile(profileRef.current);
+    if (showProfileIssue(currentProfile)) return;
+
+    const agent = agents.find((item) => item.id === message.loginAction.agentId) ?? activeAgent;
+
+    setBusy(true);
+    setRawOpen(false);
+    updateAssistantMessage(message.id, {
+      title: "正在生成登录码",
+      body: "请稍等，正在向远端 Codex 请求设备登录码。",
+      status: "running",
+      loginAction: undefined,
+      modelChoice: undefined,
+    });
+
+    try {
+      const output = await runRemoteCommand(buildCodexLoginDeviceCommand(currentProfile, agent), 1_048_576);
+      setRawOutput(String(output || "").trim());
+      updateAssistantMessage(message.id, {
+        title: "完成 Codex 登录",
+        body: "在浏览器打开链接并输入验证码。",
+        output: extractCodexLoginInstructions(output),
+        status: "done",
+        loginAction: undefined,
+        modelChoice: undefined,
+      });
+      setConnection({ state: "idle", label: "等待登录", detail: agent.shortName });
+    } catch (error) {
+      const detail = shortError(error);
+      setRawOpen(true);
+      setRawOutput(detail);
+      updateAssistantMessage(message.id, {
+        title: "生成登录码失败",
+        body: detail,
+        status: "error",
+        loginAction: undefined,
+        modelChoice: undefined,
+      });
+      setConnection({ state: "error", label: "登录失败", detail });
     } finally {
       setBusy(false);
     }
@@ -853,6 +965,7 @@ export function App() {
                 activeAgent={activeAgent}
                 busy={busy}
                 onModelChoice={chooseCodexModel}
+                onCodexLogin={startCodexDeviceLogin}
               />
             ))}
           </div>
@@ -862,7 +975,7 @@ export function App() {
             activeAgentId={activeAgentId}
             composer={composer}
             busy={busy}
-            pendingChoice={hasPendingChoice}
+            pendingAction={hasPendingAction}
             profileReady={isProfileReady}
             setActiveAgentId={setActiveAgentId}
             setComposer={setComposer}
@@ -1085,7 +1198,7 @@ function SummaryMetric({ label, value, mono = false }) {
   );
 }
 
-function MessageBubble({ message, activeAgent, busy, onModelChoice }) {
+function MessageBubble({ message, activeAgent, busy, onModelChoice, onCodexLogin }) {
   const copyText = message.output || message.body || "";
 
   function copyMessage() {
@@ -1128,6 +1241,13 @@ function MessageBubble({ message, activeAgent, busy, onModelChoice }) {
           </button>
         </div>
       ) : null}
+      {message.loginAction ? (
+        <div className="model-choice-actions" aria-label="Codex 登录">
+          <button type="button" onClick={() => onCodexLogin(message)} disabled={busy}>
+            生成设备码
+          </button>
+        </div>
+      ) : null}
       {message.output ? (
         <section className="assistant-answer">
           <pre>{message.output}</pre>
@@ -1138,6 +1258,7 @@ function MessageBubble({ message, activeAgent, busy, onModelChoice }) {
 }
 
 function statusLabel(status) {
+  if (status === "login") return "待登录";
   if (status === "choice") return "待选择";
   if (status === "running") return "运行中";
   if (status === "error") return "失败";
@@ -1150,21 +1271,21 @@ function Composer({
   activeAgentId,
   composer,
   busy,
-  pendingChoice,
+  pendingAction,
   profileReady: ready,
   setActiveAgentId,
   setComposer,
   onOpenSettings,
   onSend,
 }) {
-  const disabled = busy || pendingChoice || !ready;
+  const disabled = busy || pendingAction || !ready;
 
   return (
     <footer className="composer">
       <div className="composer-tools">
         <label className="select-shell">
           <AgentLogo agentId={activeAgent.id} compact />
-          <select value={activeAgentId} onChange={(event) => setActiveAgentId(event.target.value)} disabled={!ready || pendingChoice || busy}>
+          <select value={activeAgentId} onChange={(event) => setActiveAgentId(event.target.value)} disabled={!ready || pendingAction || busy}>
             {agents.map((item) => (
               <option value={item.id} key={item.id}>
                 {item.name}
@@ -1182,8 +1303,8 @@ function Composer({
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") onSend();
           }}
           placeholder={
-            pendingChoice
-              ? "先完成上面的模型选择"
+            pendingAction
+              ? "先完成上面的操作"
               : ready
                 ? `告诉 ${activeAgent.shortName} 你想做什么`
                 : "先添加服务器后再发送任务"
