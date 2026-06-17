@@ -235,22 +235,6 @@ if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
   exit 46
 fi
 
-for AIWB_PROMPT_TRY in 1 2; do
-  AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
-  if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
-     printf '%s' "$AIWB_PANE" | grep -Fq 'Choose how' &&
-     printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
-    if [ "$AIWB_PROMPT_TRY" = "1" ]; then
-      tmux send-keys -t ${shQuote(targetSession)} C-m
-    else
-      tmux send-keys -t ${shQuote(targetSession)} 1 C-m
-    fi
-    sleep 1.4
-  else
-    break
-  fi
-done
-
 AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
 if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
    printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
@@ -264,6 +248,21 @@ tmux paste-buffer -t ${shQuote(targetSession)} -b aiwb-prompt
 tmux send-keys -t ${shQuote(targetSession)} C-m
 sleep 1
 tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
+`);
+}
+
+function buildModelChoiceCommand(profile, agent, choice) {
+  const targetSession = sessionName(profile, agent.id);
+  const key = choice === "new" ? "1" : "2";
+
+  return bashCommand(`
+if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
+  tmux send-keys -t ${shQuote(targetSession)} ${shQuote(key)} C-m
+  sleep 1.2
+  tmux capture-pane -t ${shQuote(targetSession)} -p -S -180
+else
+  printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
+fi
 `);
 }
 
@@ -307,11 +306,13 @@ function shortError(error) {
   return error?.message || String(error || "未知错误");
 }
 
+function isCodexModelChoicePrompt(output) {
+  const text = String(output || "");
+  return /Introducing GPT-5\.5/i.test(text) && /Try new model/i.test(text) && /Use existing model/i.test(text);
+}
+
 function detectAgentIssue(output, agent) {
   const text = String(output || "");
-  if (/Introducing GPT-5\.5/i.test(text) && /Use existing model/i.test(text)) {
-    return `${agent.shortName} 正在等待模型选择，任务还没有发出去。我已经尝试自动确认；如果仍然出现，请先在“详情”里点中断后重试。`;
-  }
   if (/tmux session not running/i.test(text)) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
   }
@@ -441,6 +442,7 @@ export function App() {
     [activeAgentId],
   );
   const isProfileReady = useMemo(() => profileReady(profile), [profile]);
+  const hasPendingChoice = messages.some((message) => message.status === "choice");
   const profileRef = useRef(profile);
 
   useEffect(() => {
@@ -554,13 +556,80 @@ export function App() {
     }
   }
 
+  async function runAgentPrompt({ currentProfile, agent, text, assistantMessageId }) {
+    const applyAgentOutput = (output, final = false) => {
+      const raw = String(output || "").trim();
+      setRawOutput(raw);
+
+      if (isCodexModelChoicePrompt(raw)) {
+        setRawOpen(false);
+        updateAssistantMessage(assistantMessageId, {
+          title: `${agent.shortName} 需要选择模型`,
+          body: "Codex CLI 检测到 GPT-5.5 可用。选择后会继续发送刚才的任务。",
+          output: "",
+          status: "choice",
+          modelChoice: { prompt: text, agentId: agent.id },
+        });
+        setConnection({ state: "idle", label: "等待选择", detail: agent.shortName });
+        return false;
+      }
+
+      const issue = detectAgentIssue(raw, agent);
+      if (issue) {
+        setRawOpen(true);
+        updateAssistantMessage(assistantMessageId, {
+          title: `${agent.shortName} 没有启动成功`,
+          body: issue,
+          output: "",
+          status: "error",
+          modelChoice: undefined,
+        });
+        setConnection({ state: "error", label: "启动失败", detail: agent.shortName });
+        return false;
+      }
+
+      const extracted = extractAgentFinalOutput(raw, text);
+      const visibleOutput = extracted.text;
+      const done = extracted.final || (final && Boolean(visibleOutput));
+      updateAssistantMessage(assistantMessageId, {
+        title: done ? `${agent.shortName} 回复` : `等待 ${agent.shortName} 回复`,
+        body: visibleOutput
+          ? ""
+          : final
+            ? `还没有拿到最终回复，稍后点“刷新状态”。`
+            : `正在等待 ${agent.shortName} 回复。`,
+        output: visibleOutput,
+        status: done ? "done" : "running",
+        modelChoice: undefined,
+      });
+      return true;
+    };
+
+    const firstOutput = await runRemoteCommand(buildAgentSendCommand(currentProfile, agent, text), 2_097_152);
+    if (!applyAgentOutput(firstOutput)) return false;
+
+    for (let index = 0; index < 5; index += 1) {
+      await sleep(1800);
+      const output = await runRemoteCommand(buildCaptureCommand(currentProfile, agent), 2_097_152);
+      if (!applyAgentOutput(output, index === 4)) return false;
+    }
+
+    setConnection({
+      state: "connected",
+      label: "会话运行中",
+      detail: sessionName(currentProfile, agent.id),
+    });
+    return true;
+  }
+
   async function sendTask() {
     const text = composer.trim();
-    if (!text || busy) return;
+    if (!text || busy || hasPendingChoice) return;
 
     const currentProfile = normalizeProfile(profileRef.current);
     if (showProfileIssue(currentProfile)) return;
 
+    const agent = activeAgent;
     const assistantMessageId = `agent-${Date.now()}`;
     setComposer("");
     setRawOpen(false);
@@ -571,64 +640,15 @@ export function App() {
       createMessage({
         id: assistantMessageId,
         role: "assistant",
-        agentId: activeAgent.id,
-        title: `已发送到 ${activeAgent.shortName}`,
-        body: `正在等待 ${activeAgent.shortName} 回复。`,
+        agentId: agent.id,
+        title: `已发送到 ${agent.shortName}`,
+        body: `正在等待 ${agent.shortName} 回复。`,
         status: "running",
       }),
     ]);
 
-    const applyAgentOutput = (output, final = false) => {
-      const raw = String(output || "").trim();
-      setRawOutput(raw);
-
-      const issue = detectAgentIssue(raw, activeAgent);
-      if (issue) {
-        setRawOpen(true);
-        updateAssistantMessage(assistantMessageId, {
-          title: `${activeAgent.shortName} 没有启动成功`,
-          body: issue,
-          output: "",
-          status: "error",
-        });
-        setConnection({ state: "error", label: "启动失败", detail: activeAgent.shortName });
-        return false;
-      }
-
-      const extracted = extractAgentFinalOutput(raw, text);
-      const visibleOutput = extracted.text;
-      const done = extracted.final || (final && Boolean(visibleOutput));
-      updateAssistantMessage(assistantMessageId, {
-        title: done ? `${activeAgent.shortName} 回复` : `等待 ${activeAgent.shortName} 回复`,
-        body: visibleOutput
-          ? ""
-          : final
-            ? `还没有拿到最终回复，稍后点“刷新状态”。`
-            : `正在等待 ${activeAgent.shortName} 回复。`,
-        output: visibleOutput,
-        status: done ? "done" : "running",
-      });
-      return true;
-    };
-
     try {
-      const firstOutput = await runRemoteCommand(
-        buildAgentSendCommand(currentProfile, activeAgent, text),
-        2_097_152,
-      );
-      if (!applyAgentOutput(firstOutput)) return;
-
-      for (let index = 0; index < 5; index += 1) {
-        await sleep(1800);
-        const output = await runRemoteCommand(buildCaptureCommand(currentProfile, activeAgent), 2_097_152);
-        if (!applyAgentOutput(output, index === 4)) return;
-      }
-
-      setConnection({
-        state: "connected",
-        label: "会话运行中",
-        detail: sessionName(currentProfile, activeAgent.id),
-      });
+      await runAgentPrompt({ currentProfile, agent, text, assistantMessageId });
     } catch (error) {
       const message = shortError(error);
       setRawOpen(true);
@@ -637,8 +657,48 @@ export function App() {
         title: "远端执行失败",
         body: message,
         status: "error",
+        modelChoice: undefined,
       });
       setConnection({ state: "error", label: "执行失败", detail: message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function chooseCodexModel(message, choice) {
+    if (busy || !message?.modelChoice) return;
+
+    const currentProfile = normalizeProfile(profileRef.current);
+    if (showProfileIssue(currentProfile)) return;
+
+    const agent = agents.find((item) => item.id === message.modelChoice.agentId) ?? activeAgent;
+    const text = message.modelChoice.prompt;
+    const choiceText = choice === "new" ? "试用 GPT-5.5" : "继续使用当前模型";
+
+    setBusy(true);
+    setRawOpen(false);
+    updateAssistantMessage(message.id, {
+      title: `已选择：${choiceText}`,
+      body: "正在应用选择，并继续发送刚才的任务。",
+      status: "running",
+      modelChoice: undefined,
+    });
+
+    try {
+      const choiceOutput = await runRemoteCommand(buildModelChoiceCommand(currentProfile, agent, choice), 1_048_576);
+      setRawOutput(String(choiceOutput || "").trim());
+      await runAgentPrompt({ currentProfile, agent, text, assistantMessageId: message.id });
+    } catch (error) {
+      const detail = shortError(error);
+      setRawOpen(true);
+      setRawOutput(detail);
+      updateAssistantMessage(message.id, {
+        title: "模型选择失败",
+        body: detail,
+        status: "error",
+        modelChoice: undefined,
+      });
+      setConnection({ state: "error", label: "选择失败", detail });
     } finally {
       setBusy(false);
     }
@@ -787,7 +847,13 @@ export function App() {
               />
             ) : null}
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} activeAgent={activeAgent} />
+              <MessageBubble
+                key={message.id}
+                message={message}
+                activeAgent={activeAgent}
+                busy={busy}
+                onModelChoice={chooseCodexModel}
+              />
             ))}
           </div>
 
@@ -796,6 +862,7 @@ export function App() {
             activeAgentId={activeAgentId}
             composer={composer}
             busy={busy}
+            pendingChoice={hasPendingChoice}
             profileReady={isProfileReady}
             setActiveAgentId={setActiveAgentId}
             setComposer={setComposer}
@@ -1018,7 +1085,7 @@ function SummaryMetric({ label, value, mono = false }) {
   );
 }
 
-function MessageBubble({ message, activeAgent }) {
+function MessageBubble({ message, activeAgent, busy, onModelChoice }) {
   const copyText = message.output || message.body || "";
 
   function copyMessage() {
@@ -1051,6 +1118,16 @@ function MessageBubble({ message, activeAgent }) {
         </button>
       </header>
       {message.body ? <p className="assistant-copy">{message.body}</p> : null}
+      {message.modelChoice ? (
+        <div className="model-choice-actions" aria-label="选择 Codex 模型">
+          <button type="button" onClick={() => onModelChoice(message, "new")} disabled={busy}>
+            试用 GPT-5.5
+          </button>
+          <button type="button" onClick={() => onModelChoice(message, "existing")} disabled={busy}>
+            继续当前模型
+          </button>
+        </div>
+      ) : null}
       {message.output ? (
         <section className="assistant-answer">
           <pre>{message.output}</pre>
@@ -1061,6 +1138,7 @@ function MessageBubble({ message, activeAgent }) {
 }
 
 function statusLabel(status) {
+  if (status === "choice") return "待选择";
   if (status === "running") return "运行中";
   if (status === "error") return "失败";
   if (status === "idle") return "待命";
@@ -1072,20 +1150,21 @@ function Composer({
   activeAgentId,
   composer,
   busy,
+  pendingChoice,
   profileReady: ready,
   setActiveAgentId,
   setComposer,
   onOpenSettings,
   onSend,
 }) {
-  const disabled = busy || !ready;
+  const disabled = busy || pendingChoice || !ready;
 
   return (
     <footer className="composer">
       <div className="composer-tools">
         <label className="select-shell">
           <AgentLogo agentId={activeAgent.id} compact />
-          <select value={activeAgentId} onChange={(event) => setActiveAgentId(event.target.value)} disabled={!ready}>
+          <select value={activeAgentId} onChange={(event) => setActiveAgentId(event.target.value)} disabled={!ready || pendingChoice || busy}>
             {agents.map((item) => (
               <option value={item.id} key={item.id}>
                 {item.name}
@@ -1102,7 +1181,13 @@ function Composer({
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") onSend();
           }}
-          placeholder={ready ? `告诉 ${activeAgent.shortName} 你想做什么` : "先添加服务器后再发送任务"}
+          placeholder={
+            pendingChoice
+              ? "先完成上面的模型选择"
+              : ready
+                ? `告诉 ${activeAgent.shortName} 你想做什么`
+                : "先添加服务器后再发送任务"
+          }
           rows={2}
         />
         <div className="input-actions">

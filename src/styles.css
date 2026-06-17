@@ -859,6 +859,11 @@ textarea:disabled {
   background: var(--blue-soft);
 }
 
+.message-header .streaming.choice {
+  color: #7c4d00;
+  background: #fff3cd;
+}
+
 .message-header .streaming.error {
   color: var(--red);
   background: var(--red-soft);
@@ -869,6 +874,30 @@ textarea:disabled {
   overflow-wrap: anywhere;
   color: #374151;
   line-height: 1.7;
+}
+
+.model-choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0 34px;
+}
+
+.model-choice-actions button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--blue);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.model-choice-actions button + button {
+  color: #1c1c1e;
+  background: rgba(118, 118, 128, 0.12);
 }
 
 .assistant-answer {
@@ -2223,6 +2252,7 @@ body {
 .copy-message,
 .connect-badge,
 .sidebar-action,
+.model-choice-actions button,
 .raw-meta button,
 .raw-expand {
   -webkit-user-select: none;
@@ -2239,6 +2269,7 @@ body {
 .copy-message:focus-visible,
 .connect-badge:focus-visible,
 .sidebar-action:focus-visible,
+.model-choice-actions button:focus-visible,
 .raw-meta button:focus-visible,
 .raw-expand:focus-visible,
 .input-row textarea:focus-visible,
@@ -2969,7 +3000,8 @@ body {
   }
 
   .conversation .assistant-copy,
-  .conversation .assistant-answer {
+  .conversation .assistant-answer,
+  .conversation .model-choice-actions {
     margin-left: 0;
   }
 
