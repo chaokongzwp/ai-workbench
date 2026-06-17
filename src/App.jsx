@@ -128,6 +128,75 @@ function normalizeProfile(profile) {
   };
 }
 
+function createServerId() {
+  return `server-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function initialConnectionForProfile(profile) {
+  return profileReady(profile)
+    ? { state: "idle", label: "未测试", detail: `${profile.username}@${profile.host}` }
+    : { state: "idle", label: "待配置", detail: profileIssue(profile) };
+}
+
+function serverDisplayName(server, index = 0) {
+  const profile = server?.profile || {};
+  return (
+    String(server?.name || profile.name || "").trim() ||
+    (index === 0 ? "默认服务器" : `服务器 ${index + 1}`)
+  );
+}
+
+function createServerSession(partial = {}, index = 0) {
+  const profile = normalizeProfile(partial.profile || partial);
+  const server = {
+    id: partial.id || createServerId(),
+    name: String(partial.name || profile.name || "").trim(),
+    profile,
+    connection: partial.connection || initialConnectionForProfile(profile),
+    diagnostics: partial.diagnostics || {},
+    rawOutput: partial.rawOutput || "原始输出会在测试连接或发送任务后显示。",
+    messages: Array.isArray(partial.messages) ? partial.messages : [],
+  };
+  return {
+    ...server,
+    name: server.name || serverDisplayName(server, index),
+  };
+}
+
+function normalizeWorkspaceStore(value) {
+  if (value?.version === 2 && Array.isArray(value.servers)) {
+    const servers = value.servers.length
+      ? value.servers.map((server, index) => createServerSession(server, index))
+      : [createServerSession({ profile: defaultProfile, name: "默认服务器" })];
+    const activeServerId = servers.some((server) => server.id === value.activeServerId)
+      ? value.activeServerId
+      : servers[0].id;
+    return { activeServerId, servers };
+  }
+
+  const migrated = createServerSession({
+    id: "default-server",
+    name: "默认服务器",
+    profile: value && Object.keys(value).length ? value : defaultProfile,
+  });
+  return { activeServerId: migrated.id, servers: [migrated] };
+}
+
+function serializeWorkspaceStore(servers, activeServerId) {
+  return {
+    version: 2,
+    activeServerId,
+    servers: servers.map((server, index) => ({
+      id: server.id,
+      name: serverDisplayName(server, index),
+      profile: {
+        ...server.profile,
+        name: serverDisplayName(server, index),
+      },
+    })),
+  };
+}
+
 function profileIssue(profile) {
   if (!String(profile?.host || "").trim()) return "请填写服务器 IP 或域名";
   if (!String(profile?.username || "").trim()) return "请填写登录用户名";
@@ -797,35 +866,76 @@ function cleanAgentOutput(output, prompt = "") {
 }
 
 export function App() {
-  const [profile, setProfile] = useState(defaultProfile);
+  const defaultServer = useMemo(() => createServerSession({ id: "default-server", name: "默认服务器", profile: defaultProfile }), []);
+  const [servers, setServers] = useState([defaultServer]);
+  const [activeServerId, setActiveServerId] = useState(defaultServer.id);
   const [draftProfile, setDraftProfile] = useState(defaultProfile);
+  const [editingServerId, setEditingServerId] = useState(defaultServer.id);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState("codex");
   const [composer, setComposer] = useState("");
-  const [connection, setConnection] = useState({
-    state: "idle",
-    label: "待配置",
-    detail: "添加服务器后即可开始",
-  });
-  const [diagnostics, setDiagnostics] = useState({});
-  const [rawOutput, setRawOutput] = useState("原始输出会在测试连接或发送任务后显示。");
   const [busy, setBusy] = useState(false);
-  const [messages, setMessages] = useState([]);
 
   const activeAgent = useMemo(
     () => agents.find((item) => item.id === activeAgentId) ?? agents[0],
     [activeAgentId],
   );
+  const activeServer = useMemo(
+    () => servers.find((server) => server.id === activeServerId) || servers[0] || defaultServer,
+    [activeServerId, defaultServer, servers],
+  );
+  const profile = activeServer.profile;
+  const connection = activeServer.connection;
+  const diagnostics = activeServer.diagnostics;
+  const rawOutput = activeServer.rawOutput;
+  const messages = activeServer.messages;
   const isProfileReady = useMemo(() => profileReady(profile), [profile]);
   const hasPendingAction = messages.some((message) => message.status === "choice" || message.status === "login");
   const profileRef = useRef(profile);
+  const activeServerIdRef = useRef(activeServerId);
 
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
+
+  useEffect(() => {
+    activeServerIdRef.current = activeServerId;
+  }, [activeServerId]);
+
+  function updateServer(serverId, updater) {
+    setServers((items) =>
+      items.map((server) => {
+        if (server.id !== serverId) return server;
+        const patch = typeof updater === "function" ? updater(server) : updater;
+        return { ...server, ...patch };
+      }),
+    );
+  }
+
+  function updateActiveServer(updater) {
+    updateServer(activeServerIdRef.current, updater);
+  }
+
+  function setConnection(nextConnection) {
+    updateActiveServer({ connection: nextConnection });
+  }
+
+  function setDiagnostics(nextDiagnostics) {
+    updateActiveServer({ diagnostics: nextDiagnostics });
+  }
+
+  function setRawOutput(nextRawOutput) {
+    updateActiveServer({ rawOutput: nextRawOutput });
+  }
+
+  function setMessages(updater) {
+    updateActiveServer((server) => ({
+      messages: typeof updater === "function" ? updater(server.messages || []) : updater,
+    }));
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -835,19 +945,21 @@ export function App() {
         const result = await SSHWorkbench.loadProfile();
         if (cancelled) return;
 
-        const loaded = normalizeProfile(result?.profile);
-        setProfile(loaded);
-        setDraftProfile(loaded);
-        setConnection(
-          profileReady(loaded)
-            ? { state: "idle", label: "未测试", detail: `${loaded.username}@${loaded.host}` }
-            : { state: "idle", label: "待配置", detail: profileIssue(loaded) },
-        );
+        const loaded = normalizeWorkspaceStore(result?.profile);
+        const active = loaded.servers.find((server) => server.id === loaded.activeServerId) || loaded.servers[0];
+        setServers(loaded.servers);
+        setActiveServerId(active.id);
+        activeServerIdRef.current = active.id;
+        setEditingServerId(active.id);
+        setDraftProfile(active.profile);
       } catch {
         if (cancelled) return;
-        setProfile(defaultProfile);
+        const fallback = createServerSession({ id: "default-server", name: "默认服务器", profile: defaultProfile });
+        setServers([fallback]);
+        setActiveServerId(fallback.id);
+        activeServerIdRef.current = fallback.id;
+        setEditingServerId(fallback.id);
         setDraftProfile(defaultProfile);
-        setConnection({ state: "idle", label: "待配置", detail: profileIssue(defaultProfile) });
       }
     }
 
@@ -877,14 +989,46 @@ export function App() {
     return result?.stdout ?? "";
   }, []);
 
+  const saveWorkspace = useCallback(async (nextServers, nextActiveServerId) => {
+    await SSHWorkbench.saveProfile({
+      profile: serializeWorkspaceStore(nextServers, nextActiveServerId),
+    });
+  }, []);
+
   const saveCurrentProfile = useCallback(async (nextProfile = draftProfile) => {
     const normalized = normalizeProfile(nextProfile);
-    await SSHWorkbench.saveProfile({ profile: normalized });
-    setProfile(normalized);
+    const name = String(normalized.name || "").trim();
+    const existing = servers.find((server) => server.id === editingServerId);
+    const nextServerId = existing ? existing.id : createServerId();
+    const nextServer = createServerSession(
+      {
+        ...(existing || {}),
+        id: nextServerId,
+        name: name || existing?.name || "",
+        profile: {
+          ...normalized,
+          name: name || existing?.name || "",
+        },
+        connection: initialConnectionForProfile(normalized),
+        diagnostics: existing?.diagnostics || {},
+        rawOutput: existing?.rawOutput || "原始输出会在测试连接或发送任务后显示。",
+        messages: existing?.messages || [],
+      },
+      servers.length,
+    );
+    const nextServers = existing
+      ? servers.map((server) => (server.id === existing.id ? nextServer : server))
+      : [...servers, nextServer];
+
+    setServers(nextServers);
+    setActiveServerId(nextServer.id);
+    activeServerIdRef.current = nextServer.id;
+    setEditingServerId(nextServer.id);
     setDraftProfile(normalized);
     profileRef.current = normalized;
+    await saveWorkspace(nextServers, nextServer.id);
     return normalized;
-  }, [draftProfile]);
+  }, [draftProfile, editingServerId, saveWorkspace, servers]);
 
   function showProfileIssue(nextProfile, openSettings = true) {
     const issue = profileIssue(nextProfile);
@@ -895,6 +1039,40 @@ export function App() {
     setRawOutput(issue);
     if (openSettings) setSettingsOpen(true);
     return true;
+  }
+
+  async function selectServer(serverId) {
+    if (busy || serverId === activeServerIdRef.current) return;
+    const nextServer = servers.find((server) => server.id === serverId);
+    if (!nextServer) return;
+
+    setActiveServerId(serverId);
+    activeServerIdRef.current = serverId;
+    profileRef.current = nextServer.profile;
+    setEditingServerId(serverId);
+    setDraftProfile(nextServer.profile);
+    setRawOpen(false);
+    await saveWorkspace(servers, serverId);
+  }
+
+  function openServerSettings(serverId = activeServerIdRef.current) {
+    const target = servers.find((server) => server.id === serverId) || activeServer;
+    setEditingServerId(target.id);
+    setDraftProfile(target.profile);
+    setSettingsOpen(true);
+  }
+
+  function openNewServerSettings() {
+    const nextProfile = {
+      ...defaultProfile,
+      host: "",
+      username: "",
+      password: "",
+      name: `服务器 ${servers.length + 1}`,
+    };
+    setEditingServerId("");
+    setDraftProfile(nextProfile);
+    setSettingsOpen(true);
   }
 
   async function testConnection() {
@@ -1246,13 +1424,32 @@ export function App() {
   }
 
   async function clearProfile() {
-    await SSHWorkbench.clearProfile();
-    setProfile(defaultProfile);
+    const currentId = editingServerId || activeServerIdRef.current;
+    const remaining = servers.filter((server) => server.id !== currentId);
+
+    if (remaining.length) {
+      const nextActive = remaining[0];
+      setServers(remaining);
+      setActiveServerId(nextActive.id);
+      activeServerIdRef.current = nextActive.id;
+      setEditingServerId(nextActive.id);
+      setDraftProfile(nextActive.profile);
+      profileRef.current = nextActive.profile;
+      setSettingsOpen(false);
+      setRawOpen(false);
+      await saveWorkspace(remaining, nextActive.id);
+      return;
+    }
+
+    const resetServer = createServerSession({ id: "default-server", name: "默认服务器", profile: defaultProfile });
+    setServers([resetServer]);
+    setActiveServerId(resetServer.id);
+    activeServerIdRef.current = resetServer.id;
+    setEditingServerId(resetServer.id);
     setDraftProfile(defaultProfile);
-    setDiagnostics({});
+    profileRef.current = defaultProfile;
     setRawOpen(false);
-    setRawOutput("连接配置已清空。");
-    setConnection({ state: "idle", label: "待配置", detail: profileIssue(defaultProfile) });
+    await saveWorkspace([resetServer], resetServer.id);
   }
 
   const bridge = desktopBridge();
@@ -1282,7 +1479,7 @@ export function App() {
         profileReady={isProfileReady}
         platformLabel={platformLabel}
         onOpenNav={() => setMobileNavOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => openServerSettings()}
         onTestConnection={testConnection}
         busy={busy}
       />
@@ -1290,12 +1487,16 @@ export function App() {
       <div className="workspace">
         <aside className={`sidebar desktop-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
           <NavigationPanel
+            servers={servers}
+            activeServerId={activeServerId}
             profile={profile}
             connection={connection}
             diagnostics={diagnostics}
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onSelectServer={selectServer}
+            onAddServer={openNewServerSettings}
+            onOpenSettings={() => openServerSettings()}
             onTestConnection={testConnection}
             onRefreshOutput={refreshOutput}
             busy={busy}
@@ -1312,7 +1513,7 @@ export function App() {
                 profileReady={isProfileReady}
                 busy={busy}
                 activeAgent={activeAgent}
-                onOpenSettings={() => setSettingsOpen(true)}
+                onOpenSettings={() => openServerSettings()}
                 onTestConnection={testConnection}
               />
             ) : null}
@@ -1337,7 +1538,7 @@ export function App() {
             profileReady={isProfileReady}
             setActiveAgentId={setActiveAgentId}
             setComposer={setComposer}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => openServerSettings()}
             onSend={sendTask}
           />
         </section>
@@ -1372,11 +1573,21 @@ export function App() {
               </button>
             </div>
             <NavigationPanel
+              servers={servers}
+              activeServerId={activeServerId}
               profile={profile}
               connection={connection}
               diagnostics={diagnostics}
+              onSelectServer={async (serverId) => {
+                await selectServer(serverId);
+                setMobileNavOpen(false);
+              }}
+              onAddServer={() => {
+                openNewServerSettings();
+                setMobileNavOpen(false);
+              }}
               onOpenSettings={() => {
-                setSettingsOpen(true);
+                openServerSettings();
                 setMobileNavOpen(false);
               }}
               onTestConnection={testConnection}
@@ -1391,6 +1602,7 @@ export function App() {
         <SettingsPanel
           draftProfile={draftProfile}
           busy={busy}
+          canDelete={servers.length > 1}
           setDraftProfile={setDraftProfile}
           onClose={() => setSettingsOpen(false)}
           onSave={async () => {
@@ -1441,11 +1653,15 @@ function TopBar({ connection, profile, profileReady: ready, platformLabel, onOpe
 }
 
 function NavigationPanel({
+  servers = [],
+  activeServerId,
   profile,
   connection,
   diagnostics,
   collapsed = false,
   onToggleCollapse,
+  onSelectServer,
+  onAddServer,
   onOpenSettings,
   onTestConnection,
   onRefreshOutput,
@@ -1455,16 +1671,28 @@ function NavigationPanel({
   const connectLabel =
     connection.state === "testing" ? "连接中" : connected ? "已连接" : connection.state === "error" ? "重试" : "连接";
 
-  function openSettingsFromCard(event) {
+  function selectServerFromCard(event, serverId) {
     if (event.key && event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    onOpenSettings();
+    onSelectServer?.(serverId);
   }
 
   return (
     <>
       <div className="sidebar-toolbar">
         <SectionHeader title="服务器" />
+        {onAddServer ? (
+          <button
+            className="sidebar-add"
+            type="button"
+            aria-label="添加服务器"
+            title="添加服务器"
+            onClick={onAddServer}
+            disabled={busy}
+          >
+            +
+          </button>
+        ) : null}
         {onToggleCollapse ? (
           <button
             className="sidebar-collapse"
@@ -1477,30 +1705,56 @@ function NavigationPanel({
           </button>
         ) : null}
       </div>
-      <div
-        className="nav-card server-card active"
-        role="button"
-        tabIndex={0}
-        aria-label={`默认服务器，${profile.host || "未添加"}，${serverPlatformLabel(profile)}`}
-        onClick={onOpenSettings}
-        onKeyDown={openSettingsFromCard}
-      >
-        <span className="nav-title">
-          <StatusDot status={connected ? "connected" : "idle"} />
-          <strong>默认服务器</strong>
-        </span>
-        <span className="nav-subtitle">{profile.host || "未添加"} · {serverPlatformLabel(profile)}</span>
-        <button
-          className={`connect-badge ${connection.state}`}
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onTestConnection();
-          }}
-          disabled={busy || connection.state === "testing"}
-        >
-          {connectLabel}
-        </button>
+      <div className="server-list">
+        {servers.map((server, index) => {
+          const isActive = server.id === activeServerId;
+          const serverConnection = isActive ? connection : server.connection;
+          const serverDiagnostics = isActive ? diagnostics : server.diagnostics || {};
+          const serverConnected = serverConnection?.state === "connected" || Boolean(serverDiagnostics.host);
+          const serverConnectLabel = isActive
+            ? connectLabel
+            : serverConnection?.state === "error"
+              ? "错误"
+              : serverConnected
+                ? "已连"
+                : "打开";
+          const serverStatus = serverConnection?.state || "idle";
+
+          return (
+            <div
+              className={`nav-card server-card ${isActive ? "active" : ""}`}
+              role="button"
+              tabIndex={0}
+              key={server.id}
+              aria-label={`${serverDisplayName(server, index)}，${server.profile.host || "未添加"}，${serverPlatformLabel(server.profile)}`}
+              onClick={() => onSelectServer?.(server.id)}
+              onKeyDown={(event) => selectServerFromCard(event, server.id)}
+            >
+              <span className="nav-title">
+                <StatusDot status={serverConnected ? "connected" : serverStatus} />
+                <strong>{serverDisplayName(server, index)}</strong>
+              </span>
+              <span className="nav-subtitle">
+                {server.profile.host || "未添加"} · {serverPlatformLabel(server.profile)}
+              </span>
+              <button
+                className={`connect-badge ${serverStatus}`}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!isActive) {
+                    onSelectServer?.(server.id);
+                    return;
+                  }
+                  onTestConnection();
+                }}
+                disabled={busy || (isActive && connection.state === "testing")}
+              >
+                {serverConnectLabel}
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       <div className="sidebar-meta" aria-label="当前工作区">
@@ -1879,7 +2133,7 @@ function RawOutput({
   );
 }
 
-function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, onTest, onClear }) {
+function SettingsPanel({ draftProfile, busy, canDelete, setDraftProfile, onClose, onSave, onTest, onClear }) {
   function updateField(field, value) {
     if (field === "platform") {
       const nextPlatform = normalizeServerPlatform(value);
@@ -1930,6 +2184,7 @@ function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, o
         ) : null}
 
         <div className="settings-grid">
+          <ConfigField label="名称" value={draftProfile.name} onChange={(value) => updateField("name", value)} />
           <ConfigSelect
             label="服务器类型"
             value={normalizeServerPlatform(draftProfile.platform)}
@@ -1987,7 +2242,7 @@ function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, o
 
         <div className="settings-actions">
           <button type="button" className="danger-button" onClick={onClear} disabled={busy}>
-            清空
+            {canDelete ? "删除" : "清空"}
           </button>
           <button type="button" className="ghost-button" onClick={onSave} disabled={busy}>
             保存

@@ -2329,6 +2329,8 @@ body {
 .danger-button:focus-visible,
 .copy-message:focus-visible,
 .connect-badge:focus-visible,
+.sidebar-add:focus-visible,
+.sidebar-collapse:focus-visible,
 .sidebar-action:focus-visible,
 .model-choice-actions button:focus-visible,
 .raw-meta button:focus-visible,
@@ -3020,6 +3022,7 @@ body {
   min-width: 0;
 }
 
+.sidebar-add,
 .sidebar-collapse {
   display: inline-flex;
   align-items: center;
@@ -3037,18 +3040,34 @@ body {
   transition: background 160ms ease, transform 160ms ease;
 }
 
+.sidebar-add {
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.sidebar-add:hover,
 .sidebar-collapse:hover {
   background: rgba(118, 118, 128, 0.18);
 }
 
+.sidebar-add:active,
 .sidebar-collapse:active {
   transform: scale(0.96);
+}
+
+.server-list {
+  display: grid;
+  gap: 8px;
 }
 
 .sidebar .server-card {
   min-height: 68px;
   padding: 12px 84px 12px 12px;
   border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.sidebar .server-card.active {
   background: rgba(0, 122, 255, 0.1);
 }
 
@@ -3104,6 +3123,14 @@ body {
 .sidebar.collapsed .sidebar-collapse {
   width: 42px;
   height: 34px;
+}
+
+.sidebar.collapsed .sidebar-add {
+  display: none;
+}
+
+.sidebar.collapsed .server-list {
+  gap: 7px;
 }
 
 .sidebar.collapsed .server-card {

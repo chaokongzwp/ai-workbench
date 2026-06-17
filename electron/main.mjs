@@ -51,17 +51,23 @@ function profileFilePath() {
   return join(app.getPath("userData"), "connection-profile.json");
 }
 
-function encryptPassword(password) {
-  const value = String(password || "");
-  if (!value) return { password: "" };
-  if (!safeStorage.isEncryptionAvailable()) return { password: value, insecurePasswordStorage: true };
+function encryptProfilePayload(profile) {
+  const value = profile && typeof profile === "object" ? profile : {};
+  if (!safeStorage.isEncryptionAvailable()) return { ...value, insecurePasswordStorage: true };
   return {
-    passwordEncrypted: safeStorage.encryptString(value).toString("base64"),
+    payloadEncrypted: safeStorage.encryptString(JSON.stringify(value)).toString("base64"),
   };
 }
 
 function decryptProfile(profile) {
   if (!profile || typeof profile !== "object") return {};
+  if (profile.payloadEncrypted) {
+    try {
+      return JSON.parse(safeStorage.decryptString(Buffer.from(profile.payloadEncrypted, "base64")));
+    } catch {
+      return {};
+    }
+  }
   if (!profile.passwordEncrypted) return profile;
   try {
     return {
@@ -160,11 +166,8 @@ ipcMain.handle("aiwb:run-command", async (_event, payload) => {
 
 ipcMain.handle("aiwb:save-profile", async (_event, payload = {}) => {
   const rawProfile = payload.profile && typeof payload.profile === "object" ? payload.profile : {};
-  const { passwordEncrypted, insecurePasswordStorage, ...rest } = rawProfile;
-  const profile = {
-    ...rest,
-    ...encryptPassword(rawProfile.password),
-  };
+  const { passwordEncrypted, payloadEncrypted, insecurePasswordStorage, ...rest } = rawProfile;
+  const profile = encryptProfilePayload(rest);
   const filePath = profileFilePath();
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(profile, null, 2), { mode: 0o600 });
