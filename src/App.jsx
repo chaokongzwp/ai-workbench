@@ -33,15 +33,40 @@ const SSHWorkbench = registerPlugin("SSHWorkbench", {
   }),
 });
 
+const serverPlatformDefaults = {
+  linux: {
+    workdir: "/opt/limpet-workspace",
+    codexCommand: "/usr/local/bin/codex",
+    claudeCommand: "/usr/local/bin/claude",
+  },
+  wsl: {
+    workdir: "/home/ai-workbench",
+    codexCommand: "codex",
+    claudeCommand: "claude",
+  },
+  windows: {
+    workdir: "C:\\AIWorkbench",
+    codexCommand: "codex",
+    claudeCommand: "claude",
+  },
+};
+
+const serverPlatforms = [
+  { id: "linux", label: "Linux / ECS" },
+  { id: "wsl", label: "Windows + WSL" },
+  { id: "windows", label: "Windows PowerShell" },
+];
+
 const defaultProfile = {
+  platform: "linux",
   host: "47.236.117.100",
   port: 22,
   username: "root",
   password: "",
-  workdir: "/opt/limpet-workspace",
+  workdir: serverPlatformDefaults.linux.workdir,
   tmuxSession: "ai-dev",
-  codexCommand: "/usr/local/bin/codex",
-  claudeCommand: "/usr/local/bin/claude",
+  codexCommand: serverPlatformDefaults.linux.codexCommand,
+  claudeCommand: serverPlatformDefaults.linux.claudeCommand,
   connectTimeoutSeconds: 15,
 };
 
@@ -89,9 +114,13 @@ function createMessage(partial) {
 }
 
 function normalizeProfile(profile) {
+  const platform = normalizeServerPlatform(profile?.platform);
+  const platformDefaults = serverPlatformDefaults[platform] || serverPlatformDefaults.linux;
   return {
     ...defaultProfile,
+    ...platformDefaults,
     ...(profile ?? {}),
+    platform,
     port: Number(profile?.port ?? defaultProfile.port) || defaultProfile.port,
     connectTimeoutSeconds:
       Number(profile?.connectTimeoutSeconds ?? defaultProfile.connectTimeoutSeconds) ||
@@ -100,7 +129,7 @@ function normalizeProfile(profile) {
 }
 
 function profileIssue(profile) {
-  if (!String(profile?.host || "").trim()) return "请填写 ECS IP 或域名";
+  if (!String(profile?.host || "").trim()) return "请填写服务器 IP 或域名";
   if (!String(profile?.username || "").trim()) return "请填写登录用户名";
   if (!String(profile?.password || "").trim()) return "请先填写登录密码";
   return "";
@@ -127,7 +156,21 @@ function sanitizeId(value) {
 }
 
 function toBase64Utf8(text) {
-  const bytes = new TextEncoder().encode(text);
+  return toBase64Bytes(new TextEncoder().encode(text));
+}
+
+function toBase64Utf16Le(text) {
+  const source = String(text || "");
+  const bytes = new Uint8Array(source.length * 2);
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    bytes[index * 2] = code & 0xff;
+    bytes[index * 2 + 1] = code >> 8;
+  }
+  return toBase64Bytes(bytes);
+}
+
+function toBase64Bytes(bytes) {
   let binary = "";
   const chunkSize = 0x8000;
   for (let index = 0; index < bytes.length; index += chunkSize) {
@@ -151,6 +194,24 @@ function agentCommand(profile, agent) {
   return profile[agent.commandKey] || defaultProfile[agent.commandKey];
 }
 
+function normalizeServerPlatform(value) {
+  if (value === "windows" || value === "wsl") return value;
+  return "linux";
+}
+
+function serverPlatformLabel(profile) {
+  const platform = normalizeServerPlatform(profile?.platform);
+  return serverPlatforms.find((item) => item.id === platform)?.label || serverPlatforms[0].label;
+}
+
+function isWindowsProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "windows";
+}
+
+function isWslProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "wsl";
+}
+
 function dirnameRemote(path) {
   const normalized = String(path || "").replace(/\/+$/, "");
   const index = normalized.lastIndexOf("/");
@@ -158,11 +219,50 @@ function dirnameRemote(path) {
   return normalized.slice(0, index);
 }
 
+function dirnameWindows(path) {
+  const normalized = String(path || "").replace(/[\\/]+$/, "");
+  const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
+  if (index <= 2) return normalized || ".";
+  return normalized.slice(0, index);
+}
+
+function joinWindowsPath(...parts) {
+  return parts
+    .map((part, index) => {
+      const value = String(part || "");
+      if (index === 0) return value.replace(/[\\/]+$/, "");
+      return value.replace(/^[\\/]+|[\\/]+$/g, "");
+    })
+    .filter(Boolean)
+    .join("\\");
+}
+
+function psQuote(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+function powershellCommand(script) {
+  const encoded = toBase64Utf16Le(`$ErrorActionPreference = 'Stop'\n${script}`);
+  return `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+}
+
+function remoteBashCommand(profile, script) {
+  if (!isWslProfile(profile)) return bashCommand(script);
+  const encoded = toBase64Utf8(script);
+  return powershellCommand(`
+$AIWB_SCRIPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encoded)}))
+& wsl.exe bash -lc $AIWB_SCRIPT
+exit $LASTEXITCODE
+`);
+}
+
 function buildHealthCommand(profile) {
+  if (isWindowsProfile(profile)) return buildWindowsHealthCommand(profile);
+
   const codexProbe = commandName(profile.codexCommand);
   const claudeProbe = commandName(profile.claudeCommand);
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 cd ${shQuote(profile.workdir)}
@@ -181,6 +281,32 @@ printf '__AIWB_CLAUDE_VERSION__'
 `);
 }
 
+function buildWindowsHealthCommand(profile) {
+  const codexProbe = commandName(profile.codexCommand) || "codex";
+  const claudeProbe = commandName(profile.claudeCommand) || "claude";
+
+  return powershellCommand(`
+$AIWB_WORKDIR = ${psQuote(profile.workdir)}
+New-Item -ItemType Directory -Force -Path $AIWB_WORKDIR | Out-Null
+Set-Location -LiteralPath $AIWB_WORKDIR
+$AIWB_CODEX = (Get-Command ${psQuote(codexProbe)} -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+$AIWB_CLAUDE = (Get-Command ${psQuote(claudeProbe)} -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+$AIWB_CODEX_VERSION = ""
+$AIWB_CLAUDE_VERSION = ""
+try { $AIWB_CODEX_VERSION = (& ${psQuote(profile.codexCommand)} --version 2>&1 | Select-Object -First 1) } catch {}
+try { $AIWB_CLAUDE_VERSION = (& ${psQuote(profile.claudeCommand)} --version 2>&1 | Select-Object -First 1) } catch {}
+Write-Output ("__AIWB_HOST__" + [System.Net.Dns]::GetHostName())
+Write-Output ("__AIWB_USER__" + [System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+Write-Output ("__AIWB_PWD__" + (Get-Location).Path)
+Write-Output "__AIWB_TMUX__Windows PowerShell 模式不使用 tmux"
+Write-Output ("__AIWB_CODEX__" + $AIWB_CODEX)
+Write-Output ("__AIWB_CLAUDE__" + $AIWB_CLAUDE)
+Write-Output "__AIWB_TMUX_VERSION__Windows PowerShell 模式不使用 tmux"
+Write-Output ("__AIWB_CODEX_VERSION__" + $AIWB_CODEX_VERSION)
+Write-Output ("__AIWB_CLAUDE_VERSION__" + $AIWB_CLAUDE_VERSION)
+`);
+}
+
 function parseHealth(output) {
   const result = {};
   for (const line of String(output || "").split("\n")) {
@@ -193,12 +319,14 @@ function parseHealth(output) {
 }
 
 function buildCodexExecCommand(profile, agent, prompt) {
+  if (isWindowsProfile(profile)) return buildWindowsCodexExecCommand(profile, agent, prompt);
+
   const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
   const command = agentCommand(profile, agent);
   const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
   const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.session`;
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 mkdir -p ${shQuote(stateDir)}
@@ -245,8 +373,81 @@ rm -f "$AIWB_OUTPUT" "$AIWB_LOG"
 `);
 }
 
+function buildWindowsCodexExecCommand(profile, agent, prompt) {
+  const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
+  const command = agentCommand(profile, agent);
+  const stateDir = joinWindowsPath(profile.workdir, ".ai-workbench");
+  const sessionFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.session`);
+
+  return powershellCommand(`
+$AIWB_WORKDIR = ${psQuote(profile.workdir)}
+$AIWB_STATE_DIR = ${psQuote(stateDir)}
+$AIWB_SESSION_FILE = ${psQuote(sessionFile)}
+New-Item -ItemType Directory -Force -Path $AIWB_WORKDIR | Out-Null
+New-Item -ItemType Directory -Force -Path $AIWB_STATE_DIR | Out-Null
+Set-Location -LiteralPath $AIWB_WORKDIR
+
+$AIWB_PROMPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encodedPrompt)}))
+$AIWB_OUTPUT = Join-Path $env:TEMP ("aiwb-codex-output-" + [guid]::NewGuid().ToString() + ".txt")
+$AIWB_LOG = Join-Path $env:TEMP ("aiwb-codex-log-" + [guid]::NewGuid().ToString() + ".log")
+$AIWB_SESSION = ""
+if (Test-Path -LiteralPath $AIWB_SESSION_FILE) {
+  $AIWB_SESSION = (Get-Content -LiteralPath $AIWB_SESSION_FILE -Raw -ErrorAction SilentlyContinue).Trim()
+}
+
+$AIWB_ARGS = @("exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT)
+if ($AIWB_SESSION -match "^[0-9a-fA-F-]{36}$") {
+  $AIWB_ARGS += @("resume", $AIWB_SESSION, $AIWB_PROMPT)
+} else {
+  $AIWB_ARGS += @($AIWB_PROMPT)
+}
+
+& ${psQuote(command)} @AIWB_ARGS *> $AIWB_LOG
+$AIWB_STATUS = $LASTEXITCODE
+if ($null -eq $AIWB_STATUS) { $AIWB_STATUS = 0 }
+if ($AIWB_STATUS -ne 0) {
+  if (Test-Path -LiteralPath $AIWB_LOG) { Get-Content -LiteralPath $AIWB_LOG -Raw }
+  Remove-Item -LiteralPath $AIWB_OUTPUT, $AIWB_LOG -Force -ErrorAction SilentlyContinue
+  exit $AIWB_STATUS
+}
+
+Write-Output "__AIWB_RESPONSE_START__"
+if (Test-Path -LiteralPath $AIWB_OUTPUT) {
+  Get-Content -LiteralPath $AIWB_OUTPUT -Raw
+}
+Write-Output "__AIWB_RESPONSE_END__"
+
+$AIWB_NEXT_SESSION = ""
+if (Test-Path -LiteralPath $AIWB_LOG) {
+  $AIWB_LOG_TEXT = Get-Content -LiteralPath $AIWB_LOG -Raw
+  $AIWB_MATCHES = [regex]::Matches($AIWB_LOG_TEXT, "session id: ([0-9a-fA-F-]{36})")
+  if ($AIWB_MATCHES.Count -gt 0) {
+    $AIWB_NEXT_SESSION = $AIWB_MATCHES[$AIWB_MATCHES.Count - 1].Groups[1].Value
+  }
+}
+if (-not $AIWB_NEXT_SESSION) {
+  $AIWB_SESSIONS_DIR = Join-Path $HOME ".codex\\sessions"
+  if (Test-Path -LiteralPath $AIWB_SESSIONS_DIR) {
+    $AIWB_LATEST = Get-ChildItem -LiteralPath $AIWB_SESSIONS_DIR -Recurse -Filter "*.jsonl" -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1
+    if ($AIWB_LATEST -and $AIWB_LATEST.Name -match "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") {
+      $AIWB_NEXT_SESSION = $Matches[0]
+    }
+  }
+}
+if ($AIWB_NEXT_SESSION -match "^[0-9a-fA-F-]{36}$") {
+  Set-Content -LiteralPath $AIWB_SESSION_FILE -Value $AIWB_NEXT_SESSION
+  Write-Output ("__AIWB_SESSION__" + $AIWB_NEXT_SESSION)
+}
+
+Remove-Item -LiteralPath $AIWB_OUTPUT, $AIWB_LOG -Force -ErrorAction SilentlyContinue
+`);
+}
+
 function buildAgentSendCommand(profile, agent, prompt) {
   if (agent.id === "codex") return buildCodexExecCommand(profile, agent, prompt);
+  if (isWindowsProfile(profile)) return buildWindowsUnsupportedAgentCommand(agent);
 
   const targetSession = sessionName(profile, agent.id);
   const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
@@ -262,7 +463,7 @@ printf '请在服务器上单独运行 ${commandName(command) || agent.shortName
 exec bash -l
 `;
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 mkdir -p ${shQuote(dirnameRemote(starterPath))}
@@ -344,10 +545,20 @@ tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
 `);
 }
 
+function buildWindowsUnsupportedAgentCommand(agent) {
+  return powershellCommand(`
+Write-Output "${agent.shortName} 在 Windows PowerShell 模式暂时不能使用持续会话。"
+Write-Output "如果要在 Windows 服务器上使用 ${agent.shortName}，请选择 Windows + WSL 模式，或把工具安装到 WSL/Linux 环境。"
+exit 64
+`);
+}
+
 function buildCodexLoginDeviceCommand(profile, agent) {
+  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式没有可操作的 Codex TUI。请先在 Windows 服务器上运行 codex login 完成登录，然后回到 AI Workbench 继续发送任务。");
+
   const targetSession = sessionName(profile, agent.id);
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux send-keys -t ${shQuote(targetSession)} 2 C-m
   sleep 5
@@ -359,10 +570,12 @@ fi
 }
 
 function buildModelChoiceCommand(profile, agent, choice) {
+  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式使用 codex exec，不需要操作 Codex TUI 模型选择。请重新发送任务。");
+
   const targetSession = sessionName(profile, agent.id);
   const key = choice === "new" ? "1" : "2";
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux send-keys -t ${shQuote(targetSession)} ${shQuote(key)} C-m
   sleep 1.2
@@ -374,8 +587,10 @@ fi
 }
 
 function buildCaptureCommand(profile, agent) {
+  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式使用一次性任务，没有可刷新的 tmux 会话。");
+
   const targetSession = sessionName(profile, agent.id);
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
 else
@@ -385,8 +600,10 @@ fi
 }
 
 function buildInterruptCommand(profile, agent) {
+  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式当前任务由 codex exec 一次性执行，暂不支持 tmux 中断。");
+
   const targetSession = sessionName(profile, agent.id);
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux send-keys -t ${shQuote(targetSession)} C-c
   sleep 0.4
@@ -398,14 +615,22 @@ fi
 }
 
 function buildKillCommand(profile, agent) {
+  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式没有需要关闭的 tmux 会话。");
+
   const targetSession = sessionName(profile, agent.id);
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux kill-session -t ${shQuote(targetSession)}
   printf 'killed tmux session: %s\\n' ${shQuote(targetSession)}
 else
   printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
 fi
+`);
+}
+
+function buildWindowsNoTmuxCommand(message) {
+  return powershellCommand(`
+Write-Output ${psQuote(message)}
 `);
 }
 
@@ -448,6 +673,9 @@ function detectAgentIssue(output, agent) {
   }
   if (/tmux session not running/i.test(text)) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
+  }
+  if (/Windows PowerShell 模式暂时不能使用持续会话/i.test(text)) {
+    return `${agent.shortName} 在 Windows PowerShell 模式暂时不能使用持续会话。请改选 Windows + WSL，或把 ${agent.shortName} 安装到 WSL/Linux 环境。`;
   }
   if (text.includes(`AI Workbench: ${agent.shortName} 已退出`)) {
     return `${agent.shortName} 没有启动成功。原始原因已放在“详情”里，通常是服务器上的命令路径、登录状态或工具配置需要处理。`;
@@ -573,6 +801,7 @@ export function App() {
   const [draftProfile, setDraftProfile] = useState(defaultProfile);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState("codex");
   const [composer, setComposer] = useState("");
@@ -1041,7 +1270,9 @@ export function App() {
         ? "iOS 原生 SSH"
         : "Web 预览";
 
-  const shellClassName = `app-shell ${bridge?.platform === "mac" || desktopPreview ? "mac-shell" : ""}`;
+  const shellClassName = `app-shell ${bridge?.platform === "mac" || desktopPreview ? "mac-shell" : ""} ${
+    sidebarCollapsed ? "sidebar-collapsed" : ""
+  }`;
 
   return (
     <main className={shellClassName}>
@@ -1057,11 +1288,13 @@ export function App() {
       />
 
       <div className="workspace">
-        <aside className="sidebar desktop-sidebar">
+        <aside className={`sidebar desktop-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
           <NavigationPanel
             profile={profile}
             connection={connection}
             diagnostics={diagnostics}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
             onOpenSettings={() => setSettingsOpen(true)}
             onTestConnection={testConnection}
             onRefreshOutput={refreshOutput}
@@ -1211,6 +1444,8 @@ function NavigationPanel({
   profile,
   connection,
   diagnostics,
+  collapsed = false,
+  onToggleCollapse,
   onOpenSettings,
   onTestConnection,
   onRefreshOutput,
@@ -1228,11 +1463,25 @@ function NavigationPanel({
 
   return (
     <>
-      <SectionHeader title="服务器" />
+      <div className="sidebar-toolbar">
+        <SectionHeader title="服务器" />
+        {onToggleCollapse ? (
+          <button
+            className="sidebar-collapse"
+            type="button"
+            aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+            title={collapsed ? "展开侧边栏" : "收起侧边栏"}
+            onClick={onToggleCollapse}
+          >
+            {collapsed ? "›" : "‹"}
+          </button>
+        ) : null}
+      </div>
       <div
         className="nav-card server-card active"
         role="button"
         tabIndex={0}
+        aria-label={`默认服务器，${profile.host || "未添加"}，${serverPlatformLabel(profile)}`}
         onClick={onOpenSettings}
         onKeyDown={openSettingsFromCard}
       >
@@ -1240,7 +1489,7 @@ function NavigationPanel({
           <StatusDot status={connected ? "connected" : "idle"} />
           <strong>默认服务器</strong>
         </span>
-        <span className="nav-subtitle">{profile.host || "未添加"}</span>
+        <span className="nav-subtitle">{profile.host || "未添加"} · {serverPlatformLabel(profile)}</span>
         <button
           className={`connect-badge ${connection.state}`}
           type="button"
@@ -1632,6 +1881,31 @@ function RawOutput({
 
 function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, onTest, onClear }) {
   function updateField(field, value) {
+    if (field === "platform") {
+      const nextPlatform = normalizeServerPlatform(value);
+      setDraftProfile((current) => {
+        const currentPlatform = normalizeServerPlatform(current.platform);
+        const currentDefaults = serverPlatformDefaults[currentPlatform] || serverPlatformDefaults.linux;
+        const nextDefaults = serverPlatformDefaults[nextPlatform] || serverPlatformDefaults.linux;
+        return {
+          ...current,
+          platform: nextPlatform,
+          workdir:
+            !current.workdir || current.workdir === currentDefaults.workdir
+              ? nextDefaults.workdir
+              : current.workdir,
+          codexCommand:
+            !current.codexCommand || current.codexCommand === currentDefaults.codexCommand
+              ? nextDefaults.codexCommand
+              : current.codexCommand,
+          claudeCommand:
+            !current.claudeCommand || current.claudeCommand === currentDefaults.claudeCommand
+              ? nextDefaults.claudeCommand
+              : current.claudeCommand,
+        };
+      });
+      return;
+    }
     setDraftProfile((current) => ({ ...current, [field]: value }));
   }
 
@@ -1656,6 +1930,12 @@ function SettingsPanel({ draftProfile, busy, setDraftProfile, onClose, onSave, o
         ) : null}
 
         <div className="settings-grid">
+          <ConfigSelect
+            label="服务器类型"
+            value={normalizeServerPlatform(draftProfile.platform)}
+            options={serverPlatforms}
+            onChange={(value) => updateField("platform", value)}
+          />
           <ConfigField label="服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
           <ConfigField
             label="端口"
@@ -1732,6 +2012,21 @@ function ConfigField({ label, value, onChange, type = "text", inputMode, autoCom
         autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
       />
+    </label>
+  );
+}
+
+function ConfigSelect({ label, value, options, onChange }) {
+  return (
+    <label className="config-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }

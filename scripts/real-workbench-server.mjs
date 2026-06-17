@@ -8,12 +8,31 @@ const root = resolve(new URL("..", import.meta.url).pathname);
 const port = Number(process.env.AIWB_PORT || 4187);
 const sessions = new Map();
 
+const platformDefaults = {
+  linux: {
+    workdir: "/opt/limpet-workspace",
+    codexCommand: "/usr/local/bin/codex",
+    claudeCommand: "/usr/local/bin/claude",
+  },
+  wsl: {
+    workdir: "/home/ai-workbench",
+    codexCommand: "codex",
+    claudeCommand: "claude",
+  },
+  windows: {
+    workdir: "C:\\AIWorkbench",
+    codexCommand: "codex",
+    claudeCommand: "claude",
+  },
+};
+
 const defaultProfile = {
+  platform: "linux",
   port: 22,
-  workdir: "/opt/limpet-workspace",
+  workdir: platformDefaults.linux.workdir,
   tmuxPrefix: "ai-workbench",
-  codexCommand: "/usr/local/bin/codex",
-  claudeCommand: "/usr/local/bin/claude",
+  codexCommand: platformDefaults.linux.codexCommand,
+  claudeCommand: platformDefaults.linux.claudeCommand,
 };
 
 function sendJson(res, statusCode, payload) {
@@ -31,6 +50,38 @@ function shQuote(value) {
 
 function bashCommand(script) {
   return `bash -lc ${shQuote(script)}`;
+}
+
+function normalizeServerPlatform(value) {
+  if (value === "windows" || value === "wsl") return value;
+  return "linux";
+}
+
+function isWindowsProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "windows";
+}
+
+function isWslProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "wsl";
+}
+
+function psQuote(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+function powershellCommand(script) {
+  const encoded = Buffer.from(`$ErrorActionPreference = 'Stop'\n${script}`, "utf16le").toString("base64");
+  return `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+}
+
+function remoteBashCommand(profile, script) {
+  if (!isWslProfile(profile)) return bashCommand(script);
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return powershellCommand(`
+$AIWB_SCRIPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encoded)}))
+& wsl.exe bash -lc $AIWB_SCRIPT
+exit $LASTEXITCODE
+`);
 }
 
 function sanitizeId(value) {
@@ -108,7 +159,18 @@ function sshExec(profile, command, timeoutMs = 120000) {
 }
 
 function buildHealthCommand(profile) {
-  return bashCommand(`
+  if (isWindowsProfile(profile)) {
+    return powershellCommand(`
+$AIWB_WORKDIR = ${psQuote(profile.workdir)}
+New-Item -ItemType Directory -Force -Path $AIWB_WORKDIR | Out-Null
+Set-Location -LiteralPath $AIWB_WORKDIR
+Write-Output "AI Workbench connected"
+Write-Output ("workdir=" + (Get-Location).Path)
+Write-Output "shell=Windows PowerShell"
+`);
+  }
+
+  return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 cd ${shQuote(profile.workdir)}
@@ -119,11 +181,13 @@ command -v tmux >/dev/null
 }
 
 function buildCodexExecCommand(profile, prompt, codexSessionId = "") {
+  if (isWindowsProfile(profile)) return buildWindowsCodexExecCommand(profile, prompt, codexSessionId);
+
   const outputFile = `/tmp/aiwb-codex-${randomUUID()}.txt`;
   const logFile = `/tmp/aiwb-codex-${randomUUID()}.log`;
   const resumeArgs = codexSessionId ? `resume ${shQuote(codexSessionId)}` : "";
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 cd ${shQuote(profile.workdir)}
@@ -145,16 +209,52 @@ rm -f ${shQuote(outputFile)} ${shQuote(logFile)}
 `);
 }
 
+function buildWindowsCodexExecCommand(profile, prompt, codexSessionId = "") {
+  const encodedPrompt = Buffer.from(prompt, "utf8").toString("base64");
+
+  return powershellCommand(`
+$AIWB_WORKDIR = ${psQuote(profile.workdir)}
+New-Item -ItemType Directory -Force -Path $AIWB_WORKDIR | Out-Null
+Set-Location -LiteralPath $AIWB_WORKDIR
+$AIWB_PROMPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encodedPrompt)}))
+$AIWB_OUTPUT = Join-Path $env:TEMP ("aiwb-codex-output-" + [guid]::NewGuid().ToString() + ".txt")
+$AIWB_LOG = Join-Path $env:TEMP ("aiwb-codex-log-" + [guid]::NewGuid().ToString() + ".log")
+$AIWB_ARGS = @("exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT)
+if (${psQuote(codexSessionId)} -match "^[0-9a-fA-F-]{36}$") {
+  $AIWB_ARGS += @("resume", ${psQuote(codexSessionId)}, $AIWB_PROMPT)
+} else {
+  $AIWB_ARGS += @($AIWB_PROMPT)
+}
+& ${psQuote(profile.codexCommand)} @AIWB_ARGS *> $AIWB_LOG
+$AIWB_STATUS = $LASTEXITCODE
+if ($null -eq $AIWB_STATUS) { $AIWB_STATUS = 0 }
+if ($AIWB_STATUS -ne 0) {
+  if (Test-Path -LiteralPath $AIWB_LOG) { Get-Content -LiteralPath $AIWB_LOG -Raw }
+  exit $AIWB_STATUS
+}
+Write-Output "__AIWB_RESPONSE_START__"
+if (Test-Path -LiteralPath $AIWB_OUTPUT) { Get-Content -LiteralPath $AIWB_OUTPUT -Raw }
+Write-Output "__AIWB_RESPONSE_END__"
+Remove-Item -LiteralPath $AIWB_OUTPUT, $AIWB_LOG -Force -ErrorAction SilentlyContinue
+`);
+}
+
 function buildSendCommand(profile, agent, sessionId, prompt, remoteSessionId = "") {
   if (agent === "codex") {
     return buildCodexExecCommand(profile, prompt, remoteSessionId);
+  }
+
+  if (isWindowsProfile(profile)) {
+    return powershellCommand(`
+Write-Output "${agent} 在 Windows PowerShell 模式暂时不能使用持续会话。请选择 Windows + WSL 模式，或把工具安装到 WSL/Linux 环境。"
+`);
   }
 
   const target = tmuxSession(profile, agent, sessionId);
   const command = agentCommand(profile, agent);
   const encodedPrompt = Buffer.from(prompt, "utf8").toString("base64");
 
-  return bashCommand(`
+  return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 cd ${shQuote(profile.workdir)}
@@ -199,16 +299,20 @@ async function readBody(req) {
 }
 
 function validateProfile(input) {
+  const platform = normalizeServerPlatform(input.platform);
+  const defaults = platformDefaults[platform] || platformDefaults.linux;
   const host = String(input.host || "").trim();
   const username = String(input.username || "").trim();
   const password = String(input.password || "");
-  const workdir = String(input.workdir || defaultProfile.workdir).trim() || defaultProfile.workdir;
+  const workdir = String(input.workdir || defaults.workdir).trim() || defaults.workdir;
   const portValue = Number(input.port || defaultProfile.port);
   if (!host) throw new Error("请填写服务器地址");
   if (!username) throw new Error("请填写用户名");
   if (!password) throw new Error("请填写登录密码");
   return {
     ...defaultProfile,
+    ...defaults,
+    platform,
     host,
     username,
     password,
