@@ -162,6 +162,33 @@ textarea:disabled {
   display: block;
 }
 
+.topbar-logo-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.topbar-logo-button .workbench-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.topbar-logo-button:hover {
+  background: rgba(118, 118, 128, 0.12);
+}
+
+.topbar-logo-button:active {
+  transform: scale(0.96);
+}
+
 .shell-icon {
   display: inline-flex;
   align-items: center;
@@ -3141,12 +3168,24 @@ body {
 }
 
 .topbar {
-  grid-template-columns: minmax(210px, 0.85fr) minmax(180px, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
 }
 
 .topbar .connection-pill,
 .topbar .topbar-test {
   display: none;
+}
+
+.topbar .nav-trigger {
+  grid-column: 1;
+}
+
+.topbar .topbar-session {
+  grid-column: 2;
+}
+
+.topbar .topbar-actions {
+  grid-column: 3;
 }
 
 .app-shell:not(.sidebar-collapsed) .topbar-session {
@@ -3158,11 +3197,15 @@ body {
 }
 
 .mac-shell .topbar {
-  grid-template-columns: minmax(210px, 0.7fr) minmax(220px, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
 }
 
 .mac-shell .topbar-session strong {
   font-size: 14px;
+}
+
+.mac-shell .topbar-logo-button {
+  -webkit-app-region: no-drag;
 }
 
 .sidebar.collapsed {

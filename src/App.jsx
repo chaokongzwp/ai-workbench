@@ -1657,19 +1657,12 @@ function TopBar({ sessionName: currentSessionName, showSessionName, onOpenNav, o
       <button className="nav-trigger" type="button" aria-label="打开菜单" onClick={onOpenNav}>
         <span>≡</span>
       </button>
-      <div className="brand">
-        <WorkbenchLogo />
-        <div>
-          <strong>AI Workbench</strong>
-          <span>AI sessions</span>
-        </div>
-      </div>
       <div className={`topbar-session ${showSessionName ? "visible" : ""}`} aria-hidden={!showSessionName}>
         <strong>{currentSessionName}</strong>
       </div>
       <div className="topbar-actions">
-        <button type="button" className="ghost-button" onClick={onOpenSettings}>
-          服务器
+        <button type="button" className="topbar-logo-button" aria-label="服务器设置" title="服务器设置" onClick={onOpenSettings}>
+          <WorkbenchLogo />
         </button>
       </div>
     </header>
