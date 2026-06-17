@@ -219,21 +219,52 @@ chmod 700 ${shQuote(starterPath)}
 
 if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   CURRENT_COMMAND=$(tmux display-message -p -t ${shQuote(targetSession)} '#{pane_current_command}' 2>/dev/null || true)
-  if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
+  AIWB_EXISTING=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -80 2>/dev/null || true)
+  if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$' &&
+     ! printf '%s' "$AIWB_EXISTING" | grep -Fq 'OpenAI Codex'; then
     tmux kill-session -t ${shQuote(targetSession)}
   fi
 fi
 
 if ! tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux new-session -d -s ${shQuote(targetSession)} -c ${shQuote(profile.workdir)} ${shQuote(starterPath)}
-  sleep 1.8
+  sleep 1
 fi
 
 CURRENT_COMMAND=$(tmux display-message -p -t ${shQuote(targetSession)} '#{pane_current_command}' 2>/dev/null || true)
-if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$'; then
+AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
+if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$' &&
+   ! printf '%s' "$AIWB_PANE" | grep -Fq 'OpenAI Codex'; then
   tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
   exit 46
 fi
+
+${agent.id === "codex" ? `
+AIWB_READY=0
+for AIWB_READY_TRY in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
+  if printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with ChatGPT' &&
+     printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with Device Code'; then
+    tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
+    exit 48
+  fi
+  if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
+     printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
+    tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
+    exit 47
+  fi
+  if printf '%s' "$AIWB_PANE" | grep -Fq 'OpenAI Codex'; then
+    AIWB_READY=1
+    break
+  fi
+  sleep 0.5
+done
+
+if [ "$AIWB_READY" != "1" ]; then
+  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
+  exit 49
+fi
+` : ""}
 
 AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
 if printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with ChatGPT' &&
@@ -252,8 +283,9 @@ fi
 AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
 tmux set-buffer -b aiwb-prompt "$AIWB_PROMPT"
 tmux paste-buffer -t ${shQuote(targetSession)} -b aiwb-prompt
+sleep 0.6
 tmux send-keys -t ${shQuote(targetSession)} C-m
-sleep 1
+sleep 1.4
 tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
 `);
 }
@@ -415,6 +447,12 @@ function looksLikeTerminalNoise(line, prompt = "") {
   if (/^(Introducing GPT-5\.5|Learn more:|Choose how|Use ↑|1\. Try new model|2\. Use existing model)/i.test(text)) {
     return true;
   }
+  if (/^(Codex could not find bubblewrap|package manager\.|https:\/\/developers\.openai\.com\/codex\/concepts\/sandboxing|will use the bundled bubblewrap)/i.test(text)) {
+    return true;
+  }
+  if (/(OpenAI Codex|model:\s+gpt-|directory:\s+\/|\/model to change)/i.test(text)) return true;
+  if (/^(Tip:|Use \/fast|› Use \/skills|gpt-[\w.-]+\s+.*·\s+)/i.test(text)) return true;
+  if (/^•\s+Booting MCP server/i.test(text)) return true;
   if (/^(AI Workbench:|tmux session not running|Missing required field:)/i.test(text)) return true;
   if (/^(thinking|working|running|reading|edited|applied|searched|opened|ran|tool|shell)\b/i.test(text)) return true;
   if (/^(ctrl|shift|enter|esc|press enter)\b/i.test(text)) return true;
@@ -652,7 +690,7 @@ export function App() {
       }
 
       const extracted = extractAgentFinalOutput(raw, text);
-      const visibleOutput = extracted.text;
+      const visibleOutput = extracted.final || final ? extracted.text : "";
       const done = extracted.final || (final && Boolean(visibleOutput));
       updateAssistantMessage(assistantMessageId, {
         title: done ? `${agent.shortName} 回复` : `等待 ${agent.shortName} 回复`,
