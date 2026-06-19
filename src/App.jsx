@@ -209,6 +209,7 @@ function createServerSession(partial = {}, index = 0) {
     profile,
     connection: partial.connection || initialConnectionForProfile(profile),
     diagnostics: partial.diagnostics || {},
+    discovery: partial.discovery || null,
     rawOutput: partial.rawOutput || "原始输出会在测试连接或发送任务后显示。",
     messages: Array.isArray(partial.messages) ? partial.messages : [],
   };
@@ -328,6 +329,12 @@ function serverPlatformLabel(profile) {
   return serverPlatforms.find((item) => item.id === platform)?.label || serverPlatforms[0].label;
 }
 
+function workdirDisplayName(path) {
+  const normalized = String(path || "").replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) || normalized || "工作目录";
+}
+
 function isWindowsProfile(profile) {
   return normalizeServerPlatform(profile?.platform) === "windows";
 }
@@ -440,6 +447,389 @@ function parseHealth(output) {
     }
   }
   return result;
+}
+
+function buildDiscoveryCommand(profile) {
+  if (isWindowsProfile(profile)) return buildWindowsDiscoveryCommand(profile);
+
+  return remoteBashCommand(profile, `
+set +e
+export AIWB_CURRENT_WORKDIR=${shQuote(profile.workdir)}
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import time
+from collections import defaultdict
+from pathlib import Path
+
+SKIP_DIRS = {
+    ".cache", ".cargo", ".git", ".local", ".npm", ".pnpm-store", ".yarn",
+    "build", "dist", "node_modules", "target", "__pycache__",
+}
+PROJECT_MARKERS = {
+    ".git": "Git",
+    ".codex": "Codex",
+    ".claude": "Claude",
+    "package.json": "Node",
+    "pyproject.toml": "Python",
+    "requirements.txt": "Python",
+    "Cargo.toml": "Rust",
+    "go.mod": "Go",
+    "pom.xml": "Java",
+}
+
+def short(value, limit=120):
+    text = " ".join(str(value or "").split())
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+def run(args, timeout=4):
+    try:
+        result = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
+        return (result.stdout or result.stderr or "").strip()
+    except Exception:
+        return ""
+
+def tool_version(tool, path):
+    if tool == "tmux":
+        return short(run([path, "-V"]))
+    if tool == "screen":
+        return short(run([path, "--version"]))
+    return short(run([path, "--version"]))
+
+def collect_tools():
+    tools = []
+    for tool in ["codex", "claude", "gemini", "aider", "ollama", "opencode", "goose", "tmux", "screen"]:
+        path = shutil.which(tool)
+        if path:
+            tools.append({"id": tool, "name": tool, "path": path, "version": tool_version(tool, path)})
+    return tools
+
+def read_jsonl(path):
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+    except Exception:
+        return
+
+def collect_codex_history(limit=160):
+    root = Path("/root/.codex/sessions")
+    files = [path for path in root.rglob("*.jsonl") if path.is_file()] if root.exists() else []
+    files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    items = []
+    for path in files[:limit]:
+        cwd = ""
+        model = ""
+        last_user = ""
+        last_assistant = ""
+        for obj in read_jsonl(path):
+            payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
+            if obj.get("type") == "session_meta":
+                cwd = payload.get("cwd") or cwd
+            elif obj.get("type") == "turn_context":
+                cwd = payload.get("cwd") or cwd
+                model = payload.get("model") or model
+            elif obj.get("type") == "response_item" and payload.get("type") == "message":
+                role = payload.get("role")
+                content = payload.get("content")
+                text = ""
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = "\\n".join(
+                        part.get("text", "")
+                        for part in content
+                        if isinstance(part, dict) and isinstance(part.get("text"), str)
+                    )
+                if role == "user" and text and not text.startswith("# AGENTS.md"):
+                    last_user = short(text)
+                elif role == "assistant" and text:
+                    last_assistant = short(text)
+        items.append({
+            "agent": "codex",
+            "path": str(path),
+            "sessionId": path.stem,
+            "cwd": cwd,
+            "model": model,
+            "mtime": int(path.stat().st_mtime),
+            "lastUser": last_user,
+            "lastAssistant": last_assistant,
+        })
+    return items
+
+def collect_claude_history(limit=80):
+    root = Path("/root/.claude/projects")
+    files = [path for path in root.rglob("*.jsonl") if path.is_file()] if root.exists() else []
+    files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    items = []
+    for path in files[:limit]:
+        cwd = ""
+        last_user = ""
+        last_assistant = ""
+        for obj in read_jsonl(path):
+            cwd = obj.get("cwd") or cwd
+            role = obj.get("role")
+            content = obj.get("message", {}).get("content") if isinstance(obj.get("message"), dict) else obj.get("content")
+            if isinstance(content, list):
+                text = "\\n".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                )
+            else:
+                text = str(content or "")
+            if role == "user" and text:
+                last_user = short(text)
+            elif role == "assistant" and text:
+                last_assistant = short(text)
+        items.append({
+            "agent": "claude",
+            "path": str(path),
+            "sessionId": path.stem,
+            "cwd": cwd,
+            "model": "",
+            "mtime": int(path.stat().st_mtime),
+            "lastUser": last_user,
+            "lastAssistant": last_assistant,
+        })
+    return items
+
+def collect_active_sessions():
+    sessions = []
+    tmux = shutil.which("tmux")
+    if tmux:
+        output = run([tmux, "list-panes", "-a", "-F", "session=#{session_name}|window=#{window_index}:#{window_name}|pane=#{pane_index}|pid=#{pane_pid}|cmd=#{pane_current_command}|path=#{pane_current_path}"])
+        for line in output.splitlines():
+            data = {}
+            for part in line.split("|"):
+                key, _, value = part.partition("=")
+                data[key] = value
+            if data.get("session") or data.get("path") or data.get("cmd"):
+                cmd = data.get("cmd", "")
+                agent = "codex" if "codex" in cmd.lower() else "claude" if "claude" in cmd.lower() else "shell"
+                sessions.append({
+                    "type": "tmux",
+                    "agent": agent,
+                    "name": data.get("session", ""),
+                    "cwd": data.get("path", ""),
+                    "command": cmd,
+                })
+    return sessions
+
+def add_dir(dirs, path, markers=None, history=None, current=False):
+    if not path:
+        return
+    value = str(path)
+    item = dirs.setdefault(value, {
+        "path": value,
+        "name": Path(value).name or value,
+        "markers": [],
+        "history": {"codex": 0, "claude": 0},
+        "latest": 0,
+        "score": 0,
+        "exists": Path(value).exists(),
+    })
+    if markers:
+        item["markers"] = sorted(set(item["markers"]) | set(markers))
+    if history:
+        for key in ("codex", "claude"):
+            item["history"][key] = item["history"].get(key, 0) + int(history.get(key, 0))
+        item["latest"] = max(item.get("latest", 0), int(history.get("latest", 0)))
+    if current:
+        item["current"] = True
+    item["score"] = (
+        item["history"].get("codex", 0) * 12
+        + item["history"].get("claude", 0) * 10
+        + len(item["markers"]) * 8
+        + (12 if item.get("current") else 0)
+        + (4 if item.get("exists") else 0)
+        + min(item.get("latest", 0) // 100000000, 20)
+    )
+
+def collect_project_dirs(current_workdir, histories):
+    history_by_cwd = defaultdict(lambda: {"codex": 0, "claude": 0, "latest": 0})
+    for item in histories:
+        cwd = item.get("cwd")
+        if not cwd:
+            continue
+        bucket = history_by_cwd[cwd]
+        bucket[item.get("agent", "")] += 1
+        bucket["latest"] = max(bucket["latest"], int(item.get("mtime", 0)))
+
+    roots = []
+    for candidate in [
+        current_workdir,
+        str(Path(current_workdir).parent) if current_workdir else "",
+        "/opt/limpet-workspace",
+        "/workspace",
+        "/root",
+        "/home",
+    ]:
+        if candidate and candidate not in roots and Path(candidate).exists():
+            roots.append(candidate)
+
+    dirs = {}
+    for cwd, history in history_by_cwd.items():
+        add_dir(dirs, cwd, markers=["历史会话"], history=history, current=(cwd == current_workdir))
+
+    for root_value in roots:
+        root = Path(root_value)
+        base_depth = len(root.parts)
+        for current, child_dirs, files in os.walk(root):
+            path = Path(current)
+            depth = len(path.parts) - base_depth
+            markers = []
+            file_set = set(files)
+            dir_set = set(child_dirs)
+            for marker, label in PROJECT_MARKERS.items():
+                if marker in file_set or marker in dir_set:
+                    markers.append(label)
+            if markers or str(path) == current_workdir:
+                add_dir(dirs, str(path), markers=markers, history=history_by_cwd.get(str(path)), current=(str(path) == current_workdir))
+            if depth >= 2:
+                child_dirs[:] = []
+            else:
+                child_dirs[:] = [name for name in child_dirs if name not in SKIP_DIRS and not name.startswith(".Trash")]
+
+    return sorted(dirs.values(), key=lambda item: (-item.get("score", 0), -item.get("latest", 0), item.get("path", "")))[:60]
+
+current_workdir = os.environ.get("AIWB_CURRENT_WORKDIR", "")
+histories = collect_codex_history() + collect_claude_history()
+result = {
+    "scannedAt": time.strftime("%Y-%m-%d %H:%M:%S %z"),
+    "tools": collect_tools(),
+    "activeSessions": collect_active_sessions(),
+    "history": {
+        "codex": sum(1 for item in histories if item.get("agent") == "codex"),
+        "claude": sum(1 for item in histories if item.get("agent") == "claude"),
+        "latest": max([item.get("mtime", 0) for item in histories] or [0]),
+    },
+    "recentSessions": sorted(histories, key=lambda item: item.get("mtime", 0), reverse=True)[:12],
+    "directories": collect_project_dirs(current_workdir, histories),
+}
+print("__AIWB_SCAN_JSON__" + json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+PY
+`);
+}
+
+function buildWindowsDiscoveryCommand(profile) {
+  const codexProbe = commandName(profile.codexCommand) || "codex";
+  const claudeProbe = commandName(profile.claudeCommand) || "claude";
+
+  return powershellCommand(`
+$AIWB_WORKDIR = ${psQuote(profile.workdir)}
+$AIWB_TOOLS = @()
+foreach ($AIWB_TOOL in @(${psQuote(codexProbe)}, ${psQuote(claudeProbe)}, "gemini", "aider", "ollama", "opencode", "goose")) {
+  $AIWB_CMD = Get-Command $AIWB_TOOL -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($AIWB_CMD) {
+    $AIWB_VERSION = ""
+    try { $AIWB_VERSION = (& $AIWB_CMD.Source --version 2>&1 | Select-Object -First 1) } catch {}
+    $AIWB_TOOLS += [ordered]@{ id = $AIWB_TOOL; name = $AIWB_TOOL; path = $AIWB_CMD.Source; version = [string]$AIWB_VERSION }
+  }
+}
+$AIWB_DIRS = @()
+$AIWB_SEEN = @{}
+foreach ($AIWB_BASE in @($AIWB_WORKDIR, $HOME, "C:\\AIWorkbench", "C:\\workspace")) {
+  if (-not $AIWB_BASE -or -not (Test-Path -LiteralPath $AIWB_BASE)) { continue }
+  foreach ($AIWB_PATH in @((Get-Item -LiteralPath $AIWB_BASE)) + @(Get-ChildItem -LiteralPath $AIWB_BASE -Directory -ErrorAction SilentlyContinue | Select-Object -First 40)) {
+    if ($AIWB_SEEN[$AIWB_PATH.FullName]) { continue }
+    $AIWB_SEEN[$AIWB_PATH.FullName] = $true
+    $AIWB_MARKERS = @()
+    foreach ($AIWB_MARKER in @(".git", ".codex", ".claude", "package.json", "pyproject.toml", "go.mod", "Cargo.toml")) {
+      if (Test-Path -LiteralPath (Join-Path $AIWB_PATH.FullName $AIWB_MARKER)) { $AIWB_MARKERS += $AIWB_MARKER }
+    }
+    $AIWB_DIRS += [ordered]@{
+      path = $AIWB_PATH.FullName
+      name = $AIWB_PATH.Name
+      markers = $AIWB_MARKERS
+      history = @{ codex = 0; claude = 0 }
+      latest = 0
+      score = $(if ($AIWB_PATH.FullName -eq $AIWB_WORKDIR) { 20 } else { $AIWB_MARKERS.Count * 8 })
+      exists = $true
+      current = $AIWB_PATH.FullName -eq $AIWB_WORKDIR
+    }
+  }
+}
+$AIWB_RESULT = [ordered]@{
+  scannedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz")
+  tools = $AIWB_TOOLS
+  activeSessions = @()
+  history = @{ codex = 0; claude = 0; latest = 0 }
+  recentSessions = @()
+  directories = $AIWB_DIRS
+}
+Write-Output ("__AIWB_SCAN_JSON__" + ($AIWB_RESULT | ConvertTo-Json -Compress -Depth 8))
+`);
+}
+
+function parseDiscovery(output) {
+  const match = String(output || "").match(/^__AIWB_SCAN_JSON__(.+)$/m);
+  if (!match) {
+    return {
+      state: "error",
+      message: "没有读到扫描结果。",
+      tools: [],
+      directories: [],
+      activeSessions: [],
+      recentSessions: [],
+      history: { codex: 0, claude: 0 },
+    };
+  }
+
+  try {
+    return normalizeDiscovery(JSON.parse(match[1]));
+  } catch (error) {
+    return {
+      state: "error",
+      message: shortError(error),
+      tools: [],
+      directories: [],
+      activeSessions: [],
+      recentSessions: [],
+      history: { codex: 0, claude: 0 },
+    };
+  }
+}
+
+function normalizeDiscovery(value) {
+  const directories = Array.isArray(value?.directories)
+    ? value.directories
+        .filter((item) => String(item?.path || "").trim())
+        .map((item) => ({
+          path: String(item.path).trim(),
+          name: String(item.name || workdirDisplayName(item.path)).trim(),
+          markers: Array.isArray(item.markers) ? item.markers.filter(Boolean).slice(0, 6) : [],
+          history: {
+            codex: Number(item.history?.codex || 0),
+            claude: Number(item.history?.claude || 0),
+          },
+          current: Boolean(item.current),
+          exists: item.exists !== false,
+          score: Number(item.score || 0),
+        }))
+    : [];
+
+  return {
+    state: "done",
+    scannedAt: value?.scannedAt || new Date().toLocaleString(),
+    tools: Array.isArray(value?.tools) ? value.tools : [],
+    directories,
+    activeSessions: Array.isArray(value?.activeSessions) ? value.activeSessions : [],
+    recentSessions: Array.isArray(value?.recentSessions) ? value.recentSessions : [],
+    history: {
+      codex: Number(value?.history?.codex || 0),
+      claude: Number(value?.history?.claude || 0),
+      latest: Number(value?.history?.latest || 0),
+    },
+  };
 }
 
 function buildCodexExecCommand(profile, agent, prompt) {
@@ -947,6 +1337,7 @@ export function App() {
   const profile = activeServer.profile;
   const connection = activeServer.connection;
   const diagnostics = activeServer.diagnostics;
+  const discovery = activeServer.discovery;
   const rawOutput = activeServer.rawOutput;
   const messages = activeServer.messages;
   const isProfileReady = useMemo(() => profileReady(profile), [profile]);
@@ -982,6 +1373,10 @@ export function App() {
 
   function setDiagnostics(nextDiagnostics) {
     updateActiveServer({ diagnostics: nextDiagnostics });
+  }
+
+  function setDiscovery(nextDiscovery) {
+    updateActiveServer({ discovery: nextDiscovery });
   }
 
   function setRawOutput(nextRawOutput) {
@@ -1068,6 +1463,7 @@ export function App() {
         },
         connection: initialConnectionForProfile(normalized),
         diagnostics: existing?.diagnostics || {},
+        discovery: existing?.discovery || null,
         rawOutput: existing?.rawOutput || "原始输出会在测试连接或发送任务后显示。",
         messages: existing?.messages || [],
       },
@@ -1164,6 +1560,59 @@ export function App() {
     await saveWorkspace(nextServers, duplicate.id);
   }
 
+  async function addDiscoveredWorkdir(path) {
+    const workdir = String(path || "").trim();
+    if (!workdir || busy) return;
+
+    const source = servers.find((server) => server.id === activeServerIdRef.current) || activeServer;
+    const existing = servers.find((server) => {
+      const nextProfile = normalizeProfile(server.profile);
+      const sourceProfile = normalizeProfile(source.profile);
+      return (
+        nextProfile.host === sourceProfile.host &&
+        nextProfile.port === sourceProfile.port &&
+        nextProfile.username === sourceProfile.username &&
+        normalizeServerPlatform(nextProfile.platform) === normalizeServerPlatform(sourceProfile.platform) &&
+        String(nextProfile.workdir || "") === workdir
+      );
+    });
+
+    if (existing) {
+      await selectServer(existing.id);
+      return;
+    }
+
+    const name = workdirDisplayName(workdir);
+    const profileForWorkdir = normalizeProfile({
+      ...source.profile,
+      name,
+      workdir,
+    });
+    const nextServer = createServerSession(
+      {
+        name,
+        profile: profileForWorkdir,
+        connection: source.connection,
+        diagnostics: {
+          ...(source.diagnostics || {}),
+          pwd: workdir,
+        },
+        discovery: source.discovery,
+      },
+      servers.length,
+    );
+    const nextServers = [...servers, nextServer];
+
+    setServers(nextServers);
+    setActiveServerId(nextServer.id);
+    activeServerIdRef.current = nextServer.id;
+    setEditingServerId(nextServer.id);
+    setDraftProfile(nextServer.profile);
+    profileRef.current = nextServer.profile;
+    setRawOpen(false);
+    await saveWorkspace(nextServers, nextServer.id);
+  }
+
   async function testConnection() {
     const nextProfile = await saveCurrentProfile();
     if (showProfileIssue(nextProfile)) return;
@@ -1171,24 +1620,54 @@ export function App() {
     setBusy(true);
     setRawOpen(false);
     setConnection({ state: "testing", label: "测试中", detail: `${nextProfile.username}@${nextProfile.host}` });
+    setDiscovery({ state: "scanning", directories: [], tools: [], activeSessions: [], recentSessions: [], history: {} });
 
     try {
       const stdout = await runRemoteCommand(buildHealthCommand(nextProfile), 512_000);
       const parsed = parseHealth(stdout);
       setDiagnostics(parsed);
-      setRawOutput(stdout.trim() || "连接成功，但没有返回输出。");
+      setConnection({
+        state: "testing",
+        label: "扫描中",
+        detail: parsed.pwd || nextProfile.workdir,
+      });
+
+      let scanOutput = "";
+      let scan = null;
+      try {
+        scanOutput = await runRemoteCommand(buildDiscoveryCommand(nextProfile), 1_048_576);
+        scan = parseDiscovery(scanOutput);
+      } catch (scanError) {
+        scan = {
+          state: "error",
+          message: shortError(scanError),
+          directories: [],
+          tools: [],
+          activeSessions: [],
+          recentSessions: [],
+          history: { codex: 0, claude: 0 },
+        };
+      }
+
+      setDiscovery(scan);
+      setRawOutput([stdout.trim(), scanOutput.trim()].filter(Boolean).join("\n\n") || "连接成功。");
       setConnection({
         state: "connected",
         label: "已连接",
         detail: `${parsed.user || nextProfile.username}@${parsed.host || nextProfile.host}`,
       });
+      const directoryCount = scan?.directories?.length || 0;
+      const historyCount = (scan?.history?.codex || 0) + (scan?.history?.claude || 0);
       setMessages((items) => [
         ...items,
         createMessage({
           role: "assistant",
-          title: "ECS 连接通过",
-          body: `工作目录 ${parsed.pwd || nextProfile.workdir} 可用，Codex 与 Claude 已完成探测。`,
-          status: "done",
+          title: scan?.state === "error" ? "已连接，扫描未完成" : "已连接并完成扫描",
+          body:
+            scan?.state === "error"
+              ? `服务器已连接，扫描工作目录时遇到问题：${scan.message}`
+              : `发现 ${directoryCount} 个工作目录，${historyCount} 条 AI 历史会话。`,
+          status: scan?.state === "error" ? "error" : "done",
         }),
       ]);
     } catch (error) {
@@ -1605,6 +2084,7 @@ export function App() {
             profile={profile}
             connection={connection}
             diagnostics={diagnostics}
+            discovery={discovery}
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
             onSelectServer={selectServer}
@@ -1624,6 +2104,7 @@ export function App() {
                 profile={profile}
                 connection={connection}
                 diagnostics={diagnostics}
+                discovery={discovery}
                 profileReady={isProfileReady}
                 busy={busy}
                 activeAgent={activeAgent}
@@ -1631,6 +2112,14 @@ export function App() {
                 onTestConnection={testConnection}
               />
             ) : null}
+            <DiscoveryPanel
+              discovery={discovery}
+              profile={profile}
+              servers={servers}
+              busy={busy}
+              onRescan={testConnection}
+              onAddWorkdir={addDiscoveredWorkdir}
+            />
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -1695,6 +2184,7 @@ export function App() {
               profile={profile}
               connection={connection}
               diagnostics={diagnostics}
+              discovery={discovery}
               onSelectServer={async (serverId) => {
                 await selectServer(serverId);
                 setMobileNavOpen(false);
@@ -1768,6 +2258,7 @@ function NavigationPanel({
   profile,
   connection,
   diagnostics,
+  discovery,
   collapsed = false,
   onToggleCollapse,
   onSelectServer,
@@ -1885,6 +2376,12 @@ function NavigationPanel({
           <span>工作区</span>
           <strong>{diagnostics.pwd || profile.workdir}</strong>
         </div>
+        {discovery?.state === "done" ? (
+          <div>
+            <span>发现</span>
+            <strong>{discovery.directories?.length || 0} 个目录</strong>
+          </div>
+        ) : null}
       </div>
 
       <div className="sidebar-actions">
@@ -1903,6 +2400,7 @@ function ConnectionSummary({
   profile,
   connection,
   diagnostics,
+  discovery,
   profileReady: ready,
   busy,
   activeAgent,
@@ -1911,7 +2409,9 @@ function ConnectionSummary({
 }) {
   const title = ready ? `问 ${activeAgent.shortName} 一个任务` : "连接云服务器";
   const body = ready
-    ? `当前工作路径 ${diagnostics.pwd || profile.workdir}。`
+    ? discovery?.state === "done"
+      ? `已发现 ${discovery.directories?.length || 0} 个工作目录。`
+      : `当前工作路径 ${diagnostics.pwd || profile.workdir}。`
     : "添加服务器后即可开始对话。";
 
   return (
@@ -1936,6 +2436,98 @@ function ConnectionSummary({
         <SummaryMetric label="状态" value={connection.detail} />
         <SummaryMetric label="路径" value={diagnostics.pwd || profile.workdir} mono />
       </div>
+    </section>
+  );
+}
+
+function DiscoveryPanel({ discovery, profile, servers = [], busy, onRescan, onAddWorkdir }) {
+  if (!discovery || discovery.state === "idle") return null;
+
+  const currentWorkdir = String(profile.workdir || "");
+  const knownWorkdirs = new Set(
+    servers
+      .filter((server) => server.profile?.host === profile.host && server.profile?.username === profile.username)
+      .map((server) => String(server.profile?.workdir || "")),
+  );
+  const directories = Array.isArray(discovery.directories) ? discovery.directories.slice(0, 12) : [];
+  const tools = Array.isArray(discovery.tools)
+    ? discovery.tools.filter((tool) => ["codex", "claude", "gemini", "aider", "ollama"].includes(tool.id))
+    : [];
+  const activeCount = discovery.activeSessions?.length || 0;
+  const historyCount = (discovery.history?.codex || 0) + (discovery.history?.claude || 0);
+
+  return (
+    <section className={`discovery-panel ${discovery.state}`}>
+      <header>
+        <div>
+          <strong>{discovery.state === "scanning" ? "正在扫描机器" : "发现的工作目录"}</strong>
+          <span>
+            {discovery.state === "scanning"
+              ? "连接成功后自动读取 AI 会话和项目目录"
+              : `${directories.length} 个目录 · ${historyCount} 条历史 · ${activeCount} 个运行会话`}
+          </span>
+        </div>
+        <button type="button" className="ghost-button" onClick={onRescan} disabled={busy}>
+          重新扫描
+        </button>
+      </header>
+
+      {discovery.state === "error" ? <p className="discovery-error">{discovery.message || "扫描失败。"}</p> : null}
+
+      {tools.length ? (
+        <div className="tool-strip" aria-label="已发现工具">
+          {tools.map((tool) => (
+            <span key={`${tool.id}-${tool.path}`}>
+              {tool.id}
+              {tool.version ? <b>{tool.version}</b> : null}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {discovery.state === "scanning" ? (
+        <div className="scan-skeleton">
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : null}
+
+      {discovery.state === "done" && directories.length ? (
+        <div className="workdir-list">
+          {directories.map((item) => {
+            const selected = item.path === currentWorkdir;
+            const known = knownWorkdirs.has(item.path);
+            const codexCount = item.history?.codex || 0;
+            const claudeCount = item.history?.claude || 0;
+            const meta = [
+              ...(item.markers || []),
+              codexCount ? `Codex ${codexCount}` : "",
+              claudeCount ? `Claude ${claudeCount}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ");
+
+            return (
+              <article className={`workdir-card ${selected ? "selected" : ""}`} key={item.path}>
+                <div>
+                  <strong>{item.name || workdirDisplayName(item.path)}</strong>
+                  <span className="mono">{item.path}</span>
+                  <small>{meta || "普通目录"}</small>
+                </div>
+                <button
+                  type="button"
+                  className={selected || known ? "ghost-button" : "send-button"}
+                  onClick={() => onAddWorkdir(item.path)}
+                  disabled={busy || selected}
+                >
+                  {selected ? "当前" : known ? "打开" : "添加"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -2938,6 +2938,149 @@ body {
   display: none;
 }
 
+.conversation .discovery-panel {
+  display: grid;
+  gap: 12px;
+  width: min(760px, 100%);
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.conversation .discovery-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.conversation .discovery-panel header div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.conversation .discovery-panel header strong {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 680;
+}
+
+.conversation .discovery-panel header span,
+.conversation .discovery-error {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.conversation .discovery-error {
+  margin: 0;
+  color: var(--red);
+}
+
+.tool-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool-strip span {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #374151;
+  background: #f4f4f5;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tool-strip b {
+  min-width: 0;
+  overflow: hidden;
+  color: #71717a;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workdir-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workdir-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 11px 12px;
+  border: 1px solid #eceef2;
+  border-radius: 14px;
+  background: #fbfbfd;
+}
+
+.workdir-card.selected {
+  border-color: rgba(0, 122, 255, 0.22);
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.workdir-card > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.workdir-card strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 670;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workdir-card span {
+  overflow: hidden;
+  color: #52525b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workdir-card small {
+  overflow: hidden;
+  color: #71717a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workdir-card .send-button,
+.workdir-card .ghost-button {
+  height: 34px;
+  min-width: 58px;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.scan-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.scan-skeleton span {
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, #f4f4f5 0%, #fafafa 50%, #f4f4f5 100%);
+}
+
 .conversation .agent-response {
   align-self: center;
   width: min(760px, 100%);
@@ -3339,9 +3482,37 @@ body {
   }
 
   .conversation .user-prompt,
-  .conversation .agent-response {
+  .conversation .agent-response,
+  .conversation .discovery-panel {
     width: 100%;
     max-width: 100%;
+  }
+
+  .conversation .discovery-panel {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .conversation .discovery-panel header {
+    align-items: flex-start;
+  }
+
+  .conversation .discovery-panel header .ghost-button {
+    flex: 0 0 auto;
+    height: 34px;
+    padding: 0 11px;
+    font-size: 13px;
+  }
+
+  .workdir-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 10px;
+  }
+
+  .workdir-card .send-button,
+  .workdir-card .ghost-button {
+    min-width: 50px;
+    padding: 0 10px;
   }
 
   .conversation .assistant-copy,
