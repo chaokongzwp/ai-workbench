@@ -201,6 +201,14 @@ function serverDisplayName(server, index = 0) {
   );
 }
 
+function serverSessionName(server, index = 0) {
+  const profile = server?.profile || {};
+  const explicit = String(server?.name || profile.name || "").trim();
+  if (explicit && explicit !== "默认服务器" && !/^服务器 \d+$/.test(explicit)) return explicit;
+  const workdirName = workdirDisplayName(profile.workdir);
+  return workdirName || explicit || (index === 0 ? "默认服务器" : `服务器 ${index + 1}`);
+}
+
 function createServerSession(partial = {}, index = 0) {
   const profile = normalizeProfile(partial.profile || partial);
   const server = {
@@ -1656,20 +1664,6 @@ export function App() {
         label: "已连接",
         detail: `${parsed.user || nextProfile.username}@${parsed.host || nextProfile.host}`,
       });
-      const directoryCount = scan?.directories?.length || 0;
-      const historyCount = (scan?.history?.codex || 0) + (scan?.history?.claude || 0);
-      setMessages((items) => [
-        ...items,
-        createMessage({
-          role: "assistant",
-          title: scan?.state === "error" ? "已连接，扫描未完成" : "已连接并完成扫描",
-          body:
-            scan?.state === "error"
-              ? `服务器已连接，扫描工作目录时遇到问题：${scan.message}`
-              : `发现 ${directoryCount} 个工作目录，${historyCount} 条 AI 历史会话。`,
-          status: scan?.state === "error" ? "error" : "done",
-        }),
-      ]);
     } catch (error) {
       const message = shortError(error);
       setRawOpen(true);
@@ -2065,7 +2059,9 @@ export function App() {
     sidebarCollapsed ? "sidebar-collapsed" : ""
   }`;
   const activeServerIndex = servers.findIndex((server) => server.id === activeServerId);
-  const activeSessionName = serverDisplayName(activeServer, activeServerIndex >= 0 ? activeServerIndex : 0);
+  const activeSessionName = serverSessionName(activeServer, activeServerIndex >= 0 ? activeServerIndex : 0);
+  const shouldShowDiscovery =
+    Boolean(discovery) && (messages.length === 0 || discovery?.state === "scanning" || discovery?.state === "error");
 
   return (
     <main className={shellClassName}>
@@ -2107,19 +2103,20 @@ export function App() {
                 discovery={discovery}
                 profileReady={isProfileReady}
                 busy={busy}
-                activeAgent={activeAgent}
                 onOpenSettings={() => openServerSettings()}
                 onTestConnection={testConnection}
               />
             ) : null}
-            <DiscoveryPanel
-              discovery={discovery}
-              profile={profile}
-              servers={servers}
-              busy={busy}
-              onRescan={testConnection}
-              onAddWorkdir={addDiscoveredWorkdir}
-            />
+            {shouldShowDiscovery ? (
+              <DiscoveryPanel
+                discovery={discovery}
+                profile={profile}
+                servers={servers}
+                busy={busy}
+                onRescan={testConnection}
+                onAddWorkdir={addDiscoveredWorkdir}
+              />
+            ) : null}
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -2324,6 +2321,7 @@ function NavigationPanel({
           const isActive = server.id === activeServerId;
           const serverConnection = isActive ? connection : server.connection;
           const serverDiagnostics = isActive ? diagnostics : server.diagnostics || {};
+          const serverDiscovery = isActive ? discovery : server.discovery;
           const serverConnected = serverConnection?.state === "connected" || Boolean(serverDiagnostics.host);
           const serverConnectLabel = isActive
             ? connectLabel
@@ -2333,6 +2331,8 @@ function NavigationPanel({
                 ? "已连"
                 : "打开";
           const serverStatus = serverConnection?.state || "idle";
+          const workdirName = workdirDisplayName(server.profile?.workdir);
+          const scanCount = serverDiscovery?.state === "done" ? serverDiscovery.directories?.length || 0 : 0;
 
           return (
             <div
@@ -2340,17 +2340,18 @@ function NavigationPanel({
               role="button"
               tabIndex={0}
               key={server.id}
-              aria-label={`${serverDisplayName(server, index)}，${server.profile.host || "未添加"}，${serverPlatformLabel(server.profile)}`}
+              aria-label={`${serverSessionName(server, index)}，${server.profile.host || "未添加"}，${serverPlatformLabel(server.profile)}`}
               onClick={() => onSelectServer?.(server.id)}
               onKeyDown={(event) => selectServerFromCard(event, server.id)}
             >
               <span className="nav-title">
                 <StatusDot status={serverConnected ? "connected" : serverStatus} />
-                <strong>{serverDisplayName(server, index)}</strong>
+                <strong>{serverSessionName(server, index)}</strong>
               </span>
               <span className="nav-subtitle">
-                {server.profile.host || "未添加"} · {serverPlatformLabel(server.profile)}
+                {server.profile.host || "未添加"} · {workdirName}
               </span>
+              {scanCount ? <span className="nav-meta">{scanCount} 个目录</span> : null}
               <button
                 className={`connect-badge ${serverStatus}`}
                 type="button"
@@ -2403,28 +2404,73 @@ function ConnectionSummary({
   discovery,
   profileReady: ready,
   busy,
-  activeAgent,
   onOpenSettings,
   onTestConnection,
 }) {
-  const title = ready ? `问 ${activeAgent.shortName} 一个任务` : "连接云服务器";
-  const body = ready
-    ? discovery?.state === "done"
-      ? `已发现 ${discovery.directories?.length || 0} 个工作目录。`
-      : `当前工作路径 ${diagnostics.pwd || profile.workdir}。`
-    : "添加服务器后即可开始对话。";
+  const connected = connection.state === "connected" || Boolean(diagnostics.host);
+  const scanning = discovery?.state === "scanning";
+  const scanDone = discovery?.state === "done";
+  const scanError = discovery?.state === "error";
+  const directoryCount = discovery?.directories?.length || 0;
+  const historyCount = (discovery?.history?.codex || 0) + (discovery?.history?.claude || 0);
+  const title = !ready
+    ? "先添加一台机器"
+    : scanning
+      ? "正在扫描 AI 工作区"
+      : scanDone
+        ? "选择一个工作目录"
+        : connected
+          ? "机器已连接"
+          : "连接后自动扫描";
+  const body = !ready
+    ? "只需要填写地址、账号和密码，其它细节都放在设置里。"
+    : scanning
+      ? "正在读取远端已有的 Codex、Claude 会话和项目目录。"
+      : scanDone
+        ? `找到 ${directoryCount} 个工作目录和 ${historyCount} 条 AI 历史，选择一个就可以开始对话。`
+        : scanError
+          ? `机器已连上，但扫描没有完成：${discovery.message || "请重新扫描。"}`
+          : `当前工作目录是 ${workdirDisplayName(diagnostics.pwd || profile.workdir)}。`;
+  const primaryLabel = !ready ? "添加机器" : scanning ? "扫描中" : scanDone ? "重新扫描" : "连接并扫描";
+  const steps = [
+    {
+      label: "连接机器",
+      state: connected || scanning || scanDone ? "done" : ready ? "current" : "todo",
+    },
+    {
+      label: "扫描会话",
+      state: scanDone ? "done" : scanning ? "current" : scanError ? "error" : connected ? "current" : "todo",
+    },
+    {
+      label: "选择目录",
+      state: scanDone ? "current" : "todo",
+    },
+  ];
 
   return (
-    <section className={`summary-strip codex-intro ${ready ? "" : "setup-required"}`}>
+    <section className={`summary-strip codex-intro setup-flow ${ready ? "" : "setup-required"}`}>
       <div className="summary-main">
         <div className="intro-mark">
-          <AgentLogo agentId={activeAgent.id} compact />
+          <WorkbenchLogo />
         </div>
         <h1>{title}</h1>
         <p>{body}</p>
+        <div className="setup-steps" aria-label="设置流程">
+          {steps.map((step, index) => (
+            <div className={`setup-step ${step.state}`} key={step.label}>
+              <span>{step.state === "done" ? "✓" : index + 1}</span>
+              <strong>{step.label}</strong>
+            </div>
+          ))}
+        </div>
         <div className="summary-actions">
-          <button type="button" className="send-button" onClick={ready ? onTestConnection : onOpenSettings} disabled={busy}>
-            {ready ? "检查服务器" : "添加服务器"}
+          <button
+            type="button"
+            className="send-button"
+            onClick={ready ? onTestConnection : onOpenSettings}
+            disabled={busy || scanning}
+          >
+            {primaryLabel}
           </button>
           <button type="button" className="ghost-button" onClick={onOpenSettings}>
             设置
@@ -2434,7 +2480,7 @@ function ConnectionSummary({
       <div className="summary-metrics">
         <SummaryMetric label="服务器" value={profile.host} />
         <SummaryMetric label="状态" value={connection.detail} />
-        <SummaryMetric label="路径" value={diagnostics.pwd || profile.workdir} mono />
+        <SummaryMetric label="目录" value={workdirDisplayName(diagnostics.pwd || profile.workdir)} />
       </div>
     </section>
   );
@@ -2455,35 +2501,27 @@ function DiscoveryPanel({ discovery, profile, servers = [], busy, onRescan, onAd
     : [];
   const activeCount = discovery.activeSessions?.length || 0;
   const historyCount = (discovery.history?.codex || 0) + (discovery.history?.claude || 0);
+  const toolNames = tools.map((tool) => tool.name || tool.id).slice(0, 4).join("、");
 
   return (
     <section className={`discovery-panel ${discovery.state}`}>
       <header>
         <div>
-          <strong>{discovery.state === "scanning" ? "正在扫描机器" : "发现的工作目录"}</strong>
+          <strong>{discovery.state === "scanning" ? "正在扫描" : "选择工作目录"}</strong>
           <span>
             {discovery.state === "scanning"
-              ? "连接成功后自动读取 AI 会话和项目目录"
-              : `${directories.length} 个目录 · ${historyCount} 条历史 · ${activeCount} 个运行会话`}
+              ? "正在读取已有 AI 会话和项目目录"
+              : `${directories.length} 个目录 · ${historyCount} 条历史${activeCount ? ` · ${activeCount} 个运行会话` : ""}${
+                  toolNames ? ` · ${toolNames}` : ""
+                }`}
           </span>
         </div>
         <button type="button" className="ghost-button" onClick={onRescan} disabled={busy}>
-          重新扫描
+          刷新
         </button>
       </header>
 
       {discovery.state === "error" ? <p className="discovery-error">{discovery.message || "扫描失败。"}</p> : null}
-
-      {tools.length ? (
-        <div className="tool-strip" aria-label="已发现工具">
-          {tools.map((tool) => (
-            <span key={`${tool.id}-${tool.path}`}>
-              {tool.id}
-              {tool.version ? <b>{tool.version}</b> : null}
-            </span>
-          ))}
-        </div>
-      ) : null}
 
       {discovery.state === "scanning" ? (
         <div className="scan-skeleton">
@@ -2521,12 +2559,15 @@ function DiscoveryPanel({ discovery, profile, servers = [], busy, onRescan, onAd
                   onClick={() => onAddWorkdir(item.path)}
                   disabled={busy || selected}
                 >
-                  {selected ? "当前" : known ? "打开" : "添加"}
+                  {selected ? "当前" : known ? "打开" : "使用"}
                 </button>
               </article>
             );
           })}
         </div>
+      ) : null}
+      {discovery.state === "done" && !directories.length ? (
+        <p className="discovery-empty">没有自动找到工作目录，可以在设置里手动填写路径。</p>
       ) : null}
     </section>
   );

@@ -3526,3 +3526,339 @@ body {
     margin-bottom: 12px;
   }
 }
+
+/* Interaction redesign: connect, scan, choose workspace, then chat. */
+.conversation {
+  background: #f7f7fa;
+}
+
+.conversation .conversation-scroll {
+  gap: 18px;
+  padding-top: clamp(28px, 7vh, 76px);
+}
+
+.conversation .summary-strip.codex-intro.setup-flow {
+  width: min(720px, 100%);
+  margin: 0;
+  padding: 0 16px;
+}
+
+.conversation .summary-strip.codex-intro.setup-flow .summary-main {
+  gap: 15px;
+}
+
+.conversation .summary-strip.codex-intro.setup-flow .intro-mark {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  border-color: rgba(60, 60, 67, 0.12);
+  box-shadow:
+    0 10px 28px rgba(15, 23, 42, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.88) inset;
+}
+
+.conversation .summary-strip.codex-intro.setup-flow .intro-mark .workbench-logo {
+  width: 42px;
+  height: 42px;
+  box-shadow: none;
+}
+
+.conversation .summary-strip.codex-intro.setup-flow h1 {
+  font-size: 30px;
+  font-weight: 720;
+  line-height: 1.16;
+}
+
+.conversation .summary-strip.codex-intro.setup-flow p {
+  max-width: 610px;
+  color: #5f6673;
+  font-size: 15px;
+}
+
+.setup-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: min(520px, 100%);
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid rgba(60, 60, 67, 0.08);
+  border-radius: 18px;
+  background: rgba(242, 242, 247, 0.92);
+}
+
+.setup-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 42px;
+  gap: 7px;
+  border-radius: 13px;
+  color: #7b8190;
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.setup-step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: #7b8190;
+  background: rgba(118, 118, 128, 0.14);
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.setup-step strong {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-step.current {
+  color: #17202b;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.setup-step.current span {
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.setup-step.done {
+  color: #1d7f52;
+}
+
+.setup-step.done span {
+  color: #ffffff;
+  background: #24b46b;
+}
+
+.setup-step.error {
+  color: var(--red);
+  background: #fff5f5;
+}
+
+.setup-step.error span {
+  color: #ffffff;
+  background: var(--red);
+}
+
+.conversation .discovery-panel {
+  width: min(760px, 100%);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(60, 60, 67, 0.11);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 20px 48px rgba(15, 23, 42, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+.conversation .discovery-panel header {
+  padding: 17px 18px;
+  border-bottom: 1px solid rgba(60, 60, 67, 0.09);
+}
+
+.conversation .discovery-panel header strong {
+  font-size: 17px;
+  font-weight: 720;
+}
+
+.conversation .discovery-panel header span {
+  color: #6c7280;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.conversation .discovery-panel header .ghost-button {
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(118, 118, 128, 0.12);
+  font-size: 13px;
+}
+
+.conversation .discovery-error,
+.conversation .discovery-empty {
+  margin: 0;
+  padding: 14px 18px 16px;
+  color: var(--red);
+  font-size: 14px;
+}
+
+.conversation .discovery-empty {
+  color: #6b7280;
+}
+
+.scan-skeleton {
+  padding: 14px;
+}
+
+.scan-skeleton span {
+  height: 56px;
+  border-radius: 16px;
+  background: linear-gradient(90deg, #f0f1f4 0%, #fafafa 50%, #f0f1f4 100%);
+}
+
+.workdir-list {
+  gap: 0;
+}
+
+.workdir-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 76px;
+  gap: 14px;
+  padding: 13px 16px;
+  border: 0;
+  border-top: 1px solid rgba(60, 60, 67, 0.09);
+  border-radius: 0;
+  background: transparent;
+}
+
+.workdir-card:first-child {
+  border-top: 0;
+}
+
+.workdir-card.selected {
+  border-color: rgba(60, 60, 67, 0.09);
+  background: rgba(0, 122, 255, 0.07);
+}
+
+.workdir-card strong {
+  font-size: 15px;
+  font-weight: 710;
+}
+
+.workdir-card span {
+  color: #697180;
+  font-size: 12px;
+}
+
+.workdir-card small {
+  color: #8a909c;
+  font-size: 12px;
+}
+
+.workdir-card .send-button,
+.workdir-card .ghost-button {
+  height: 34px;
+  min-width: 58px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.workdir-card .ghost-button {
+  border: 0;
+  background: rgba(118, 118, 128, 0.12);
+}
+
+.sidebar {
+  background: #f2f3f7;
+}
+
+.sidebar .server-card {
+  min-height: 70px;
+  padding: 12px 82px 12px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+}
+
+.sidebar .server-card:hover {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.sidebar .server-card.active {
+  background: rgba(0, 122, 255, 0.12);
+}
+
+.sidebar .server-card .nav-title strong {
+  color: #17202b;
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.sidebar .server-card .nav-subtitle {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.nav-meta {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #8a909c;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-badge.connected {
+  color: #147a47;
+  background: rgba(36, 180, 107, 0.16);
+}
+
+.connect-badge.idle {
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.sidebar .sidebar-meta {
+  margin-top: 18px;
+  padding: 0 12px;
+}
+
+.sidebar .sidebar-actions {
+  gap: 8px;
+}
+
+.sidebar.collapsed .nav-meta {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  .conversation .conversation-scroll {
+    padding-top: 26px;
+  }
+
+  .conversation .summary-strip.codex-intro.setup-flow {
+    padding: 0;
+  }
+
+  .conversation .summary-strip.codex-intro.setup-flow h1 {
+    font-size: 26px;
+  }
+
+  .setup-steps {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .setup-step {
+    justify-content: flex-start;
+    padding: 0 12px;
+  }
+
+  .conversation .discovery-panel {
+    border-radius: 20px;
+  }
+
+  .conversation .discovery-panel header {
+    padding: 15px 14px;
+  }
+
+  .workdir-card {
+    min-height: 74px;
+    padding: 12px 14px;
+  }
+}
