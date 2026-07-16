@@ -57,9 +57,15 @@ const vite = spawnProcess(process.execPath, [
   "--port",
   String(resolvedPort),
 ]);
+vite.on("exit", (code, signal) => {
+  console.log(`AI Workbench macOS dev: Vite exited, code=${code ?? ""}, signal=${signal ?? ""}`);
+});
+
+let electron;
 
 const cleanup = () => {
   vite.kill("SIGTERM");
+  electron?.kill("SIGTERM");
 };
 
 process.on("SIGINT", () => {
@@ -84,7 +90,7 @@ try {
 
 console.log(`AI Workbench macOS dev: ${resolvedUrl}`);
 
-const electron = spawnProcess(electronPath, ["."], {
+electron = spawnProcess(electronPath, ["."], {
   env: {
     ...process.env,
     ELECTRON_RENDERER_URL: resolvedUrl,
@@ -92,7 +98,8 @@ const electron = spawnProcess(electronPath, ["."], {
   },
 });
 
-electron.on("exit", (code) => {
+electron.on("exit", (code, signal) => {
+  console.log(`AI Workbench macOS dev: Electron exited, code=${code ?? ""}, signal=${signal ?? ""}`);
   cleanup();
   process.exit(code ?? 0);
 });

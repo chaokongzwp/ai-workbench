@@ -1,0 +1,1998 @@
+import { registerPlugin } from "@capacitor/core";
+
+export function desktopBridge() {
+  return typeof window !== "undefined" ? window.aiWorkbench : undefined;
+}
+
+export const SSHWorkbench = registerPlugin("SSHWorkbench", {
+  web: () => ({
+    async runCommand(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.runCommand) return bridge.runCommand(payload);
+      throw new Error("浏览器预览不能直接发起 SSH，请在 iPhone 或 iPad App 中测试。");
+    },
+    async openTerminal(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.openTerminal) return bridge.openTerminal(payload);
+      throw new Error("当前环境不能打开本机 SSH 终端，请在 Mac App 中使用。");
+    },
+    async saveFile(payload = {}) {
+      const bridge = desktopBridge();
+      if (bridge?.saveFile) return bridge.saveFile(payload);
+
+      const rawBase64 = String(payload.base64 || "");
+      const base64 = rawBase64.includes(",") ? rawBase64.split(",").pop() : rawBase64;
+      if (!base64) throw new Error("Missing required field: base64");
+
+      const binary = window.atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      const blob = new Blob([bytes], { type: payload.mime || "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = payload.name || "download";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { ok: true };
+    },
+    async routeIntent(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.routeIntent) return bridge.routeIntent(payload);
+      throw new Error("浏览器预览不能调用主 AI，请在 Mac、iPhone 或 iPad App 中测试。");
+    },
+    async saveProfile({ profile }) {
+      const bridge = desktopBridge();
+      if (bridge?.saveProfile) return bridge.saveProfile({ profile });
+      localStorage.setItem("ai-workbench-profile", JSON.stringify(profile ?? {}));
+      return { ok: true };
+    },
+    async loadProfile() {
+      const bridge = desktopBridge();
+      if (bridge?.loadProfile) return bridge.loadProfile();
+      const raw = localStorage.getItem("ai-workbench-profile");
+      return { profile: raw ? JSON.parse(raw) : {} };
+    },
+    async clearProfile() {
+      const bridge = desktopBridge();
+      if (bridge?.clearProfile) return bridge.clearProfile();
+      localStorage.removeItem("ai-workbench-profile");
+      return { ok: true };
+    },
+    async appendLog(payload = {}) {
+      const bridge = desktopBridge();
+      if (bridge?.appendLog) return bridge.appendLog(payload);
+      appendBrowserDiagnosticLog(payload);
+      return { ok: true };
+    },
+    async getAppInfo() {
+      const bridge = desktopBridge();
+      if (bridge?.getAppInfo) return bridge.getAppInfo();
+      return {
+        name: "AI Workbench",
+        version: appVersion,
+        build: appBuild,
+        displayVersion: appBuild && appBuild !== appVersion ? `${appVersion} (${appBuild})` : appVersion,
+        platform: "web",
+        arch: "",
+        packaged: false,
+      };
+    },
+    async exportLogs(payload = {}) {
+      const bridge = desktopBridge();
+      if (bridge?.exportLogs) return bridge.exportLogs(payload);
+      const name = `AI-Workbench-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      const diagnostics = {
+        exportedAt: new Date().toISOString(),
+        appVersion,
+        appBuild,
+        platform: "web",
+        context: sanitizeDiagnosticValue(payload.context || payload.workspace || {}),
+        logs: loadBrowserDiagnosticLogs(),
+      };
+      const blob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { ok: true, name };
+    },
+  }),
+});
+
+export const VoiceWorkbench = registerPlugin("VoiceWorkbench", {
+  web: () => {
+    let recognition = null;
+    let wakeRecognition = null;
+    let wakeStopRequested = false;
+
+    const fallbackWakePhrases = ["未来"];
+
+    function normalizeWakeText(text) {
+      return String(text || "")
+        .toLowerCase()
+        .replace(/[\s，。,.!?！？、]/g, "");
+    }
+
+    function findWakePhrase(text, phrases) {
+      const normalized = normalizeWakeText(text);
+      return (phrases || fallbackWakePhrases).find((phrase) => {
+        const target = normalizeWakeText(phrase);
+        return target && normalized.includes(target);
+      });
+    }
+
+    function isQuietSpeechError(error) {
+      return ["no-speech", "aborted"].includes(String(error || ""));
+    }
+
+    function emitVoiceTranscript(text) {
+      window.dispatchEvent(
+        new CustomEvent("aiwb:voice-transcript", {
+          detail: { text: String(text || "") },
+        }),
+      );
+    }
+
+    return {
+      async start({ locale = "zh-CN", timeoutSeconds = 30, silenceSeconds = 3 } = {}) {
+        const bridge = desktopBridge();
+        if (bridge?.startVoice) return bridge.startVoice({ locale, timeoutSeconds, silenceSeconds });
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          throw new Error("当前环境不支持语音识别，请在 Mac、iPhone 或 iPad App 中使用。");
+        }
+
+        if (recognition) recognition.stop();
+
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          let transcript = "";
+          recognition = new SpeechRecognition();
+          recognition.lang = locale;
+          recognition.interimResults = true;
+          recognition.continuous = false;
+
+          recognition.onresult = (event) => {
+            let text = "";
+            for (let index = 0; index < event.results.length; index += 1) {
+              text += event.results[index][0]?.transcript || "";
+            }
+            transcript = text.trim();
+            emitVoiceTranscript(transcript);
+          };
+
+          recognition.onerror = (event) => {
+            if (settled) return;
+            settled = true;
+            recognition = null;
+            if (isQuietSpeechError(event?.error)) {
+              resolve({ ok: true, text: "" });
+              return;
+            }
+            const message = event?.error === "not-allowed" ? "没有麦克风权限。" : "语音识别失败。";
+            reject(new Error(message));
+          };
+
+          recognition.onend = () => {
+            recognition = null;
+            if (settled) return;
+            settled = true;
+            resolve({ ok: true, text: transcript });
+          };
+
+          recognition.start();
+        });
+      },
+      async stop() {
+        const bridge = desktopBridge();
+        if (bridge?.stopVoice) return bridge.stopVoice();
+
+        if (recognition) recognition.stop();
+        return { ok: true };
+      },
+      async startWakeWord({ locale = "zh-CN", phrases = fallbackWakePhrases, timeoutSeconds = 50 } = {}) {
+        const bridge = desktopBridge();
+        if (bridge?.startWakeWord) return bridge.startWakeWord({ locale, phrases, timeoutSeconds });
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          throw new Error("当前环境不支持唤醒词监听，请在 Mac、iPhone 或 iPad App 中使用。");
+        }
+
+        if (wakeRecognition) wakeRecognition.stop();
+        wakeStopRequested = false;
+
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const wakePhrases = Array.isArray(phrases) && phrases.length ? phrases : fallbackWakePhrases;
+
+          const finish = (payload) => {
+            if (settled) return;
+            settled = true;
+            wakeRecognition = null;
+            resolve(payload);
+          };
+
+          const startRecognition = () => {
+            if (settled || wakeStopRequested) return;
+            wakeRecognition = new SpeechRecognition();
+            wakeRecognition.lang = locale;
+            wakeRecognition.interimResults = true;
+            wakeRecognition.continuous = true;
+
+            wakeRecognition.onresult = (event) => {
+              let text = "";
+              for (let index = 0; index < event.results.length; index += 1) {
+                text += event.results[index][0]?.transcript || "";
+              }
+              const phrase = findWakePhrase(text, wakePhrases);
+              if (phrase) {
+                wakeStopRequested = true;
+                try {
+                  wakeRecognition.stop();
+                } catch {
+                  // ignore stop races from browser speech APIs
+                }
+                finish({ ok: true, detected: true, phrase, text: text.trim() });
+              }
+            };
+
+            wakeRecognition.onerror = (event) => {
+              if (settled) return;
+              wakeRecognition = null;
+              if (wakeStopRequested) {
+                finish({ ok: true, detected: false });
+                return;
+              }
+              if (isQuietSpeechError(event?.error)) {
+                finish({ ok: true, detected: false });
+                return;
+              }
+              const message = event?.error === "not-allowed" ? "没有麦克风权限。" : "唤醒词监听失败。";
+              reject(new Error(message));
+            };
+
+            wakeRecognition.onend = () => {
+              wakeRecognition = null;
+              if (settled) return;
+              if (wakeStopRequested) {
+                finish({ ok: true, detected: false });
+                return;
+              }
+              window.setTimeout(startRecognition, 180);
+            };
+
+            wakeRecognition.start();
+          };
+
+          startRecognition();
+        });
+      },
+      async stopWakeWord() {
+        const bridge = desktopBridge();
+        if (bridge?.stopWakeWord) return bridge.stopWakeWord();
+
+        wakeStopRequested = true;
+        if (wakeRecognition) wakeRecognition.stop();
+        return { ok: true };
+      },
+      async speak(payload = {}) {
+        const bridge = desktopBridge();
+        if (bridge?.speakText) return bridge.speakText(payload);
+
+        throw new Error("语音播放已统一使用阿里云 TTS，请在 Mac、iPhone 或 iPad App 中使用。");
+      },
+      async stopSpeech() {
+        const bridge = desktopBridge();
+        if (bridge?.stopSpeechOutput) return bridge.stopSpeechOutput();
+
+        return { ok: true };
+      },
+    };
+  },
+});
+
+export const serverPlatformDefaults = {
+  linux: {
+    workdir: "",
+    codexCommand: "/usr/local/bin/codex",
+    claudeCommand: "claude",
+  },
+  wsl: {
+    workdir: "",
+    codexCommand: "codex",
+    claudeCommand: "claude",
+  },
+  windows: {
+    workdir: "",
+    codexCommand: "codex",
+    claudeCommand: "claude",
+  },
+};
+
+export const legacyDefaultWorkdirs = {
+  linux: "/opt/limpet-workspace",
+  wsl: "/home/ai-workbench",
+  windows: "C:\\AIWorkbench",
+};
+
+export const serverPlatforms = [
+  { id: "linux", label: "Linux" },
+  { id: "wsl", label: "Windows + WSL" },
+  { id: "windows", label: "Windows PowerShell" },
+];
+
+export const builtInAliyunVoiceConfig = {
+  apiKey: "",
+  workspaceId: "llm-0hn2qaqnqgcdfnbg",
+};
+
+export const defaultProfile = {
+  platform: "linux",
+  host: "",
+  port: 22,
+  username: "root",
+  password: "",
+  workdir: "",
+  agentId: "codex",
+  aiModel: "",
+  tmuxSession: "ai-dev",
+  codexCommand: serverPlatformDefaults.linux.codexCommand,
+  claudeCommand: serverPlatformDefaults.linux.claudeCommand,
+  mainAIEnabled: false,
+  mainAIModel: "gpt-5.4-mini",
+  openAIAPIKey: "",
+  wakeWordPhrases: "未来",
+  taskWakePhrases: "",
+  voiceInputEnabled: false,
+  aliyunApiKey: builtInAliyunVoiceConfig.apiKey,
+  aliyunWorkspaceId: builtInAliyunVoiceConfig.workspaceId,
+  ttsVoiceName: "longanhuan",
+  ttsModel: "cosyvoice-v3-flash",
+  playResultAudio: false,
+  resultAudioMode: "summary",
+  useWorkbenchAgent: true,
+  appearanceMode: "light",
+  connectTimeoutSeconds: 30,
+};
+
+export const agents = [
+  {
+    id: "codex",
+    name: "Codex CLI",
+    shortName: "Codex",
+    accent: "primary",
+    commandKey: "codexCommand",
+  },
+  {
+    id: "claude",
+    name: "Claude Code",
+    shortName: "Claude",
+    accent: "neutral",
+    commandKey: "claudeCommand",
+  },
+];
+
+export const defaultModelOption = { id: "", label: "默认模型" };
+
+export const agentModelOptions = {
+  codex: [
+    defaultModelOption,
+    { id: "gpt-5.6", label: "GPT-5.6" },
+    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 mini" },
+  ],
+  claude: [
+    defaultModelOption,
+    { id: "sonnet", label: "Sonnet（推荐）" },
+    { id: "opus", label: "Opus" },
+    { id: "fable", label: "Fable" },
+  ],
+};
+
+const legacyClaudeModelAliases = {
+  "claude-5.0": "sonnet",
+  "claude-4.8": "sonnet",
+  "claude-sonnet-5": "sonnet",
+  "claude-sonnet-4.5": "sonnet",
+  "claude-opus-5": "opus",
+  "claude-opus-4.5": "opus",
+};
+
+export function normalizeAgentModel(agentId, value) {
+  const normalizedAgent = agentId === "claude" ? "claude" : "codex";
+  const rawModel = String(value || "").trim();
+  const model = normalizedAgent === "claude" ? legacyClaudeModelAliases[rawModel] || rawModel : rawModel;
+  if (!model) return "";
+  const options = agentModelOptions[normalizedAgent] || [];
+  const matched = options.find((option) => option.id === model || option.label === model);
+  return matched?.id ?? model;
+}
+
+export function agentModelOptionsForAgent(agentId, currentModel = "") {
+  const normalizedAgent = agentId === "claude" ? "claude" : "codex";
+  const options = agentModelOptions[normalizedAgent] || [defaultModelOption];
+  const model = normalizeAgentModel(normalizedAgent, currentModel);
+  if (!model || options.some((option) => option.id === model)) return options;
+  return [...options, { id: model, label: model }];
+}
+
+export function agentModelLabel(agentId, value) {
+  const model = normalizeAgentModel(agentId, value);
+  if (!model) return "";
+  const option = agentModelOptionsForAgent(agentId, model).find((item) => item.id === model);
+  return option?.label || model;
+}
+
+export const voiceToneOptions = [
+  { id: "longanhuan", label: "爱小欢" },
+  { id: "longanyang", label: "爱小洋" },
+  { id: "longanwen_v3", label: "成熟女人风" },
+  { id: "longanyue_v3", label: "湾区小威" },
+  { id: "longanmin_v3", label: "小甜系宣仪" },
+];
+
+export const ttsModelOptions = [
+  { id: "cosyvoice-v3-flash", label: "CosyVoice v3 Flash" },
+  { id: "cosyvoice-v2", label: "CosyVoice v2" },
+];
+
+export const resultAudioModeOptions = [
+  { id: "summary", label: "只播报任务完成" },
+  { id: "full", label: "播放完整结果" },
+];
+
+export const appearanceModeOptions = [
+  { id: "light", label: "浅色" },
+  { id: "dark", label: "深色" },
+  { id: "system", label: "跟随系统" },
+];
+
+export const markerLabels = {
+  history: "历史会话",
+  active: "运行中",
+  agent: "Agent 会话",
+  "agent-session": "已关联",
+  running: "运行中",
+  manual: "手动添加",
+  saved: "最近添加",
+};
+
+export const directoryPrefsStorageKey = "ai-workbench-directory-prefs-v1";
+
+export const manualWorkdirHistoryStorageKey = "ai-workbench-manual-workdirs-v1";
+
+export const localMessageHistoryStorageKey = "ai-workbench-local-message-history-v1";
+
+export const workspaceMirrorStorageKey = "ai-workbench-workspace-mirror-v1";
+
+export const browserDiagnosticLogStorageKey = "ai-workbench-diagnostics-log-v1";
+
+export const migrationFileKind = "ai-workbench-config";
+
+export const migrationFileVersion = 1;
+
+export const appVersion =
+  typeof __AIWB_APP_VERSION__ === "string" && __AIWB_APP_VERSION__ ? __AIWB_APP_VERSION__ : "1.0.0";
+
+export const appBuild = typeof __AIWB_APP_BUILD__ === "string" ? __AIWB_APP_BUILD__ : "";
+
+export const appDisplayVersion = appBuild && appBuild !== appVersion ? `v${appVersion} · build ${appBuild}` : `v${appVersion}`;
+
+export const assetBase = import.meta.env?.BASE_URL || "./";
+
+export const finalAnswerStart = "AIWB_FINAL_START";
+
+export const finalAnswerEnd = "AIWB_FINAL_END";
+
+export const mainAIRouteSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    action: {
+      type: "string",
+      enum: ["run_agent_task", "switch_agent", "ask_clarification", "answer_directly", "stop", "no_action"],
+    },
+    agent: {
+      type: "string",
+      enum: ["codex", "claude", "current"],
+    },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+    },
+    requiresConfirmation: {
+      type: "boolean",
+    },
+    task: {
+      type: "string",
+    },
+    reply: {
+      type: "string",
+    },
+    reason: {
+      type: "string",
+    },
+  },
+  required: ["action", "agent", "confidence", "requiresConfirmation", "task", "reply", "reason"],
+};
+
+export const mainAIRouterInstructions = [
+  "你是 AI Workbench 的主 AI 路由器，只输出结构化 JSON。",
+  "你的任务是理解用户自然语言，并决定 App 下一步做什么。",
+  "不要执行代码，不要编造远端结果，不要输出 Markdown。",
+  "如果用户明确要停止、取消、中断，action=stop。",
+  "如果只是闲聊或问 App 能力，action=answer_directly。",
+  "如果缺少必要目标或用户还没说清楚，action=ask_clarification。",
+  "如果用户只是要切换 Codex 或 Claude，action=switch_agent。",
+  "如果用户要检查、修改、运行、查询项目或让 AI 工作，action=run_agent_task。",
+  "写代码、改工程、排错、执行命令优先选 codex；阅读解释、总结分析可以选 claude；不确定则 current。",
+  "删除、发布、安装依赖、改生产配置、覆盖文件等风险操作 requiresConfirmation=true。",
+  "task 必须是可以直接发给 Codex/Claude 的中文任务，不要包含底层路由解释。",
+].join("\n");
+
+export const defaultWakeWordPhrases = ["未来"];
+
+export const speechInterruptPhrases = ["停止", "停止播放", "停一下", "别说了", "打断", "中断", "取消播放"];
+
+export const currentResultPlaybackPhrases = ["播放结果", "播放当前结果", "重播结果", "再播一遍", "重复播放"];
+
+export const legacyDefaultWakeWordPhrases = "你好工作台,AI Workbench,hey jarvis";
+
+export function normalizeDirectoryPrefs(value) {
+  const favorites = Array.isArray(value?.favorites) ? value.favorites.filter(Boolean) : [];
+  const hidden = Array.isArray(value?.hidden) ? value.hidden.filter(Boolean) : [];
+  return {
+    favorites: [...new Set(favorites)],
+    hidden: [...new Set(hidden)],
+  };
+}
+
+export function loadDirectoryPrefs() {
+  if (typeof window === "undefined" || !window.localStorage) return normalizeDirectoryPrefs();
+  try {
+    const raw = window.localStorage.getItem(directoryPrefsStorageKey);
+    return normalizeDirectoryPrefs(raw ? JSON.parse(raw) : {});
+  } catch {
+    return normalizeDirectoryPrefs();
+  }
+}
+
+export function saveDirectoryPrefs(prefs) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(directoryPrefsStorageKey, JSON.stringify(normalizeDirectoryPrefs(prefs)));
+  } catch {
+    // Local preference persistence is optional.
+  }
+}
+
+export function isSensitiveDiagnosticKey(key) {
+  return /password|token|secret|accesskey|api[-_]?key|authorization|credential|base64/i.test(String(key || ""));
+}
+
+export function isNoisyDiagnosticKey(key) {
+  return /stdout|stderr|requestBody|body|messages|output|rawOutput|transcript/i.test(String(key || ""));
+}
+
+export function sanitizeDiagnosticValue(value, depth = 0) {
+  if (value === null || value === undefined) return value;
+  if (depth > 4) return "[depth-limit]";
+  if (typeof value === "string") {
+    if (value.length > 600) return `${value.slice(0, 600)}...[truncated:${value.length}]`;
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, 80).map((item) => sanitizeDiagnosticValue(item, depth + 1));
+  if (typeof value === "object") {
+    return Object.entries(value).reduce((acc, [key, item]) => {
+      if (isSensitiveDiagnosticKey(key)) {
+        acc[key] = "[redacted]";
+      } else if (isNoisyDiagnosticKey(key)) {
+        const length = typeof item === "string" ? item.length : JSON.stringify(item ?? "").length;
+        acc[key] = `[omitted:${length}]`;
+      } else {
+        acc[key] = sanitizeDiagnosticValue(item, depth + 1);
+      }
+      return acc;
+    }, {});
+  }
+  return String(value);
+}
+
+export function loadBrowserDiagnosticLogs() {
+  if (typeof window === "undefined" || !window.localStorage) return [];
+  try {
+    const raw = window.localStorage.getItem(browserDiagnosticLogStorageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function appendBrowserDiagnosticLog(payload = {}) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const entry = {
+      ts: new Date().toISOString(),
+      level: String(payload.level || "info"),
+      event: String(payload.event || "app.event"),
+      fields: sanitizeDiagnosticValue(payload.fields || {}),
+    };
+    const next = [...loadBrowserDiagnosticLogs(), entry].slice(-500);
+    window.localStorage.setItem(browserDiagnosticLogStorageKey, JSON.stringify(next));
+  } catch {
+    // Diagnostics are best-effort and must never break the app.
+  }
+}
+
+export async function appLog(level, event, fields = {}) {
+  try {
+    await SSHWorkbench.appendLog({
+      level,
+      event,
+      fields: sanitizeDiagnosticValue(fields),
+    });
+  } catch (error) {
+    const method = level === "error" ? "error" : level === "warn" ? "warn" : "info";
+    console[method]?.(`[aiwb:${event}]`, sanitizeDiagnosticValue(fields), shortError(error));
+  }
+}
+
+export function workspaceStoreHasServers(value) {
+  return Boolean(value?.version === 2 && Array.isArray(value.servers) && value.servers.length);
+}
+
+export function saveWorkspaceMirror(profile) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(workspaceMirrorStorageKey, JSON.stringify(profile || {}));
+  } catch (error) {
+    void appLog("warn", "workspace.mirror.save.failed", { error: shortError(error) });
+  }
+}
+
+export function loadWorkspaceMirror() {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(workspaceMirrorStorageKey);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return workspaceStoreHasServers(parsed) ? parsed : null;
+  } catch (error) {
+    void appLog("warn", "workspace.mirror.load.failed", { error: shortError(error) });
+    return null;
+  }
+}
+
+export function workspaceDiagnosticSummary(servers = [], activeServerId = "") {
+  return {
+    activeServerId,
+    serverCount: Array.isArray(servers) ? servers.length : 0,
+    servers: (Array.isArray(servers) ? servers : []).map((server, index) => {
+      const profile = normalizeProfile(server?.profile || {});
+      return {
+        id: server.id,
+        index: index + 1,
+        name: serverSessionName(server, index),
+        active: server.id === activeServerId,
+        agentId: profile.agentId,
+        platform: normalizeServerPlatform(profile.platform),
+        host: profile.host,
+        port: profile.port,
+        username: profile.username,
+        workdir: profile.workdir,
+        hasPassword: Boolean(profile.password),
+        passwordLength: String(profile.password || "").length,
+        connectionStatus: server?.connection?.state || "unknown",
+        taskState: server?.task?.state || "idle",
+        messageCount: Array.isArray(server?.messages) ? server.messages.length : 0,
+        hasUnreadResult: Boolean(server?.unreadResult),
+      };
+    }),
+  };
+}
+
+export function commandDiagnosticPayload(profile, commandPayload, maxResponseSize, commandTimeoutSeconds) {
+  const current = normalizeProfile(profile || {});
+  return {
+    host: current.host,
+    port: current.port,
+    username: current.username,
+    platform: normalizeServerPlatform(current.platform),
+    agentId: current.agentId,
+    workdir: current.workdir,
+    hasPassword: Boolean(current.password),
+    passwordLength: String(current.password || "").length,
+    commandKind: commandPayload?.uploadScript ? "uploaded-powershell" : commandPayload?.stdin ? "stdin" : "exec",
+    commandLength: String(commandPayload?.command || "").length,
+    stdinLength: String(commandPayload?.stdin || "").length,
+    commandTimeoutSeconds,
+    maxResponseSize,
+  };
+}
+
+export function directoryPrefKey(agentId, path) {
+  return `${agentId || "codex"}:${String(path || "").trim()}`;
+}
+
+export function manualWorkdirScope(profile) {
+  const normalized = normalizeProfile(profile || {});
+  return [
+    normalizeServerPlatform(normalized.platform),
+    String(normalized.host || "").trim(),
+    String(normalized.port || "").trim(),
+    String(normalized.username || "").trim(),
+  ].join("|");
+}
+
+export function normalizeManualWorkdirHistory(value) {
+  const entries = Array.isArray(value?.entries) ? value.entries : Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const normalized = [];
+  entries
+    .map((item) => ({
+      scope: String(item?.scope || "").trim(),
+      agentId: item?.agentId === "claude" ? "claude" : "codex",
+      path: String(item?.path || "").trim(),
+      updatedAt: Number(item?.updatedAt || 0),
+    }))
+    .filter((item) => item.scope && item.path)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .forEach((item) => {
+      const key = `${item.scope}:${item.agentId}:${item.path}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      normalized.push(item);
+    });
+  return { entries: normalized.slice(0, 160) };
+}
+
+export function loadManualWorkdirHistory() {
+  if (typeof window === "undefined" || !window.localStorage) return normalizeManualWorkdirHistory();
+  try {
+    const raw = window.localStorage.getItem(manualWorkdirHistoryStorageKey);
+    return normalizeManualWorkdirHistory(raw ? JSON.parse(raw) : {});
+  } catch {
+    return normalizeManualWorkdirHistory();
+  }
+}
+
+export function saveManualWorkdirHistory(history) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(manualWorkdirHistoryStorageKey, JSON.stringify(normalizeManualWorkdirHistory(history)));
+  } catch {
+    // Local history is a convenience only.
+  }
+}
+
+export function recentManualWorkdirs(scope, agentId) {
+  const normalizedAgent = agentId === "claude" ? "claude" : "codex";
+  return loadManualWorkdirHistory().entries.filter(
+    (item) => item.scope === scope && item.agentId === normalizedAgent,
+  );
+}
+
+export function rememberManualWorkdir(scope, agentId, path) {
+  const cleanPath = String(path || "").trim();
+  if (!scope || !cleanPath) return;
+  const normalizedAgent = agentId === "claude" ? "claude" : "codex";
+  const history = loadManualWorkdirHistory();
+  saveManualWorkdirHistory({
+    entries: [
+      {
+        scope,
+        agentId: normalizedAgent,
+        path: cleanPath,
+        updatedAt: Date.now(),
+      },
+      ...history.entries,
+    ],
+  });
+}
+
+export function toggleListValue(list, value) {
+  const next = new Set(Array.isArray(list) ? list : []);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return [...next];
+}
+
+export function trimVisibleText(text) {
+  return String(text || "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function compactInlineText(value, maxLength = 34) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+export function assetPath(path) {
+  return `${assetBase}${path.replace(/^\/+/, "")}`;
+}
+
+export function isEventLike(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (typeof value.preventDefault === "function" ||
+        typeof value.stopPropagation === "function" ||
+        Object.prototype.hasOwnProperty.call(value, "nativeEvent") ||
+      Object.prototype.hasOwnProperty.call(value, "currentTarget")),
+  );
+}
+
+export function messageDisplayText(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(messageDisplayText).filter(Boolean).join("\n");
+  if (typeof value === "object") {
+    for (const key of ["text", "output", "body", "content", "message", "reply", "title"]) {
+      if (value[key] !== undefined) {
+        const text = messageDisplayText(value[key]);
+        if (text) return text;
+      }
+    }
+  }
+  return "";
+}
+
+export function taskTextFromValue(value, fallback = "") {
+  if (value === undefined || value === null || isEventLike(value)) return String(fallback || "").trim();
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text === "[object Object]" ? String(fallback || "").trim() : text;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value).trim();
+  if (Array.isArray(value)) return value.map((item) => taskTextFromValue(item)).filter(Boolean).join("\n").trim();
+  if (typeof value === "object") {
+    for (const key of ["text", "transcript", "task", "body", "content", "message", "reply"]) {
+      if (value[key] !== undefined) {
+        const text = taskTextFromValue(value[key], fallback);
+        if (text) return text;
+      }
+    }
+    const display = messageDisplayText(value).trim();
+    return display && display !== "[object Object]" ? display : String(fallback || "").trim();
+  }
+  return String(value || fallback || "").trim();
+}
+
+export function formatAgentPrompt(prompt) {
+  const userTask = JSON.stringify(taskTextFromValue(prompt));
+  return [
+    `请完成这个用户任务。用户任务是一个 JSON 字符串，请先解析它再执行：${userTask}。`,
+    "执行方式必须是同步最终交付：如果你启动了测试、构建、部署、脚本、监控、子任务或任何后台命令，必须等它们全部结束并确认结果后，才能给最终答案。",
+    "不要先给阶段性结论再继续等待其它任务；如果还在等待，就继续等待，不要输出最终答案标记。",
+    "禁止把“等待通知后继续”“I'll wait for the notification before continuing”“等测试完成后再继续”等等待话术作为最终答案；这类回答不是完成。",
+    "如果外部系统不会主动把结果返回到当前进程，请主动轮询或检查状态，直到得到成功、失败或明确阻塞原因。",
+    `输出要求：只输出最终给用户看的答案，不要复述本段规则，不要输出过程、菜单、命令行日志或工具调用记录；最终答案必须放在 ${finalAnswerStart} 和 ${finalAnswerEnd} 之间。`,
+  ].join("");
+}
+
+export let messageCounter = 0;
+
+export function createMessage(partial) {
+  messageCounter += 1;
+  const now = Date.now();
+  return {
+    id: `msg-${now}-${messageCounter}`,
+    status: "done",
+    output: "",
+    createdAt: new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    createdAtMs: now,
+    ...partial,
+  };
+}
+
+export const maxPersistedMessagesPerServer = 120;
+
+export const maxPersistedTextLength = 60_000;
+
+export function clipPersistedText(value, limit = maxPersistedTextLength) {
+  const text = String(value ?? "");
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n\n[内容较长，已在本地历史中截断]`;
+}
+
+export function normalizePersistedMessage(message) {
+  const source = message && typeof message === "object" ? message : { body: String(message ?? "") };
+  const createdAtMs = Number(source.createdAtMs || 0) || Date.now();
+  const startedAt = Number(source.startedAt || 0) || (source.status === "running" ? createdAtMs : 0);
+  const resumableRemoteTask = source.status === "running" && source.backend === "agent" && source.remoteTaskId;
+  const status = source.status === "running" && !resumableRemoteTask ? "idle" : String(source.status || "done");
+  const completedAt = Number(source.completedAt || 0) || (startedAt && status !== "running" ? Date.now() : 0);
+  const durationMs =
+    Number(source.durationMs || 0) ||
+    (startedAt && completedAt && status !== "running" ? Math.max(0, completedAt - startedAt) : 0);
+  const agentFailure =
+    source.agentFailure && typeof source.agentFailure === "object"
+      ? {
+          ...source.agentFailure,
+          detail: clipPersistedText(source.agentFailure.detail, 12_000),
+        }
+      : source.agentFailure;
+
+  return {
+    ...source,
+    agentFailure,
+    technicalDetail: clipPersistedText(source.technicalDetail, 12_000),
+    status,
+    body:
+      source.status === "running"
+        ? clipPersistedText(
+            resumableRemoteTask ? source.body || "正在重新同步远端任务状态。" : source.body || "上次任务在应用关闭前还没有完成。",
+          )
+        : clipPersistedText(source.body),
+    output: clipPersistedText(source.output),
+    liveOutput: clipPersistedText(source.liveOutput, 30_000),
+    createdAt: source.createdAt || new Date(createdAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    createdAtMs,
+    startedAt: startedAt || undefined,
+    completedAt: completedAt || undefined,
+    durationMs: durationMs || undefined,
+  };
+}
+
+export function messagesForStorage(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .slice(-maxPersistedMessagesPerServer)
+    .map(normalizePersistedMessage);
+}
+
+export function localMessageHistoryFromServers(servers = []) {
+  return {
+    version: 1,
+    updatedAt: Date.now(),
+    servers: (Array.isArray(servers) ? servers : []).map((server) => ({
+      id: server.id,
+      messages: messagesForStorage(server.messages),
+    })),
+  };
+}
+
+function earliestPositiveNumber(left, right) {
+  const values = [Number(left || 0), Number(right || 0)].filter(
+    (value) => Number.isFinite(value) && value > 0,
+  );
+  return values.length ? Math.min(...values) : undefined;
+}
+
+export function mergePersistedMessageLists(currentMessages = [], incomingMessages = []) {
+  const byId = new Map();
+  for (const message of [...(Array.isArray(currentMessages) ? currentMessages : []), ...(Array.isArray(incomingMessages) ? incomingMessages : [])]) {
+    const id = String(message?.id || "").trim();
+    if (!id) continue;
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, message);
+      continue;
+    }
+
+    const terminal = ["done", "error", "cancelled"].includes(String(message?.status || ""));
+    byId.set(id, {
+      ...existing,
+      ...message,
+      body: terminal
+        ? String(message?.body || "")
+        : String(message?.body || "").trim()
+          ? message.body
+          : existing.body || "",
+      output: String(message?.output || "").trim() ? message.output : existing.output || "",
+      liveOutput: terminal
+        ? ""
+        : String(message?.liveOutput || "").trim()
+          ? message.liveOutput
+          : existing.liveOutput || "",
+      promptText: String(message?.promptText || "").trim() ? message.promptText : existing.promptText || "",
+      attachments:
+        Array.isArray(message?.attachments) && message.attachments.length
+          ? message.attachments
+          : existing.attachments,
+      createdAtMs: earliestPositiveNumber(existing.createdAtMs, message.createdAtMs),
+      startedAt: earliestPositiveNumber(existing.startedAt, message.startedAt),
+    });
+  }
+  return [...byId.values()]
+    .sort((left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0))
+    .slice(-maxPersistedMessagesPerServer)
+    .map(normalizePersistedMessage);
+}
+
+export function saveLocalMessageHistory(servers = []) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const next = localMessageHistoryFromServers(servers);
+    const rawCurrent = window.localStorage.getItem(localMessageHistoryStorageKey);
+    const current = rawCurrent ? JSON.parse(rawCurrent) : null;
+    const currentByServer = new Map(
+      (current?.version === 1 && Array.isArray(current.servers) ? current.servers : []).map((item) => [item.id, item.messages || []]),
+    );
+    next.servers = next.servers.map((item) => ({
+      ...item,
+      messages: mergePersistedMessageLists(currentByServer.get(item.id) || [], item.messages || []),
+    }));
+    window.localStorage.setItem(localMessageHistoryStorageKey, JSON.stringify(next));
+  } catch {
+    // Local chat history is a convenience cache. The encrypted profile save remains the primary store.
+  }
+}
+
+export function loadLocalMessageHistory() {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(localMessageHistoryStorageKey);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.servers)) return {};
+    return parsed.servers.reduce((acc, item) => {
+      if (!item?.id) return acc;
+      acc[item.id] = messagesForStorage(item.messages);
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+export function mergeLocalMessageHistory(servers = []) {
+  const history = loadLocalMessageHistory();
+  if (!Object.keys(history).length) return servers;
+  return servers.map((server) => {
+    const localMessages = history[server.id] || [];
+    const currentMessages = Array.isArray(server.messages) ? server.messages : [];
+    if (!localMessages.length && !currentMessages.length) return server;
+    return {
+      ...server,
+      messages: mergePersistedMessageLists(localMessages, currentMessages),
+    };
+  });
+}
+
+export function taskForStorage(task) {
+  if (!task || typeof task !== "object") return { state: "idle" };
+  if (task.state === "running" && task.backend === "agent" && task.remoteTaskId) return task;
+  if (task.state !== "running") return task;
+  return {
+    ...task,
+    state: "idle",
+    interruptedAt: Date.now(),
+    finishedAt: task.finishedAt || Date.now(),
+  };
+}
+
+export function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+export function normalizeProfile(profile) {
+  const platform = normalizeServerPlatform(profile?.platform);
+  const platformDefaults = serverPlatformDefaults[platform] || serverPlatformDefaults.linux;
+  const normalizedAgentId = agents.some((agent) => agent.id === profile?.agentId) ? profile.agentId : defaultProfile.agentId;
+  const defaultUseWorkbenchAgent = platform === "windows" ? false : defaultProfile.useWorkbenchAgent;
+  const normalized = {
+    ...defaultProfile,
+    ...platformDefaults,
+    ...(profile ?? {}),
+    platform,
+    port: Number(profile?.port ?? defaultProfile.port) || defaultProfile.port,
+    mainAIEnabled: profile?.mainAIEnabled === undefined ? defaultProfile.mainAIEnabled : Boolean(profile.mainAIEnabled),
+    mainAIModel: String(profile?.mainAIModel || defaultProfile.mainAIModel).trim() || defaultProfile.mainAIModel,
+    openAIAPIKey: String(profile?.openAIAPIKey || ""),
+    agentId: normalizedAgentId,
+    aiModel: normalizeAgentModel(normalizedAgentId, profile?.aiModel),
+    wakeWordPhrases:
+      String(profile?.wakeWordPhrases || defaultProfile.wakeWordPhrases).trim() === legacyDefaultWakeWordPhrases
+        ? defaultProfile.wakeWordPhrases
+        : String(profile?.wakeWordPhrases || defaultProfile.wakeWordPhrases).trim(),
+    taskWakePhrases: String(profile?.taskWakePhrases || ""),
+    voiceInputEnabled:
+      profile?.voiceInputEnabled === undefined ? defaultProfile.voiceInputEnabled : Boolean(profile.voiceInputEnabled),
+    aliyunApiKey: String(profile?.aliyunApiKey || defaultProfile.aliyunApiKey || "").trim(),
+    aliyunWorkspaceId: String(profile?.aliyunWorkspaceId || defaultProfile.aliyunWorkspaceId || "").trim(),
+    ttsVoiceName: String(profile?.ttsVoiceName || defaultProfile.ttsVoiceName).trim() || defaultProfile.ttsVoiceName,
+    ttsModel: String(profile?.ttsModel || defaultProfile.ttsModel).trim() || defaultProfile.ttsModel,
+    playResultAudio:
+      profile?.playResultAudio === undefined ? defaultProfile.playResultAudio : Boolean(profile.playResultAudio),
+    resultAudioMode: normalizeResultAudioMode(profile?.resultAudioMode),
+    useWorkbenchAgent:
+      platform === "windows"
+        ? false
+        : profile?.useWorkbenchAgent === undefined
+          ? defaultUseWorkbenchAgent
+          : Boolean(profile.useWorkbenchAgent),
+    appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
+    connectTimeoutSeconds: Math.min(
+      60,
+      Math.max(
+        30,
+        Number(profile?.connectTimeoutSeconds ?? defaultProfile.connectTimeoutSeconds) || defaultProfile.connectTimeoutSeconds,
+      ),
+    ),
+  };
+
+  if (platform === "linux" && normalized.claudeCommand === "/usr/local/bin/claude") {
+    normalized.claudeCommand = "claude";
+  }
+
+  return normalized;
+}
+
+export function sameWorkdir(left, right, platform = "linux") {
+  const normalize = (value) => {
+    const text = String(value || "").trim().replace(/[\\/]+$/g, "");
+    return platform === "windows" ? text.replace(/\//g, "\\").toLocaleLowerCase() : text;
+  };
+  return Boolean(normalize(left)) && normalize(left) === normalize(right);
+}
+
+export function isLegacyDefaultWorkdir(platform, workdir) {
+  return sameWorkdir(workdir, legacyDefaultWorkdirs[normalizeServerPlatform(platform)], normalizeServerPlatform(platform));
+}
+
+export function stripLegacyDefaultWorkdirFromPlaceholder(server, index = 0) {
+  const profile = server?.profile || {};
+  const platform = normalizeServerPlatform(profile.platform);
+  const name = String(server?.name || profile.name || "").trim();
+  const looksLikePlaceholder =
+    server?.id === "default-server" ||
+    name === "默认服务器" ||
+    /^服务器 \d+$/.test(name) ||
+    (!name && index === 0);
+
+  if (!looksLikePlaceholder || !isLegacyDefaultWorkdir(platform, profile.workdir)) return server;
+
+  return {
+    ...server,
+    profile: {
+      ...profile,
+      workdir: "",
+    },
+  };
+}
+
+export function globalSettingsFromProfile(profile) {
+  const normalized = normalizeProfile(profile || defaultProfile);
+  return {
+    mainAIEnabled: normalized.mainAIEnabled,
+    mainAIModel: normalized.mainAIModel,
+    openAIAPIKey: normalized.openAIAPIKey,
+    voiceInputEnabled: normalized.voiceInputEnabled,
+    wakeWordPhrases: normalized.wakeWordPhrases,
+    aliyunApiKey: normalized.aliyunApiKey,
+    aliyunWorkspaceId: normalized.aliyunWorkspaceId,
+    ttsVoiceName: normalized.ttsVoiceName,
+    ttsModel: normalized.ttsModel,
+    playResultAudio: normalized.playResultAudio,
+    resultAudioMode: normalized.resultAudioMode,
+    appearanceMode: normalized.appearanceMode,
+  };
+}
+
+export function applyGlobalSettings(profile, settings) {
+  return normalizeProfile({
+    ...profile,
+    ...globalSettingsFromProfile(settings),
+  });
+}
+
+export function wakePhrasesForProfile(profile) {
+  const phrases = wakePhrasesFromText(profile?.wakeWordPhrases);
+  return phrases.length ? phrases : defaultWakeWordPhrases;
+}
+
+export function wakePhrasesFromText(value) {
+  const seen = new Set();
+  return String(value || "")
+    .split(/[,\n，、|；;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+export function serializeWakePhrases(phrases) {
+  return phrases.map((phrase) => String(phrase || "").trim()).filter(Boolean).join("\n");
+}
+
+export function normalizeVoiceText(value) {
+  return String(value || "")
+    .toLocaleLowerCase()
+    .replace(/[\s，。,.!?！？、；;：:「」"'“”‘’（）()【】[\]{}<>《》|/-]/g, "");
+}
+
+export function normalizeAppearanceMode(value) {
+  return appearanceModeOptions.some((option) => option.id === value) ? value : defaultProfile.appearanceMode;
+}
+
+export function normalizeResultAudioMode(value) {
+  return resultAudioModeOptions.some((option) => option.id === value) ? value : defaultProfile.resultAudioMode;
+}
+
+export function chineseNumber(value) {
+  const numbers = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+  return numbers[value - 1] || String(value);
+}
+
+export function readableVoiceNameCandidate(value) {
+  const text = String(value || "")
+    .replace(/[·•]/g, " ")
+    .replace(/\b(Codex|Claude|CLI|AI|Workbench|server|服务器|会话|任务|项目|目录|工作区)\b/gi, " ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+
+  const chineseTokens = text.match(/[\u4e00-\u9fa5]{2,5}/g) || [];
+  const shortChinese = chineseTokens.find((token) => token.length >= 2 && token.length <= 5);
+  if (shortChinese) return shortChinese;
+
+  const words = text
+    .split(/[^a-zA-Z0-9\u4e00-\u9fa5]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const compact = words.find((word) => {
+    const normalized = normalizeVoiceText(word);
+    return normalized.length >= 2 && normalized.length <= 5 && !/^\d+$/.test(normalized);
+  });
+  if (compact) return compact;
+
+  return "";
+}
+
+export function automaticTaskWakePhrases(server, index = 0) {
+  const profile = normalizeProfile(server?.profile);
+  const sources = [
+    String(profile.name || ""),
+    serverDisplayName(server, index),
+    serverSessionName(server, index),
+    workdirDisplayName(profile.workdir),
+  ];
+  const candidates = sources
+    .map(readableVoiceNameCandidate)
+    .filter((phrase) => normalizeVoiceText(phrase).length >= 2 && normalizeVoiceText(phrase).length <= 5);
+
+  return candidates;
+}
+
+export function taskWakePhrasesForServer(server, index = 0) {
+  const profile = normalizeProfile(server?.profile);
+  const configured = wakePhrasesFromText(profile.taskWakePhrases);
+  const fallback = [
+    ...automaticTaskWakePhrases(server, index),
+    `第${chineseNumber(index + 1)}个`,
+    `第${index + 1}个`,
+  ];
+
+  const seen = new Set();
+  return [...configured, ...fallback]
+    .map((phrase) => String(phrase || "").trim())
+    .filter(Boolean)
+    .filter((phrase) => {
+      const key = normalizeVoiceText(phrase);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+export function playbackPhrasesForServer(index = 0) {
+  const number = index + 1;
+  const chinese = chineseNumber(number);
+  return [
+    `播放任务${number}`,
+    `播放任务${chinese}`,
+    `播放第${number}个`,
+    `播放第${chinese}个`,
+    `重播任务${number}`,
+    `重播任务${chinese}`,
+  ];
+}
+
+export function wakeContextForServers(servers = [], activeServerId = "", activeProfile = defaultProfile) {
+  const globalPhrases = wakePhrasesForProfile(activeProfile);
+  const entries = servers.flatMap((server, index) =>
+    taskWakePhrasesForServer(server, index).map((phrase) => ({
+      phrase,
+      serverId: server.id,
+      index,
+    })),
+  );
+  const playbackEntries = servers.flatMap((server, index) =>
+    playbackPhrasesForServer(index).map((phrase) => ({
+      phrase,
+      serverId: server.id,
+      index,
+    })),
+  );
+  const phrases = [
+    ...globalPhrases,
+    ...currentResultPlaybackPhrases,
+    ...entries.map((entry) => entry.phrase),
+    ...playbackEntries.map((entry) => entry.phrase),
+  ];
+  return { globalPhrases, entries, playbackEntries, currentResultPlaybackPhrases, phrases };
+}
+
+export function speechInterruptContextForServers(servers = [], activeServerId = "", activeProfile = defaultProfile) {
+  const wakeContext = wakeContextForServers(servers, activeServerId, activeProfile);
+  const seen = new Set();
+  const phrases = [
+    ...speechInterruptPhrases,
+    ...wakeContext.currentResultPlaybackPhrases,
+    ...wakeContext.playbackEntries.map((entry) => entry.phrase),
+    ...wakeContext.entries.map((entry) => entry.phrase),
+    ...wakeContext.globalPhrases,
+  ]
+    .map((phrase) => String(phrase || "").trim())
+    .filter(Boolean)
+    .filter((phrase) => {
+      const key = normalizeVoiceText(phrase);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  return {
+    ...wakeContext,
+    phrases,
+    interruptPhrases: speechInterruptPhrases,
+  };
+}
+
+export function isSpeechStopPhrase(phrase) {
+  const normalized = normalizeVoiceText(phrase);
+  return speechInterruptPhrases.some((item) => normalizeVoiceText(item) === normalized);
+}
+
+export function isGlobalWakePhrase(phrase, context) {
+  const normalized = normalizeVoiceText(phrase);
+  return (context?.globalPhrases || []).some((item) => normalizeVoiceText(item) === normalized);
+}
+
+export function taskWakeMatchFromPhrase(phrase, context) {
+  const normalized = normalizeVoiceText(phrase);
+  if (!normalized) return null;
+  return context.entries.find((entry) => normalizeVoiceText(entry.phrase) === normalized) || null;
+}
+
+export function playbackCommandMatchFromPhrase(phrase, context) {
+  const normalized = normalizeVoiceText(phrase);
+  if (!normalized) return null;
+  return context.playbackEntries.find((entry) => normalizeVoiceText(entry.phrase) === normalized) || null;
+}
+
+export function taskWakeMatchFromText(text, servers = []) {
+  const normalized = normalizeVoiceText(text);
+  if (!normalized) return null;
+
+  const commands = ["切换到", "切到", "打开", "进入", "换到", "转到"];
+  const candidates = [normalized];
+  commands.forEach((command) => {
+    const key = normalizeVoiceText(command);
+    if (normalized.startsWith(key)) candidates.push(normalized.slice(key.length));
+  });
+
+  for (const candidate of candidates) {
+    const cleaned = candidate.replace(/(任务|会话|项目|目录|工作区)$/g, "");
+    for (let index = 0; index < servers.length; index += 1) {
+      const server = servers[index];
+      const matched = taskWakePhrasesForServer(server, index).some((phrase) => normalizeVoiceText(phrase) === cleaned);
+      if (matched) return { serverId: server.id, index, phrase: cleaned };
+    }
+  }
+
+  return null;
+}
+
+export function serverTaskState(server) {
+  return server?.task?.state || "idle";
+}
+
+export function serverTaskRunning(server) {
+  return serverTaskState(server) === "running";
+}
+
+export function createServerId() {
+  return `server-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function initialConnectionForProfile(profile) {
+  return profileReady(profile)
+    ? { state: "idle", label: "未测试", detail: `${profile.username}@${profile.host}` }
+    : { state: "idle", label: "待配置", detail: profileIssue(profile) };
+}
+
+export function dormantConnectionForProfile(profile, previous = {}, label = "未连接") {
+  const normalized = normalizeProfile(profile);
+  return {
+    ...initialConnectionForProfile(normalized),
+    mode: previous?.mode || previous?.transport || previous?.backend || "",
+    state: "idle",
+    label,
+    detail: label === "未连接" ? "上次状态已重置" : String(normalized.workdir || previous?.detail || `${normalized.username}@${normalized.host}`),
+  };
+}
+
+export function connectionForAppLaunch(server) {
+  const task = taskForStorage(server?.task);
+  const profile = normalizeProfile(server?.profile);
+  const connection = server?.connection || initialConnectionForProfile(profile);
+  if (task?.state === "running" && task?.backend === "agent" && task?.remoteTaskId) {
+    return {
+      ...connection,
+      state: "testing",
+      label: "等待结果",
+      detail: "等待同步",
+      mode: "agent",
+    };
+  }
+  if (connection.state === "connected" || connection.state === "testing") {
+    return dormantConnectionForProfile(profile, connection, "未连接");
+  }
+  return connection;
+}
+
+export function readyConnectionForSession(profile, previous = {}) {
+  const normalized = normalizeProfile(profile);
+  return {
+    ...initialConnectionForProfile(normalized),
+    mode: previous?.mode || previous?.transport || previous?.backend || "",
+    state: "idle",
+    label: "就绪",
+    detail: String(normalized.workdir || "").trim() ? workdirDisplayName(normalized.workdir) : `${normalized.username}@${normalized.host}`,
+  };
+}
+
+export function connectionIsLive(connection) {
+  return connection?.state === "connected";
+}
+
+export function serverDisplayName(server, index = 0) {
+  const profile = server?.profile || {};
+  return (
+    String(server?.name || profile.name || "").trim() ||
+    (index === 0 ? "默认服务器" : `服务器 ${index + 1}`)
+  );
+}
+
+export function serverSessionName(server, index = 0) {
+  const profile = server?.profile || {};
+  const explicit = String(server?.name || profile.name || "").trim();
+  if (explicit && explicit !== "默认服务器" && !/^服务器 \d+$/.test(explicit)) return explicit;
+  const workdirName = String(profile.workdir || "").trim() ? workdirDisplayName(profile.workdir) : "";
+  return workdirName || explicit || (index === 0 ? "默认服务器" : `服务器 ${index + 1}`);
+}
+
+export function createServerSession(partial = {}, index = 0) {
+  const profile = normalizeProfile(partial.profile || partial);
+  const conversationId = String(partial.conversationId || partial.sessionId || "").trim() || createConversationId(profile.workdir || profile.name);
+  const server = {
+    id: partial.id || createServerId(),
+    conversationId,
+    name: String(partial.name || profile.name || "").trim(),
+    profile,
+    connection: partial.connection || initialConnectionForProfile(profile),
+    diagnostics: partial.diagnostics || {},
+    discovery: partial.discovery || null,
+    rawOutput: partial.rawOutput || "原始输出会在测试连接或发送任务后显示。",
+    messages: Array.isArray(partial.messages) ? partial.messages : [],
+    task: partial.task || { state: "idle" },
+    unreadResult: partial.unreadResult || null,
+    agentHistoryCursor: String(partial.agentHistoryCursor || "").trim(),
+    agentHistoryHasMore: partial.agentHistoryHasMore !== false,
+  };
+  return {
+    ...server,
+    name: server.name || serverDisplayName(server, index),
+  };
+}
+
+export function normalizeWorkspaceStore(value) {
+  if (value?.version === 2 && Array.isArray(value.servers)) {
+    const servers = value.servers.length
+      ? value.servers.map((server, index) => {
+          const normalized = createServerSession(stripLegacyDefaultWorkdirFromPlaceholder(server, index), index);
+          return {
+            ...normalized,
+            connection: connectionForAppLaunch(normalized),
+          };
+        })
+      : [createServerSession({ profile: defaultProfile, name: "默认服务器" })];
+    const activeServerId = servers.some((server) => server.id === value.activeServerId)
+      ? value.activeServerId
+      : servers[0].id;
+    return { activeServerId, servers };
+  }
+
+  const migrated = createServerSession({
+    id: "default-server",
+    name: "默认服务器",
+    profile:
+      value && Object.keys(value).length
+        ? stripLegacyDefaultWorkdirFromPlaceholder({ id: "default-server", name: "默认服务器", profile: value }, 0).profile
+        : defaultProfile,
+  });
+  return { activeServerId: migrated.id, servers: [migrated] };
+}
+
+export function serializeWorkspaceStore(servers, activeServerId) {
+  return {
+    version: 2,
+    activeServerId,
+    servers: servers.map((server, index) => ({
+      id: server.id,
+      conversationId: server.conversationId || createConversationId(server.profile?.workdir || server.name),
+      name: serverDisplayName(server, index),
+      profile: {
+        ...server.profile,
+        name: serverDisplayName(server, index),
+      },
+      connection: server.connection,
+      diagnostics: server.diagnostics || {},
+      rawOutput: clipPersistedText(server.rawOutput),
+      messages: messagesForStorage(server.messages),
+      task: taskForStorage(server.task),
+      unreadResult: server.unreadResult || null,
+      agentHistoryCursor: String(server.agentHistoryCursor || "").trim(),
+      agentHistoryHasMore: server.agentHistoryHasMore !== false,
+    })),
+  };
+}
+
+export function serializeWorkspaceMigrationStore(servers, activeServerId) {
+  return {
+    version: 2,
+    activeServerId,
+    servers: (Array.isArray(servers) ? servers : []).map((server, index) => {
+      const profile = normalizeProfile(server.profile);
+      const displayName = serverDisplayName(server, index);
+      return {
+        id: server.id,
+        sessionId: server.id,
+        conversationId: server.conversationId || createConversationId(profile.workdir || displayName),
+        name: displayName,
+        profile: {
+          ...profile,
+          name: displayName,
+        },
+        agentSessionName: sessionName(profile, profile.agentId),
+        connection: initialConnectionForProfile(profile),
+        diagnostics: server.diagnostics || {},
+        rawOutput: "",
+        messages: [],
+        task: { state: "idle" },
+        unreadResult: null,
+      };
+    }),
+  };
+}
+
+export function buildWorkspaceMigrationPayload(servers, activeServerId) {
+  const workspace = serializeWorkspaceMigrationStore(servers, activeServerId);
+  return {
+    kind: migrationFileKind,
+    version: migrationFileVersion,
+    app: "AI Workbench",
+    exportedAt: new Date().toISOString(),
+    includesSecrets: true,
+    includesChatHistory: false,
+    note: "This file contains server passwords/API keys and should be kept private.",
+    workspace,
+    directoryPrefs: normalizeDirectoryPrefs(loadDirectoryPrefs()),
+    manualWorkdirHistory: normalizeManualWorkdirHistory(loadManualWorkdirHistory()),
+  };
+}
+
+export function parseWorkspaceMigrationText(text) {
+  const parsed = JSON.parse(String(text || ""));
+  const workspace =
+    parsed?.kind === migrationFileKind
+      ? parsed.workspace
+      : parsed?.workspace && parsed.workspace.version
+        ? parsed.workspace
+        : parsed;
+  const store = normalizeWorkspaceStore(workspace);
+  if (!Array.isArray(store.servers) || !store.servers.length) {
+    throw new Error("配置文件里没有可导入的会话。");
+  }
+  return {
+    source: parsed,
+    store,
+    directoryPrefs: parsed?.directoryPrefs ? normalizeDirectoryPrefs(parsed.directoryPrefs) : null,
+    manualWorkdirHistory: parsed?.manualWorkdirHistory ? normalizeManualWorkdirHistory(parsed.manualWorkdirHistory) : null,
+  };
+}
+
+export function mergeDirectoryPrefs(left, right) {
+  return normalizeDirectoryPrefs({
+    favorites: [...(left?.favorites || []), ...(right?.favorites || [])],
+    hidden: [...(left?.hidden || []), ...(right?.hidden || [])],
+  });
+}
+
+export function mergeManualWorkdirHistory(left, right) {
+  return normalizeManualWorkdirHistory({
+    entries: [...(right?.entries || []), ...(left?.entries || [])],
+  });
+}
+
+export function mergeImportedServers(currentServers, importedServers) {
+  const current = Array.isArray(currentServers) ? currentServers : [];
+  const incoming = Array.isArray(importedServers) ? importedServers : [];
+  const incomingIds = new Set(incoming.map((server) => server.id).filter(Boolean));
+  const currentById = new Map(current.map((server) => [server.id, server]));
+  const currentIsOnlyPlaceholder =
+    current.length === 1 &&
+    (current[0]?.id === "default-server" || serverDisplayName(current[0], 0) === "默认服务器") &&
+    !String(current[0]?.profile?.host || "").trim();
+
+  const kept = currentIsOnlyPlaceholder ? [] : current.filter((server) => !incomingIds.has(server.id));
+  const mergedIncoming = incoming.map((server, index) => {
+    const existing = currentById.get(server.id);
+    return createServerSession(
+      {
+        ...server,
+        id: server.id || createServerId(),
+        messages: existing?.messages || [],
+        rawOutput: existing?.rawOutput || server.rawOutput,
+        task: { state: "idle" },
+        unreadResult: existing?.unreadResult || null,
+      },
+      kept.length + index,
+    );
+  });
+
+  return [...kept, ...mergedIncoming];
+}
+
+export function migrationFileName() {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\..+$/, "")
+    .replace("T", "-");
+  return `AI-Workbench-config-${stamp}.aiwb.json`;
+}
+
+export function profileIssue(profile) {
+  if (!String(profile?.host || "").trim()) return "请填写服务器 IP 或域名";
+  if (!String(profile?.username || "").trim()) return "请填写登录用户名";
+  if (!String(profile?.password || "").trim()) return "请先填写登录密码";
+  return "";
+}
+
+export function profileReady(profile) {
+  return !profileIssue(profile);
+}
+
+export function profileConnectionKey(profile) {
+  const normalized = normalizeProfile(profile);
+  return [
+    normalizeServerPlatform(normalized.platform),
+    String(normalized.host || "").trim().toLocaleLowerCase(),
+    Number(normalized.port || 22) || 22,
+    String(normalized.username || "").trim(),
+  ].join("|");
+}
+
+export function shQuote(value) {
+  return `'${String(value ?? "").replace(/'/g, "'\\''")}'`;
+}
+
+export function bashCommand(script) {
+  return `bash -lc ${shQuote(script)}`;
+}
+
+export function commandName(command) {
+  return String(command || "").trim().split(/\s+/)[0] || "";
+}
+
+export function sanitizeId(value) {
+  return String(value || "session").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48);
+}
+
+export function toBase64Utf8(text) {
+  return toBase64Bytes(new TextEncoder().encode(text));
+}
+
+export function toBase64Utf16Le(text) {
+  const source = String(text || "");
+  const bytes = new Uint8Array(source.length * 2);
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    bytes[index * 2] = code & 0xff;
+    bytes[index * 2 + 1] = code >> 8;
+  }
+  return toBase64Bytes(bytes);
+}
+
+export function toBase64Bytes(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export function sleep(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+export async function waitUntil(check, { timeoutMs = 5000, intervalMs = 120 } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (check()) return true;
+    await sleep(intervalMs);
+  }
+  return check();
+}
+
+export function speechTextFromMessage(message) {
+  if (!message || message.role !== "assistant" || message.status !== "done") return "";
+  return stripTextForSpeech(message.output || message.body || "");
+}
+
+export function lastSpeakableMessageForServer(server) {
+  return [...(server?.messages || [])].reverse().find((message) => speechTextFromMessage(message)) || null;
+}
+
+export function serverCompletionSpeech(server, index = 0, ok = true, mode = defaultProfile.resultAudioMode) {
+  const name = serverSessionName(server, index);
+  const summary = ok ? `${name}任务完成。` : `${name}执行失败。`;
+  if (normalizeResultAudioMode(mode) !== "full") return summary;
+  return speechTextFromMessage(lastSpeakableMessageForServer(server)) || summary;
+}
+
+export function stripTextForSpeech(value) {
+  return String(value || "")
+    .replace(/```[\s\S]*?```/g, " 这里有一段代码，已显示在界面上。 ")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/#{1,6}\s*/g, "")
+    .replace(/[*_~>]/g, "")
+    .replace(/^\s*[-+]\s+/gm, "")
+    .replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/\|/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1800);
+}
+
+export async function speakAssistantText(text, shouldContinue = () => true, voiceProfile = {}) {
+  const cleanText = stripTextForSpeech(text);
+  if (!cleanText) return;
+
+  if (!shouldContinue()) return;
+  try {
+    await VoiceWorkbench.speak?.({
+      text: cleanText,
+      locale: "zh-CN",
+      streaming: true,
+      apiKey: voiceProfile.aliyunApiKey,
+      workspaceId: voiceProfile.aliyunWorkspaceId,
+      voiceName: voiceProfile.ttsVoiceName,
+      model: voiceProfile.ttsModel,
+    });
+    return;
+  } catch (error) {
+    throw error;
+  }
+}
+
+export function stopAssistantSpeech() {
+  VoiceWorkbench.stopSpeech?.().catch(() => {});
+}
+
+export function sessionName(profile, agentId) {
+  const base = String(profile.tmuxSession || "ai-dev").trim() || "ai-dev";
+  return `${base}-${agentId}`;
+}
+
+export function agentCommand(profile, agent) {
+  return profile[agent.commandKey] || defaultProfile[agent.commandKey];
+}
+
+export function normalizeServerPlatform(value) {
+  if (value === "windows" || value === "wsl") return value;
+  return "linux";
+}
+
+export function discoverySeedWorkdir(profile) {
+  const platform = normalizeServerPlatform(profile?.platform);
+  const defaults = serverPlatformDefaults[platform] || serverPlatformDefaults.linux;
+  const workdir = String(profile?.workdir || "").trim();
+  if (!workdir || workdir === defaults.workdir || isLegacyDefaultWorkdir(platform, workdir)) return "";
+  return workdir;
+}
+
+export function serverPlatformLabel(profile) {
+  const platform = normalizeServerPlatform(profile?.platform);
+  return serverPlatforms.find((item) => item.id === platform)?.label || serverPlatforms[0].label;
+}
+
+export function workdirDisplayName(path) {
+  const normalized = String(path || "").replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) || normalized || "工作目录";
+}
+
+export function createConversationId(seed = "") {
+  const cleanSeed = sanitizeId(String(seed || "").trim()).slice(0, 28);
+  const suffix = Math.random().toString(16).slice(2, 10);
+  return sanitizeId(["conv", cleanSeed, Date.now(), suffix].filter(Boolean).join("-"));
+}
+
+export function conversationIdSuffix(conversationId, length = 4) {
+  const text = String(conversationId || "").trim();
+  if (!text) return "";
+  const compact = text.replace(/[^a-zA-Z0-9]/g, "");
+  return (compact || text).slice(-Math.max(1, length));
+}
+
+export function sessionSelectionKey(agentId, path, conversationId = "", title = "", sourceSessionId = "") {
+  return JSON.stringify({
+    agentId: agentId === "claude" ? "claude" : "codex",
+    path: String(path || "").trim(),
+    conversationId: String(conversationId || "").trim(),
+    title: String(title || "").trim(),
+    sourceSessionId: String(sourceSessionId || "").trim(),
+  });
+}
+
+export function parseSessionSelectionKey(key) {
+  const text = String(key || "");
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      agentId: parsed?.agentId === "claude" ? "claude" : "codex",
+      path: String(parsed?.path || "").trim(),
+      conversationId: String(parsed?.conversationId || "").trim(),
+      title: String(parsed?.title || parsed?.name || "").trim(),
+      sourceSessionId: String(parsed?.sourceSessionId || parsed?.sessionId || "").trim(),
+    };
+  } catch {
+    // Legacy selection keys used "agent:path".
+  }
+  const index = text.indexOf(":");
+  return {
+    agentId: text.slice(0, index) === "claude" ? "claude" : "codex",
+    path: index >= 0 ? text.slice(index + 1) : text,
+    conversationId: "",
+    title: "",
+    sourceSessionId: "",
+  };
+}
+
+export function parseSmallChineseNumber(token) {
+  const value = String(token || "").trim();
+  const chineseNumbers = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+  return /^\d+$/.test(value) ? Number(value) : chineseNumbers[value];
+}
+
+export function parseSessionSwitchIndex(text) {
+  const value = String(text || "").trim().replace(/[，。,.!?！？\s]/g, "");
+  const intent = value.match(/^(?:切换到|切到|打开|进入|换到|转到)?第([一二两三四五六七八九十]|\d{1,2})个$/);
+  const token = intent?.[1];
+  if (!token) return -1;
+  const number = parseSmallChineseNumber(token);
+  return Number.isFinite(number) && number > 0 ? number - 1 : -1;
+}
+
+export function parsePlaybackCommandIndex(text) {
+  const value = normalizeVoiceText(text);
+  if (!value) return null;
+
+  if (/^(?:播放|重播|再播|朗读|重复播放)(?:当前|这个|本)?(?:任务|会话)?(?:结果|回复|回答)?$/.test(value)) {
+    return { current: true };
+  }
+
+  const match = value.match(
+    /^(?:播放|重播|再播|朗读|重复播放)(?:任务|会话)?(?:第)?([一二两三四五六七八九十]|\d{1,2})(?:个)?(?:任务|会话)?(?:结果|回复|回答)?$/,
+  );
+  const number = parseSmallChineseNumber(match?.[1]);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return { index: number - 1 };
+}
+
+export function isWindowsProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "windows";
+}
+
+export function isWslProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "wsl";
+}
+
+export function dirnameRemote(path) {
+  const normalized = String(path || "").replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) return ".";
+  return normalized.slice(0, index);
+}
+
+export function dirnameWindows(path) {
+  const normalized = String(path || "").replace(/[\\/]+$/, "");
+  const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
+  if (index <= 2) return normalized || ".";
+  return normalized.slice(0, index);
+}
+
+export function joinWindowsPath(...parts) {
+  return parts
+    .map((part, index) => {
+      const value = String(part || "");
+      if (index === 0) return value.replace(/[\\/]+$/, "");
+      return value.replace(/^[\\/]+|[\\/]+$/g, "");
+    })
+    .filter(Boolean)
+    .join("\\");
+}
+
+export function psQuote(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+export function powershellCommand(script) {
+  const encoded = toBase64Utf16Le(`$ErrorActionPreference = 'Stop'\n${script}`);
+  return `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+}
+
+export function powershellStdinCommand(script) {
+  return {
+    command: "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command -",
+    stdin: `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n$InformationPreference = 'SilentlyContinue'\n$AIWB_UTF8 = [System.Text.UTF8Encoding]::new($false)\n[Console]::OutputEncoding = $AIWB_UTF8\n$OutputEncoding = $AIWB_UTF8\n${script}`,
+    uploadScript: true,
+  };
+}
+
+export function remoteBashCommand(profile, script) {
+  if (!isWslProfile(profile)) return bashCommand(script);
+  const encoded = toBase64Utf8(script);
+  return powershellCommand(`
+$AIWB_SCRIPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encoded)}))
+& wsl.exe bash -lc $AIWB_SCRIPT
+exit $LASTEXITCODE
+`);
+}

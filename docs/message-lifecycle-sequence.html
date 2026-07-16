@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>AI Workbench 消息记录与 Agent 交互时序</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --paper: #ffffff;
+    --paper-2: #f8fafc;
+    --ink: #172033;
+    --muted: #5f6b7a;
+    --faint: #8490a0;
+    --line: #d8dee8;
+    --line-strong: #aab5c4;
+    --blue: #0b63ce;
+    --blue-soft: #eaf3ff;
+    --green: #137a4a;
+    --green-soft: #e9f7ef;
+    --amber: #a85c00;
+    --amber-soft: #fff3dd;
+    --red: #c0362c;
+    --red-soft: #fff0ee;
+    --code: #eef2f6;
+    --shadow: 0 12px 28px rgba(31, 44, 61, 0.08);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1117;
+      --paper: #161b22;
+      --paper-2: #1b222c;
+      --ink: #f0f4f8;
+      --muted: #a9b4c2;
+      --faint: #7f8b9a;
+      --line: #303946;
+      --line-strong: #566171;
+      --blue: #75b5ff;
+      --blue-soft: #172a43;
+      --green: #65d69a;
+      --green-soft: #142c23;
+      --amber: #f4b967;
+      --amber-soft: #342818;
+      --red: #ff8c83;
+      --red-soft: #351d1d;
+      --code: #242c37;
+      --shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    overflow-x: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.72;
+    letter-spacing: 0;
+  }
+
+  a { color: var(--blue); }
+
+  code {
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: var(--code);
+    color: var(--ink);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.9em;
+    word-break: break-all;
+  }
+
+  .page {
+    width: min(1180px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 30px 0 72px;
+  }
+
+  .back {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    margin-bottom: 24px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .doc-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 28px;
+    align-items: end;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .eyebrow {
+    margin: 0 0 8px;
+    color: var(--blue);
+    font-size: 12px;
+    font-weight: 760;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    max-width: 760px;
+    margin: 0;
+    font-size: clamp(30px, 5vw, 48px);
+    line-height: 1.13;
+    font-weight: 760;
+    letter-spacing: 0;
+  }
+
+  .lead {
+    max-width: 760px;
+    margin: 16px 0 0;
+    color: var(--muted);
+    font-size: 16px;
+  }
+
+  .meta {
+    margin: 0;
+    color: var(--faint);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    margin: 26px 0 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--line);
+  }
+
+  .summary article {
+    min-height: 144px;
+    padding: 20px;
+    background: var(--paper);
+  }
+
+  .summary .number {
+    display: block;
+    margin-bottom: 28px;
+    color: var(--faint);
+    font: 700 12px/1 "SFMono-Regular", Consolas, monospace;
+  }
+
+  .summary h2 {
+    margin: 0 0 6px;
+    font-size: 17px;
+  }
+
+  .summary p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  section {
+    padding-top: 44px;
+  }
+
+  .section-heading {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    margin-bottom: 18px;
+  }
+
+  .section-index {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    color: var(--muted);
+    font: 700 12px/1 "SFMono-Regular", Consolas, monospace;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 24px;
+    line-height: 1.3;
+  }
+
+  .section-heading p {
+    max-width: 760px;
+    margin: 5px 0 0;
+    color: var(--muted);
+  }
+
+  .rule {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 18px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--blue);
+    background: var(--blue-soft);
+  }
+
+  .rule strong { color: var(--blue); }
+  .rule p { margin: 0; }
+
+  .sequence-frame {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    box-shadow: var(--shadow);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sequence-canvas {
+    min-width: 980px;
+    padding: 18px 16px 14px;
+  }
+
+  .actors,
+  .lifelines {
+    display: grid;
+    grid-template-columns: repeat(var(--lanes), minmax(0, 1fr));
+  }
+
+  .actor {
+    position: relative;
+    z-index: 2;
+    margin: 0 8px;
+    padding: 11px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--paper-2);
+    color: var(--ink);
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .actor small {
+    display: block;
+    margin-top: 2px;
+    color: var(--faint);
+    font-size: 11px;
+    font-weight: 520;
+  }
+
+  .timeline {
+    position: relative;
+    padding: 14px 0 4px;
+  }
+
+  .lifelines {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .lifelines i {
+    width: 1px;
+    height: 100%;
+    margin: 0 auto;
+    border-left: 1px dashed var(--line-strong);
+    opacity: 0.78;
+  }
+
+  .seq-step {
+    position: relative;
+    min-height: 76px;
+  }
+
+  .signal {
+    --signal: var(--blue);
+    position: absolute;
+    top: 43px;
+    left: var(--left);
+    width: var(--width);
+    border-top: 2px solid var(--signal);
+    color: var(--ink);
+  }
+
+  .signal.green { --signal: var(--green); }
+  .signal.amber { --signal: var(--amber); }
+  .signal.red { --signal: var(--red); }
+  .signal.dashed { border-top-style: dashed; }
+
+  .signal::before {
+    content: "";
+    position: absolute;
+    top: -5px;
+    left: -1px;
+    width: 8px;
+    height: 8px;
+    border: 2px solid var(--signal);
+    border-radius: 50%;
+    background: var(--paper);
+  }
+
+  .signal::after {
+    content: "";
+    position: absolute;
+    top: -6px;
+    right: -1px;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 8px solid var(--signal);
+  }
+
+  .signal.reverse::before {
+    left: auto;
+    right: -1px;
+  }
+
+  .signal.reverse::after {
+    right: auto;
+    left: -1px;
+    border-right: 8px solid var(--signal);
+    border-left: 0;
+  }
+
+  .signal span {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    max-width: 92%;
+    padding: 2px 7px;
+    transform: translateX(-50%);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.35;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .self-event {
+    --event: var(--green);
+    position: absolute;
+    top: 17px;
+    left: var(--self-left);
+    width: var(--self-width);
+    min-height: 48px;
+    padding: 7px 8px 7px 11px;
+    border: 1px solid color-mix(in srgb, var(--event) 48%, var(--line));
+    border-left: 3px solid var(--event);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--event) 10%, var(--paper));
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.35;
+    text-align: left;
+  }
+
+  .self-event.green { --event: var(--green); }
+
+  .step-note {
+    position: absolute;
+    top: 52px;
+    left: var(--note-left);
+    width: var(--note-width);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  .phase {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    margin: 10px 0 4px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .phase::before,
+  .phase::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: var(--line);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin: 14px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 20px; border-top: 2px solid currentColor; }
+  .legend .blue { color: var(--blue); }
+  .legend .green { color: var(--green); }
+  .legend .amber { color: var(--amber); }
+  .legend .red { color: var(--red); }
+
+  .data-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .data-block {
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+  }
+
+  .data-block .tag {
+    display: inline-block;
+    margin-bottom: 20px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--blue-soft);
+    color: var(--blue);
+    font-size: 11px;
+    font-weight: 760;
+  }
+
+  .data-block:nth-child(2) .tag { background: var(--green-soft); color: var(--green); }
+  .data-block:nth-child(3) .tag { background: var(--amber-soft); color: var(--amber); }
+  .data-block h3 { margin: 0 0 8px; font-size: 16px; }
+  .data-block p { margin: 0; color: var(--muted); font-size: 13px; }
+  .data-block ul { margin: 14px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+
+  table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    font-size: 13px;
+  }
+
+  th,
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th { background: var(--paper-2); color: var(--muted); font-weight: 720; }
+  tr:last-child td { border-bottom: 0; }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 740;
+  }
+
+  .status.ok { background: var(--green-soft); color: var(--green); }
+  .status.warn { background: var(--amber-soft); color: var(--amber); }
+  .status.bad { background: var(--red-soft); color: var(--red); }
+
+  .callout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+    border-radius: 8px;
+    background: var(--amber-soft);
+  }
+
+  .callout b { color: var(--amber); }
+  .callout p { margin: 0; color: var(--muted); }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-size: 12px;
+  }
+
+  @media (max-width: 760px) {
+    .page { width: min(calc(100% - 22px), 1180px); padding-top: 18px; }
+    .doc-header { grid-template-columns: 1fr; }
+    h1, .lead, .summary article { min-width: 0; overflow-wrap: anywhere; }
+    .meta { white-space: normal; }
+    .summary, .data-grid { grid-template-columns: 1fr; }
+    .section-heading { grid-template-columns: 36px minmax(0, 1fr); }
+    .rule { grid-template-columns: 1fr; gap: 4px; }
+    th, td { min-width: 132px; }
+  }
+
+  @media print {
+    :root { color-scheme: light; }
+    body { background: #fff; }
+    .page { width: 100%; padding: 0; }
+    .sequence-frame { box-shadow: none; break-inside: avoid; }
+    .back { display: none; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <a class="back" href="./index.html">返回 AI Workbench 文档导航</a>
+
+  <header class="doc-header">
+    <div>
+      <p class="eyebrow">Message lifecycle / Current implementation</p>
+      <h1>消息记录、Agent 执行与恢复时序</h1>
+      <p class="lead">按当前代码整理 App 如何先保存用户消息、如何把任务交给远端 Agent、Agent 如何落盘，以及 App 重启后如何重新读取并合并最近记录。</p>
+    </div>
+    <p class="meta">基于当前实现整理<br>更新：2026-07-14</p>
+  </header>
+
+  <div class="summary" aria-label="核心结论">
+    <article>
+      <span class="number">01</span>
+      <h2>本地先显示</h2>
+      <p>点击发送后，用户消息和等待回复占位消息先进入设备本地，不需要等 SSH 或 Agent 返回。</p>
+    </article>
+    <article>
+      <span class="number">02</span>
+      <h2>Agent 负责后台可靠执行</h2>
+      <p>每次任务都有独立 taskId，状态、输入、输出和时间都写入远端文件，即使 App 被关闭仍可继续。</p>
+    </article>
+    <article>
+      <span class="number">03</span>
+      <h2>重新连接后合并</h2>
+      <p>App 先恢复本地历史，再按 conversationId 拉取 Agent 最近 5 个任务，以 taskId 去重并补入结果。</p>
+    </article>
+  </div>
+
+  <section id="startup">
+    <div class="section-heading">
+      <span class="section-index">01</span>
+      <div>
+        <h2>App 启动与消息恢复</h2>
+        <p>本地记录负责立即可见，Agent 记录负责补齐跨设备、跨重启的任务状态。</p>
+      </div>
+    </div>
+
+    <div class="sequence-frame" aria-label="App 启动与消息恢复时序图">
+      <div class="sequence-canvas" style="--lanes: 5">
+        <div class="actors">
+          <div class="actor">用户<small>选择会话</small></div>
+          <div class="actor">App 控制器<small>React 状态</small></div>
+          <div class="actor">设备本地存储<small>安全存储 + 缓存</small></div>
+          <div class="actor">原生 SSH 桥<small>macOS / iOS / Android</small></div>
+          <div class="actor">远端 Agent<small>conversation registry</small></div>
+        </div>
+        <div class="timeline">
+          <div class="lifelines"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seq-step"><div class="signal" style="--left:10%;--width:20%"><span>打开 App 或进入会话</span></div></div>
+          <div class="seq-step"><div class="signal" style="--left:30%;--width:20%"><span>loadProfile()</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:30%;--width:20%"><span>会话配置、conversationId、已保存消息</span></div></div>
+          <div class="seq-step"><div class="signal" style="--left:30%;--width:20%"><span>读取 localStorage 消息缓存</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:30%;--width:20%"><span>按 server.id 返回本地历史</span></div></div>
+          <div class="seq-step"><div class="signal amber" style="--left:30%;--width:40%"><span>conversation-status，最近 5 个任务</span></div></div>
+          <div class="seq-step"><div class="signal amber" style="--left:70%;--width:20%"><span>通过 SSH 调用 aiwbctl</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:30%;--width:60%"><span>prompt、result、status、taskId</span></div></div>
+          <div class="seq-step"><div class="signal green" style="--left:30%;--width:20%"><span>合并、去重后重新保存</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="blue"></i>本地调用</span>
+      <span><i class="green"></i>数据返回或保存</span>
+      <span><i class="amber"></i>远端同步</span>
+    </div>
+  </section>
+
+  <section id="agent-run">
+    <div class="section-heading">
+      <span class="section-index">02</span>
+      <div>
+        <h2>Agent 后台执行与结果返回</h2>
+        <p>Agent 并不直接理解任务，它负责可靠排队、启动 Codex/Claude、记录输出并向 App 暴露状态。</p>
+      </div>
+    </div>
+
+    <div class="rule">
+      <strong>并发规则</strong>
+      <p>一台机器最多同时运行 4 个任务；同一个 <code>conversationId</code> 同时只允许一个任务，避免两个设备并发写入同一 AI 会话。</p>
+    </div>
+
+    <div class="sequence-frame" style="margin-top:16px" aria-label="Agent 后台执行与结果返回时序图">
+      <div class="sequence-canvas" style="--lanes: 6">
+        <div class="actors">
+          <div class="actor">App 控制器<small>消息时间线</small></div>
+          <div class="actor">原生 SSH 桥<small>命令传输</small></div>
+          <div class="actor">aiwbctl<small>任务入口</small></div>
+          <div class="actor">Agent 文件目录<small>任务事实来源</small></div>
+          <div class="actor">Agent 守护进程<small>每秒调度</small></div>
+          <div class="actor">Codex / Claude<small>真正执行任务</small></div>
+        </div>
+        <div class="timeline">
+          <div class="lifelines"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="phase">提交阶段</div>
+          <div class="seq-step"><div class="self-event green" style="--self-left:0%;--self-width:16.66%">本地写入用户消息和等待占位<br>页面立即可见</div></div>
+          <div class="seq-step"><div class="signal" style="--left:8.33%;--width:16.67%"><span>Agent 健康检查</span></div></div>
+          <div class="seq-step"><div class="signal" style="--left:8.33%;--width:33.34%"><span>create(remoteTaskId, conversationId)</span></div></div>
+          <div class="seq-step"><div class="signal amber" style="--left:41.67%;--width:16.66%"><span>写 command、prompt、模型及状态</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:8.33%;--width:33.34%"><span>queued / busy / error</span></div></div>
+
+          <div class="phase">后台执行阶段</div>
+          <div class="seq-step"><div class="signal amber" style="--left:58.33%;--width:16.67%"><span>发现 queued 任务</span></div></div>
+          <div class="seq-step"><div class="signal green" style="--left:58.33%;--width:16.67%"><span>status 改为 running，写 PID</span></div></div>
+          <div class="seq-step"><div class="signal" style="--left:75%;--width:16.67%"><span>执行 Codex exec / Claude -p</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:58.33%;--width:33.34%"><span>中间输出与最终结果</span></div></div>
+          <div class="seq-step"><div class="signal green" style="--left:58.33%;--width:16.67%"><span>写 output.log、结束状态和时间</span></div></div>
+
+          <div class="phase">App 同步阶段</div>
+          <div class="seq-step"><div class="signal" style="--left:8.33%;--width:33.34%"><span>status(remoteTaskId)</span></div></div>
+          <div class="seq-step"><div class="signal amber" style="--left:41.67%;--width:16.66%"><span>读取状态、PID 与 output.log</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:8.33%;--width:50%"><span>running / done / error + 输出</span></div></div>
+          <div class="seq-step"><div class="self-event green" style="--self-left:0%;--self-width:16.66%">解析最终答案、替换占位消息<br>当前会话约 6 秒检查一次</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="paging-fallback">
+    <div class="section-heading">
+      <span class="section-index">03</span>
+      <div>
+        <h2>向上翻历史与 SSH 降级</h2>
+        <p>历史分页和直接 SSH 是两条不同能力：前者依赖 Agent 文件，后者只依赖当前 SSH 连接。</p>
+      </div>
+    </div>
+
+    <div class="sequence-frame" aria-label="历史分页与 SSH 降级时序图">
+      <div class="sequence-canvas" style="--lanes: 5">
+        <div class="actors">
+          <div class="actor">用户<small>聊天操作</small></div>
+          <div class="actor">App 控制器<small>本地时间线</small></div>
+          <div class="actor">原生 SSH 桥<small>远端命令</small></div>
+          <div class="actor">远端 Agent<small>历史分页</small></div>
+          <div class="actor">Codex / Claude<small>SSH 同步执行</small></div>
+        </div>
+        <div class="timeline">
+          <div class="lifelines"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="phase">向上拉取更早记录</div>
+          <div class="seq-step"><div class="signal" style="--left:10%;--width:20%"><span>聊天窗口向上拉</span></div></div>
+          <div class="seq-step"><div class="signal amber" style="--left:30%;--width:40%"><span>conversation-status limit=5 before=游标</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:30%;--width:40%"><span>更早的 5 个 prompt 与 result</span></div></div>
+          <div class="seq-step"><div class="self-event green" style="--self-left:20%;--self-width:20%">插入顶部并保持滚动位置</div></div>
+
+          <div class="phase">Agent 不可用时</div>
+          <div class="seq-step"><div class="signal red" style="--left:30%;--width:40%"><span>Agent 未安装、关闭或启动连续失败</span></div></div>
+          <div class="seq-step"><div class="signal" style="--left:30%;--width:20%"><span>改用 SSH 直连</span></div></div>
+          <div class="seq-step"><div class="signal" style="--left:50%;--width:40%"><span>同步执行 Codex / Claude</span></div></div>
+          <div class="seq-step"><div class="signal reverse green dashed" style="--left:30%;--width:60%"><span>返回最终输出</span></div></div>
+          <div class="seq-step"><div class="self-event green" style="--self-left:20%;--self-width:20%">结果只写入 App 本地历史<br>关闭 App 后不能可靠恢复该任务</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="red"></i>异常或降级触发</span>
+      <span><i class="amber"></i>Agent 历史读取</span>
+      <span><i class="green"></i>结果写回</span>
+    </div>
+  </section>
+
+  <section id="storage">
+    <div class="section-heading">
+      <span class="section-index">04</span>
+      <div>
+        <h2>三层记录分别保存什么</h2>
+        <p>三层记录不是重复设计：本地保证体验，Agent 保证任务恢复，CLI session 保证 AI 上下文连续。</p>
+      </div>
+    </div>
+
+    <div class="data-grid">
+      <article class="data-block">
+        <span class="tag">设备层</span>
+        <h3>App 本地消息</h3>
+        <p>保存用户气泡、AI 气泡、运行状态、计时、附件和错误信息。</p>
+        <ul>
+          <li>每个会话最多 120 条</li>
+          <li>消息正文最多约 60,000 字符</li>
+          <li>先显示，再同步远端</li>
+        </ul>
+      </article>
+      <article class="data-block">
+        <span class="tag">可靠执行层</span>
+        <h3>Agent 任务记录</h3>
+        <p><code>~/.ai-workbench/agent/tasks/&lt;taskId&gt;/</code> 是远端任务的事实来源。</p>
+        <ul>
+          <li>prompt.txt 与 command.b64</li>
+          <li>status、pid 和时间字段</li>
+          <li>output.log 与错误日志</li>
+        </ul>
+      </article>
+      <article class="data-block">
+        <span class="tag">AI 上下文层</span>
+        <h3>Codex / Claude session</h3>
+        <p>工作目录中的 session 文件只负责让 AI CLI 使用 resume 延续上下文。</p>
+        <ul>
+          <li>Codex：<code>*.session</code></li>
+          <li>Claude：<code>*.claude-session</code></li>
+          <li>不等同于 App 聊天记录</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section id="ids">
+    <div class="section-heading">
+      <span class="section-index">05</span>
+      <div>
+        <h2>消息与会话如何对齐</h2>
+        <p>App 用四类 ID 把本地气泡、Agent 任务与 AI CLI 会话连接起来。</p>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr><th>ID</th><th>作用</th><th>生命周期</th><th>主要用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>server.id</code></td><td>左侧一张工作会话卡</td><td>会话配置存在期间</td><td>查找设备本地消息和配置</td></tr>
+          <tr><td><code>conversationId</code></td><td>Agent 逻辑会话</td><td>多个任务共同复用</td><td>跨重启、跨设备定位同一组任务</td></tr>
+          <tr><td><code>remoteTaskId</code></td><td>一次远端任务</td><td>每次发送创建一个</td><td>查询状态、取消任务、消息去重</td></tr>
+          <tr><td><code>message.id</code></td><td>一条 App 本地消息</td><td>单条气泡生命周期</td><td>更新占位消息和多窗口合并</td></tr>
+          <tr><td>CLI session ID</td><td>Codex 或 Claude 自身上下文</td><td>由对应 CLI 管理</td><td>执行下一条任务时 resume</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="rules">
+    <div class="section-heading">
+      <span class="section-index">06</span>
+      <div>
+        <h2>当前同步规则</h2>
+        <p>这些数值决定消息什么时候刷新、为什么不会无限拉取，以及异常时如何恢复。</p>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>场景</th><th>当前规则</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td>当前运行会话</td><td>约每 6 秒查询一次 Agent task 状态</td><td><span class="status ok">自动更新</span></td></tr>
+          <tr><td>所有会话</td><td>约每 20 秒做一次后台同步检查</td><td><span class="status ok">自动恢复</span></td></tr>
+          <tr><td>App 启动</td><td>约 1.2 秒后开始首次 Agent 同步</td><td><span class="status ok">补齐状态</span></td></tr>
+          <tr><td>最近历史</td><td>每次读取 5 个任务</td><td><span class="status ok">按需加载</span></td></tr>
+          <tr><td>继续上拉</td><td>使用 before 游标再读取更早 5 个</td><td><span class="status ok">增量分页</span></td></tr>
+          <tr><td>Agent runner 启动失败</td><td>最多重试 2 次，特定启动故障再降级到 SSH</td><td><span class="status warn">兼容降级</span></td></tr>
+          <tr><td>直接 SSH 时关闭 App</td><td>没有 Agent task 文件可供恢复</td><td><span class="status bad">不可可靠恢复</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout" style="margin-top:16px">
+      <b>边界</b>
+      <p>目前跨设备同步依赖相同的 <code>conversationId</code> 和远端 Agent 记录。本地消息缓存不会自动跨设备复制；新设备只能从 Agent 拉到已由 Agent 执行并落盘的任务。</p>
+    </div>
+  </section>
+
+  <footer>
+    AI Workbench · 消息生命周期文档 · 以当前代码实现为准。关键实现位于
+    <code>src/app/useWorkbenchController.jsx</code>、<code>src/core/agent.js</code>、<code>src/core/remoteCommands.js</code> 与 <code>src/core/foundation.js</code>。
+  </footer>
+</main>
+</body>
+</html>

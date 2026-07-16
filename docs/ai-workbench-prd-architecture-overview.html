@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Workbench · PRD 与架构方案总览</title>
+<style>
+  :root{
+    --brand:#0A84FF;
+    --brand-2:#32D74B;
+    --brand-soft:#EAF3FF;
+    --green-soft:#EAF8EF;
+    --yellow-soft:#FFF7E0;
+    --red-soft:#FFF0F0;
+    --ink:#111827;
+    --ink-soft:#344054;
+    --muted:#667085;
+    --faint:#98A2B3;
+    --bg:#F5F6FA;
+    --paper:#FFFFFF;
+    --paper-2:#FAFBFD;
+    --line:#E5E7EB;
+    --line-strong:#D0D5DD;
+    --code:#20232A;
+    --shadow:0 18px 50px rgba(15,23,42,.08);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    line-height:1.72;
+  }
+  a{color:var(--brand);text-decoration:none}
+  .shell{
+    max-width:1220px;
+    margin:0 auto;
+    padding:28px 22px 80px;
+    display:grid;
+    grid-template-columns:250px minmax(0,1fr);
+    gap:24px;
+  }
+  .side{
+    position:sticky;
+    top:22px;
+    align-self:start;
+    display:grid;
+    gap:16px;
+  }
+  .back{
+    display:inline-flex;
+    width:max-content;
+    align-items:center;
+    gap:6px;
+    font-size:13px;
+    font-weight:700;
+  }
+  .toc{
+    padding:16px;
+    background:rgba(255,255,255,.82);
+    border:1px solid var(--line);
+    border-radius:20px;
+    box-shadow:var(--shadow);
+  }
+  .toc strong{
+    display:block;
+    margin:0 0 10px;
+    font-size:14px;
+  }
+  .toc a{
+    display:block;
+    padding:8px 10px;
+    border-radius:10px;
+    color:var(--ink-soft);
+    font-size:14px;
+  }
+  .toc a:hover{background:var(--brand-soft);color:var(--brand)}
+  .meta{
+    padding:16px;
+    border:1px solid var(--line);
+    border-radius:20px;
+    background:var(--paper);
+    color:var(--muted);
+    font-size:13px;
+  }
+  .meta b{display:block;color:var(--ink);font-size:14px;margin-bottom:6px}
+  main{min-width:0}
+  .hero{
+    padding:34px;
+    border:1px solid var(--line);
+    border-radius:28px;
+    background:var(--paper);
+    box-shadow:var(--shadow);
+  }
+  .mark{
+    width:64px;
+    height:64px;
+    border-radius:18px;
+    display:grid;
+    place-items:center;
+    background:linear-gradient(135deg,#FFFFFF,#DFF0FF);
+    color:var(--brand);
+    font-size:30px;
+    font-weight:800;
+    box-shadow:0 12px 34px rgba(10,132,255,.16);
+    margin-bottom:18px;
+  }
+  h1{
+    margin:0;
+    font-size:42px;
+    line-height:1.12;
+    letter-spacing:0;
+  }
+  .lead{
+    margin:18px 0 0;
+    max-width:860px;
+    color:var(--ink-soft);
+    font-size:18px;
+  }
+  .status-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-top:24px;
+  }
+  .st{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    min-height:32px;
+    padding:5px 11px;
+    border-radius:999px;
+    font-size:13px;
+    font-weight:800;
+    border:1px solid transparent;
+  }
+  .st.done{background:var(--green-soft);color:#12823B;border-color:#BFE9CE}
+  .st.wip{background:var(--brand-soft);color:#096DD9;border-color:#C7E0FF}
+  .st.todo{background:var(--yellow-soft);color:#A15C00;border-color:#F6D78B}
+  .st.risk{background:var(--red-soft);color:#B42318;border-color:#FFD0D0}
+  section{
+    margin-top:18px;
+    padding:28px;
+    border:1px solid var(--line);
+    border-radius:26px;
+    background:var(--paper);
+    box-shadow:0 10px 28px rgba(15,23,42,.05);
+  }
+  h2{
+    margin:0 0 16px;
+    font-size:24px;
+    line-height:1.25;
+    letter-spacing:0;
+  }
+  h3{
+    margin:22px 0 10px;
+    font-size:18px;
+  }
+  p{margin:0 0 12px}
+  ul,ol{margin:8px 0 0;padding-left:24px}
+  li{margin:8px 0}
+  .grid-2{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:14px;
+  }
+  .grid-3{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:14px;
+  }
+  .card{
+    border:1px solid var(--line);
+    border-radius:18px;
+    background:var(--paper-2);
+    padding:18px;
+  }
+  .card h3{margin-top:0}
+  .card p:last-child{margin-bottom:0}
+  .small{color:var(--muted);font-size:14px}
+  .tag{
+    display:inline-flex;
+    padding:4px 9px;
+    border-radius:999px;
+    background:var(--brand-soft);
+    color:var(--brand);
+    font-size:12px;
+    font-weight:800;
+    vertical-align:middle;
+  }
+  table{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+    overflow:hidden;
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:var(--paper);
+    font-size:14px;
+  }
+  th,td{
+    padding:13px 14px;
+    border-bottom:1px solid var(--line);
+    text-align:left;
+    vertical-align:top;
+  }
+  th{
+    background:var(--paper-2);
+    color:var(--ink);
+    font-weight:800;
+  }
+  tr:last-child td{border-bottom:0}
+  td:first-child{font-weight:700;color:var(--ink)}
+  .diagram{
+    margin:12px 0 0;
+    padding:18px;
+    border-radius:18px;
+    overflow:auto;
+    border:1px solid var(--line);
+    background:#101828;
+    color:#F9FAFB;
+    font:14px/1.7 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  }
+  .flow{
+    display:grid;
+    grid-template-columns:repeat(5,minmax(0,1fr));
+    gap:10px;
+  }
+  .step{
+    min-height:118px;
+    padding:15px;
+    border:1px solid var(--line);
+    border-radius:18px;
+    background:var(--paper-2);
+  }
+  .step b{display:block;margin-bottom:8px}
+  .step span{color:var(--muted);font-size:13px}
+  .warn{
+    padding:16px 18px;
+    border:1px solid #FECACA;
+    border-radius:18px;
+    background:var(--red-soft);
+    color:#7F1D1D;
+  }
+  .decision{
+    padding:16px 18px;
+    border:1px solid #C7E0FF;
+    border-radius:18px;
+    background:var(--brand-soft);
+  }
+  code{
+    padding:2px 6px;
+    border-radius:7px;
+    background:#E9EAEE;
+    color:#1F2937;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+    font-size:.94em;
+  }
+  footer{
+    margin:22px 0 0;
+    color:var(--muted);
+    font-size:13px;
+    text-align:center;
+  }
+  @media (max-width:960px){
+    .shell{grid-template-columns:1fr;padding:18px 14px 60px}
+    .side{position:static}
+    .toc{display:none}
+    h1{font-size:34px}
+    .hero,section{padding:22px;border-radius:22px}
+    .grid-2,.grid-3,.flow{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <a class="back" href="./index.html">返回文档导航</a>
+    <nav class="toc" aria-label="目录">
+      <strong>目录</strong>
+      <a href="#one-page">一页结论</a>
+      <a href="#prd">需求 PRD</a>
+      <a href="#conversation">自然对话方案</a>
+      <a href="#architecture">架构方案</a>
+      <a href="#model">主 AI 要求</a>
+      <a href="#security">鉴权与安全</a>
+      <a href="#roadmap">阶段计划</a>
+      <a href="#acceptance">验收标准</a>
+    </nav>
+    <div class="meta">
+      <b>文档状态</b>
+      版本：v0.1<br>
+      日期：2026-06-21<br>
+      范围：产品需求、主流程、人工主控语音输入、远端 AI 会话架构。
+    </div>
+  </aside>
+
+  <main>
+    <header class="hero">
+      <div class="mark">AI</div>
+      <h1>AI Workbench · PRD 与架构方案总览</h1>
+      <p class="lead">AI Workbench 是一个 iPhone、iPad、Mac 都能用的 AI 工作台。第一版不做自动主 AI 决策，先让用户自己选择服务器、AI 类型、工作目录和发送时机。语音先作为更自然的输入方式，把人说的话整理进输入框，真正执行前仍由人确认。</p>
+      <div class="status-row" aria-label="状态">
+        <span class="st done">已确认：隐藏 SSH 和终端复杂度</span>
+        <span class="st done">已确认：人工主控优先</span>
+        <span class="st wip">进行中：语音唤醒</span>
+        <span class="st todo">后置：主 AI 分流</span>
+      </div>
+    </header>
+
+    <section id="one-page">
+      <h2>一页结论</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>产品定位</h3>
+          <p>不是重新做一个 Codex 或 Claude，而是做一层更好用的 Apple 风格“工作台外壳”。它连接用户自己的服务器，复用服务器上的 AI CLI、历史会话和工作目录。</p>
+        </div>
+        <div class="card">
+          <h3>核心体验</h3>
+          <p>第一次连接机器后自动扫描 AI 会话，列出工作目录。之后用户选择 AI 类型和工作目录，直接打字或说话发任务，界面只显示“我说了什么”和“AI 最终回复”。</p>
+        </div>
+        <div class="card">
+          <h3>人工主控</h3>
+          <p>第一版由人自己完成关键判断：选 Codex 还是 Claude，选哪个工作目录，确认是否发送，必要时停止任务。系统负责把这些操作做得足够简单。</p>
+        </div>
+        <div class="card">
+          <h3>关键原则</h3>
+          <p>人负责判断和拍板，AI 负责执行。文档是唯一通信介质。每次任务最终都要给“结果、影响、验证证据、下一步”。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="prd">
+      <h2>需求 PRD</h2>
+      <h3>1. 背景问题</h3>
+      <ul>
+        <li>直接用 SSH、tmux 和命令行对非开发者不友好，尤其在 iPhone 和 iPad 上更难操作。</li>
+        <li>Codex/Claude CLI 的启动信息、警告、选择项、终端噪声会混进回复，用户只想看最终有用内容。</li>
+        <li>同一台机器可能有多个项目路径，用户希望像 Codex 一样按工作目录创建和复用会话。</li>
+        <li>后续要接语音，但第一版语音只做输入辅助，不自动替人判断和执行。</li>
+      </ul>
+
+      <h3>2. 产品目标</h3>
+      <table>
+        <thead><tr><th>目标</th><th>说明</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td>连接机器</td><td>支持 IP 和域名，保存多个服务器配置，可复制服务器配置用于同机不同路径。</td><td><span class="st wip">部分待验</span></td></tr>
+          <tr><td>扫描会话</td><td>连接后自动扫描 Codex/Claude 历史，提取工作目录列表和最近使用情况。</td><td><span class="st wip">原型中</span></td></tr>
+          <tr><td>选择工作目录</td><td>用户从目录列表中选择项目，之后会话与“服务器 + AI 类型 + 工作目录”一对一映射。</td><td><span class="st wip">原型中</span></td></tr>
+          <tr><td>自然对话</td><td>聊天窗口只展示用户消息与 AI 最终回复；机器没回复前不允许继续发送。</td><td><span class="st done">交互已定</span></td></tr>
+          <tr><td>语音输入</td><td>支持唤醒、录音、转写和填入输入框；发送前仍由用户确认。</td><td><span class="st wip">唤醒已接入</span></td></tr>
+          <tr><td>多端支持</td><td>iPhone、iPad、Mac 共用核心逻辑，界面按 Apple 设计语言适配。</td><td><span class="st wip">持续优化</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3>3. 不做什么</h3>
+      <ul>
+        <li>不重新训练或替代 Codex/Claude，本产品只做交互入口、调度和结果整理。</li>
+        <li>不默认展示 SSH、tmux、命令窗口和完整终端日志，除非用户主动进入调试模式。</li>
+        <li>不在高风险操作上自动执行，例如删除文件、发布、付款、改生产配置等。</li>
+        <li>不默认永久保存全部聊天历史，历史能力后续作为可选配置。</li>
+      </ul>
+    </section>
+
+    <section id="conversation">
+      <h2>自然对话方案</h2>
+      <p>第一版语音和文字都走“人工主控”路径。系统可以帮用户听写、填充输入、停止录音、展示待发送内容，但不会自动判断任务是否应该执行。</p>
+
+      <div class="flow" aria-label="主流程">
+        <div class="step"><b>1. 连接机器</b><span>只显示名称、地址和连接按钮。高级配置收进设置页。</span></div>
+        <div class="step"><b>2. 扫描会话</b><span>自动读取远端 AI 历史和工作目录，不把底层路径噪声暴露给用户。</span></div>
+        <div class="step"><b>3. 选择上下文</b><span>输入栏上方只保留两个选择：AI 类型、工作目录。</span></div>
+        <div class="step"><b>4. 人工确认</b><span>用户确认输入内容、AI 类型和工作目录后，再点击发送。</span></div>
+        <div class="step"><b>5. 返回结果</b><span>只显示最终回复、文件变更摘要、验证证据和必要按钮。</span></div>
+      </div>
+
+      <h3>语音输入状态</h3>
+      <table>
+        <thead><tr><th>状态</th><th>判断依据</th><th>系统动作</th></tr></thead>
+        <tbody>
+          <tr><td>正在听</td><td>用户按住说话或唤醒后开始说话。</td><td>持续转写，先不发送。</td></tr>
+          <tr><td>停顿结束</td><td>检测到一段稳定停顿。</td><td>停止录音，把转写内容放入输入框。</td></tr>
+          <tr><td>用户编辑</td><td>用户修改转写内容、切 AI 类型或切工作目录。</td><td>保持待发送状态。</td></tr>
+          <tr><td>用户确认发送</td><td>用户点击发送。</td><td>锁定发送按钮，创建 worker 任务。</td></tr>
+          <tr><td>用户停止</td><td>用户点击停止或说出停止后手动确认。</td><td>中断当前录音或当前 worker 任务。</td></tr>
+          <tr><td>风险内容</td><td>用户输入里包含删除、发布、权限、生产等操作。</td><td>第一版用显式确认按钮提醒，后续再交给主 AI 判断。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="decision">
+        <strong>交互决策：</strong>先不做自动主 AI。第一版把人放在主控位置：语音只是输入，发送必须由人确认。这样可以先把连接、会话复用、工作目录选择和结果展示打磨稳定。
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>架构方案</h2>
+      <pre class="diagram">用户
+  |
+  | 文字 / 语音
+  v
+AI Workbench App
+  |-- Apple 风格界面：服务器、工作目录、AI 类型、聊天结果
+  |-- 语音层：录音、转写、停顿判断、填入输入框
+  |-- 人工主控层：用户选择 AI 类型、工作目录、发送或停止
+  |-- 会话层：服务器 + AI 类型 + 工作目录 一对一映射
+  |
+  v
+本机安全层
+  |-- Keychain / safeStorage 保存密钥
+  |-- 未来如启用主 AI，再接短期 Token 或 API Key
+  |
+  v
+SSH / 远端桥接
+  |-- 连接 Linux / Windows 服务器
+  |-- 扫描 Codex / Claude 历史和工作目录
+  |-- 启动或复用远端 worker 会话
+  |
+  v
+远端 AI Worker
+  |-- Codex CLI：写代码、改工程、跑验证
+  |-- Claude CLI：阅读、解释、分析、长上下文任务
+  |
+  v
+结果清洗层
+  |-- 过滤终端启动信息、模型提示、tmux 噪声
+  |-- 提取最终回答、文件变更、验证证据和风险提示</pre>
+
+      <h3>模块说明</h3>
+      <table>
+        <thead><tr><th>模块</th><th>职责</th><th>实现建议</th></tr></thead>
+        <tbody>
+          <tr><td>App Shell</td><td>iPhone、iPad、Mac 的统一界面。</td><td>继续使用当前 Capacitor/Electron 思路，共用 React 前端。</td></tr>
+          <tr><td>Voice Layer</td><td>录音、转写、停顿判断、填入输入框。</td><td>短期用系统语音能力；后续可接实时语音模型。</td></tr>
+          <tr><td>Future Main AI Router</td><td>未来低成本快速理解用户意图。</td><td>第一版不启用；后续再评估 GPT-5.4 mini 或其他模型做可选分流。</td></tr>
+          <tr><td>Session Manager</td><td>维护服务器、AI 类型、工作目录、远端会话的一对一关系。</td><td>本地记录映射，远端用稳定 session id 或进程标记。</td></tr>
+          <tr><td>SSH Bridge</td><td>连接远端机器、执行扫描、启动 worker。</td><td>封装 Linux/Windows 差异，界面不展示命令。</td></tr>
+          <tr><td>Result Cleaner</td><td>只保留人需要看的最终内容。</td><td>识别最终标记、过滤 TUI 文本、生成变更卡片。</td></tr>
+          <tr><td>Token Broker</td><td>给客户端发短期访问凭证。</td><td>生产环境建议上后端，不把长期 API Key 放在 App 包内。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="model">
+      <h2>未来主 AI 要求</h2>
+      <p>主 AI 不进入第一版主流程。后续如果要做自动分流，它的核心不是“最会写代码”，而是“最会理解人什么时候真的要做事”。它要快、便宜、稳定输出结构化结果，并能把复杂任务交给更强 worker。</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>理解人话</h3>
+          <p>能识别闲聊、命令、否定、追问、补充条件、上下文切换和隐含对象。</p>
+        </div>
+        <div class="card">
+          <h3>不急着执行</h3>
+          <p>当用户还在说、多人还在讨论、关键信息不全时，先等待或追问。</p>
+        </div>
+        <div class="card">
+          <h3>会分配任务</h3>
+          <p>知道什么时候用 Codex，什么时候用 Claude，什么时候只需要自己回答。</p>
+        </div>
+        <div class="card">
+          <h3>结构化输出</h3>
+          <p>稳定返回 action、agent、workdir、question、risk、userVisibleText。</p>
+        </div>
+        <div class="card">
+          <h3>风险意识</h3>
+          <p>删除、发布、权限、生产、资金相关操作必须先让用户确认。</p>
+        </div>
+        <div class="card">
+          <h3>文档意识</h3>
+          <p>复杂任务完成后沉淀成 PRD、方案、状态表和验证证据。</p>
+        </div>
+      </div>
+
+      <h3>主 AI 输出协议</h3>
+      <pre class="diagram">{
+  "action": "run_agent_task | ask_clarification | switch_agent | stop | answer_directly | no_action",
+  "agent": "codex | claude | main",
+  "workspace": "/opt/example-project",
+  "confidence": 0.0,
+  "requiresConfirmation": false,
+  "question": "还缺什么信息",
+  "userVisibleText": "给用户看的简短回复",
+  "task": "发给 worker 的完整任务"
+}</pre>
+    </section>
+
+    <section id="security">
+      <h2>鉴权与安全</h2>
+      <table>
+        <thead><tr><th>问题</th><th>建议方案</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>GPT Pro 能否直接当 API 用</td><td>不建议按这个设计。</td><td>ChatGPT Pro 和 API 平台通常是两套授权与计费体系。Pro 可用于远端 Codex CLI 登录；未来如果启用主 AI API，再走 API Key 或短期 Token。</td></tr>
+          <tr><td>短期 Token 怎么做</td><td>App 请求自己的后端，后端换取短期访问凭证。</td><td>客户端不保存长期密钥，便于吊销、限流、统计和切换模型供应商。</td></tr>
+          <tr><td>服务器密码怎么存</td><td>iOS/iPadOS 用 Keychain，Mac 用 Keychain 或 safeStorage。</td><td>文档、日志、Git 仓库里都不能出现密码和长期密钥。</td></tr>
+          <tr><td>Windows 远端机器</td><td>SSH 连接可以支持，但扫描和启动命令需要 Windows 适配层。</td><td>路径、Shell、进程管理和会话复用都要按 Windows 单独封装。</td></tr>
+          <tr><td>高风险任务</td><td>第一版由界面和用户显式确认兜底。</td><td>确认后才交给 worker；确认记录应进入本地任务日志。未来可由主 AI 辅助识别风险。</td></tr>
+        </tbody>
+      </table>
+      <div class="warn">
+        <strong>安全红线：</strong>不要把 OpenAI Key、服务器密码、Apple 证书、私钥写进前端代码、HTML 文档、Git 提交或可复制日志里。调试界面也默认隐藏敏感内容。
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <h2>阶段计划</h2>
+      <table>
+        <thead><tr><th>阶段</th><th>目标</th><th>交付物</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td>P0</td><td>能连机器，能选择工作目录，能把任务发给 Codex/Claude。</td><td>iOS/iPad/Mac 原型、SSH 桥、基础聊天 UI。</td><td><span class="st wip">原型待验</span></td></tr>
+          <tr><td>P1</td><td>人工主控版本打磨。</td><td>用户手动选择 AI 类型和工作目录，手动发送/停止，只展示最终结果。</td><td><span class="st wip">进行中</span></td></tr>
+          <tr><td>P2</td><td>接入语音输入。</td><td>唤醒词、录音、停顿结束、语音转文字、填入输入框、发送前人工确认。</td><td><span class="st wip">进行中</span></td></tr>
+          <tr><td>P3</td><td>可选主 AI 分流。</td><td>GPT-5.4 mini router、结构化 action、风险识别、结果清洗。</td><td><span class="st todo">后置</span></td></tr>
+          <tr><td>P4</td><td>生产级鉴权。</td><td>Token Broker、短期凭证、配额、审计、密钥轮换。</td><td><span class="st todo">待做</span></td></tr>
+          <tr><td>P5</td><td>多 worker 与协作能力。</td><td>多服务器、多目录、多会话、多人讨论识别、任务看板。</td><td><span class="st todo">待做</span></td></tr>
+          <tr><td>P6</td><td>发布与运营闭环。</td><td>App Connect、TestFlight、崩溃监控、使用统计、帮助文档。</td><td><span class="st todo">待做</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="acceptance">
+      <h2>验收标准</h2>
+      <ul>
+        <li>新用户只需要输入机器名称、地址和登录信息，就能完成连接，不需要理解 SSH 命令。</li>
+        <li>连接成功后自动扫描 AI 历史，列出工作目录，用户选择一个目录即可开始。</li>
+        <li>输入栏上方只有两个核心选择：AI 类型、工作目录。</li>
+        <li>第一版不自动替用户选择模型、目录或执行任务，发送前必须由用户确认。</li>
+        <li>聊天内容只显示用户发出的内容和 AI 最终回复，不展示启动 banner、TUI 选择项和无关终端输出。</li>
+        <li>AI 回复前发送按钮禁用；用户可以停止当前任务。</li>
+        <li>风险操作必须先确认；用户拒绝后不会继续执行。</li>
+        <li>iPhone、iPad、Mac 都能正常布局，侧边栏可收起，顶部只显示当前会话名称。</li>
+        <li>敏感信息不出现在 HTML、Git、日志和截图里。</li>
+      </ul>
+
+      <h3>待确认问题</h3>
+      <table>
+        <thead><tr><th>问题</th><th>为什么重要</th><th>建议默认值</th></tr></thead>
+        <tbody>
+          <tr><td>未来是否启用主 AI</td><td>影响成本、稳定性和自动化边界。</td><td>第一版不启用；后续再评估 OpenAI GPT-5.4 mini 或其他 provider。</td></tr>
+          <tr><td>语音方案</td><td>影响实时性、费用和隐私。</td><td>短期做语音输入和人工确认，后续再接实时语音模型。</td></tr>
+          <tr><td>是否保存历史</td><td>影响隐私和跨设备体验。</td><td>默认不保存完整聊天，只保存会话映射和必要状态。</td></tr>
+          <tr><td>Token Broker 部署位置</td><td>影响 App Store 发布和密钥安全。</td><td>独立后端服务，支持短期凭证和限流。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>AI Workbench · PRD 与架构总览 · 产品状态以当前代码、测试结果和后续用户验收为准。</footer>
+  </main>
+</div>
+</body>
+</html>

@@ -1918,6 +1918,271 @@
         outline: 0.5px solid rgba(255, 255, 255, 0.6);
       }
 
+      /* Revised main flow: machine status rail + chat composer selectors. */
+      .status-rail {
+        padding: 16px 12px;
+      }
+
+      .rail-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        padding: 4px 10px 10px;
+      }
+
+      .rail-header div {
+        display: grid;
+        min-width: 0;
+        gap: 1px;
+      }
+
+      .rail-header strong {
+        overflow: hidden;
+        font-size: 17px;
+        font-weight: 760;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rail-header span {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .machine-status-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 14px;
+      }
+
+      .machine-status-title {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .machine-status-title .machine-card-title {
+        display: grid;
+        min-width: 0;
+        gap: 3px;
+      }
+
+      .rail-connect-button {
+        height: 34px;
+        min-width: 58px;
+        border: 0;
+        border-radius: 999px;
+        color: #ffffff;
+        background: var(--blue);
+        font-size: 13px;
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      .rail-connect-button:active {
+        transform: scale(0.97);
+      }
+
+      .rail-detail-row {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 8px;
+        min-width: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .rail-detail-row b {
+        color: rgba(60, 60, 67, 0.58);
+        font-weight: 600;
+      }
+
+      .rail-detail-row em {
+        min-width: 0;
+        overflow: hidden;
+        font-style: normal;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rail-action {
+        width: 100%;
+        min-height: 40px;
+        margin-top: 8px;
+        border: 0;
+        border-radius: 14px;
+        color: #ffffff;
+        background: var(--blue);
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      .rail-action.secondary {
+        margin-top: 8px;
+        color: var(--blue);
+        background: rgba(118, 118, 128, 0.1);
+      }
+
+      .scan-group {
+        display: grid;
+        gap: 0;
+        overflow: hidden;
+        border-radius: 14px;
+        background: #ffffff;
+      }
+
+      .scan-row {
+        display: grid;
+        gap: 2px;
+        width: 100%;
+        min-height: 54px;
+        padding: 9px 12px;
+        border: 0;
+        border-bottom: 0.5px solid var(--line);
+        color: var(--text);
+        text-align: left;
+        background: #ffffff;
+        cursor: pointer;
+      }
+
+      .scan-row:last-child {
+        border-bottom: 0;
+      }
+
+      .scan-row strong,
+      .scan-row span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .scan-row strong {
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      .scan-row span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .scan-row.active {
+        background: rgba(0, 122, 255, 0.09);
+      }
+
+      .chat-empty {
+        display: grid;
+        justify-items: center;
+        align-self: center;
+        width: min(560px, 100%);
+        margin: auto;
+        gap: 12px;
+        padding: 34px 18px;
+        text-align: center;
+      }
+
+      .chat-empty[hidden] {
+        display: none;
+      }
+
+      .chat-empty h1 {
+        margin: 0;
+        color: #1c1c1e;
+        font-size: 28px;
+        line-height: 1.14;
+        letter-spacing: 0;
+      }
+
+      .chat-empty p {
+        max-width: 480px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.55;
+      }
+
+      .composer-tools {
+        grid-template-columns: minmax(150px, 0.72fr) minmax(190px, 1fr) auto;
+        align-items: center;
+      }
+
+      .composer-picker {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        align-items: center;
+        height: 48px;
+        column-gap: 8px;
+        padding: 5px 12px 6px 10px;
+        border-radius: 16px;
+      }
+
+      .composer-picker .agent-logo {
+        grid-row: 1 / 3;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+      }
+
+      .composer-picker .picker-label {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.1;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .composer-picker select {
+        height: 22px;
+        color: #1c1c1e;
+        font-weight: 650;
+      }
+
+      .workdir-picker {
+        grid-template-columns: minmax(0, 1fr);
+        padding-left: 12px;
+      }
+
+      .agent-logo.main-logo {
+        background: #ffffff;
+      }
+
+      .agent-logo.main-logo img {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        object-fit: cover;
+      }
+
+      .send-row {
+        grid-template-columns: auto auto;
+        justify-content: end;
+        gap: 8px;
+      }
+
+      .voice-button {
+        height: 44px;
+        min-width: 64px;
+        border: 0;
+        border-radius: 999px;
+        color: #1c1c1e;
+        background: rgba(118, 118, 128, 0.12);
+        font-weight: 650;
+        cursor: pointer;
+      }
+
       @media (max-width: 470px) {
         .prototype-toolbar {
           grid-template-columns: minmax(0, 1fr);
@@ -1992,8 +2257,8 @@
           <button type="button" data-device="tablet">iPad</button>
         </div>
         <div class="segmented" aria-label="流程状态">
-          <button class="active" type="button" data-flow="machines">首页</button>
-          <button type="button" data-flow="connected">对话</button>
+          <button type="button" data-flow="machines">机器</button>
+          <button class="active" type="button" data-flow="connected">对话</button>
           <button type="button" data-flow="output">结果</button>
         </div>
       </header>
@@ -2009,7 +2274,7 @@
                 </span>
                 <div class="brand-copy">
                   <strong>AI Workbench</strong>
-                  <span id="platformLabel">选择云服务器</span>
+                  <span id="platformLabel">AI 对话工作台</span>
                 </div>
               </div>
               <div class="connection-pill">
@@ -2018,29 +2283,33 @@
                 <b id="topHost">未连接</b>
               </div>
               <div class="topbar-actions">
-                <button class="ghost-button" type="button" data-action="open-settings">连接</button>
+                <button class="ghost-button" type="button" data-action="open-settings">机器</button>
               </div>
             </header>
 
             <div class="app-body">
-              <aside class="side-rail">
-                <div class="rail-section">
-                  <p class="rail-title">连接</p>
-                  <button class="rail-card" type="button" data-flow="connected">
-                    <strong>我的云服务器</strong>
-                    <span>已连接</span>
-                  </button>
+              <aside class="side-rail status-rail">
+                <div class="rail-header">
+                  <span class="workbench-logo" aria-label="AI Workbench">
+                    <img src="public/icons/workbench.png" alt="" />
+                  </span>
+                  <div>
+                    <strong>机器连接</strong>
+                    <span>远端 AI 工作环境</span>
+                  </div>
                 </div>
                 <div class="rail-section">
-                  <p class="rail-title">模型</p>
-                  <button class="agent-row" type="button" data-agent="codex">
-                    <span class="agent-logo codex-logo"><img src="public/icons/codex.svg" alt="" /></span>
-                    <span><strong>Codex</strong><small>写代码</small></span>
-                  </button>
-                  <button class="agent-row" type="button" data-agent="claude">
-                    <span class="agent-logo claude-logo"><img src="public/icons/claude.svg" alt="" /></span>
-                    <span><strong>Claude</strong><small>读代码</small></span>
-                  </button>
+                  <p class="rail-title">当前机器</p>
+                  <div class="rail-card machine-status-card">
+                    <span class="machine-status-title">
+                      <span class="dot"></span>
+                      <span class="machine-card-title">
+                        <strong>默认服务器</strong>
+                        <span>example.com</span>
+                      </span>
+                    </span>
+                    <button class="rail-connect-button" type="button" data-action="save-test">连接</button>
+                  </div>
                 </div>
               </aside>
 
@@ -2087,26 +2356,37 @@
                       <div class="metric"><span>状态</span><strong id="metricStatus">未连接</strong></div>
                     </div>
                   </section>
+                  <section class="chat-empty" id="chatEmpty">
+                    <span class="workbench-logo" aria-label="AI Workbench">
+                      <img src="public/icons/workbench.png" alt="" />
+                    </span>
+                    <h1>你想让 AI 做什么？</h1>
+                    <p>选择 AI 类型和工作目录，然后直接发任务。机器连接、会话复用和目录扫描都在背后处理。</p>
+                  </section>
                   <div id="messages"></div>
                 </div>
 
                 <footer class="composer">
                   <div class="composer-tools">
-                    <label class="agent-select">
+                    <label class="agent-select composer-picker">
+                      <span class="picker-label">AI 类型</span>
                       <span class="agent-logo codex-logo" id="composerMark"><img src="public/icons/codex.svg" alt="" /></span>
                       <select id="agentSelect">
+                        <option value="main">主 AI</option>
                         <option value="codex">Codex</option>
                         <option value="claude">Claude</option>
                       </select>
                     </label>
-                    <label class="agent-select">
-                      <select id="pathSelect" aria-label="工程路径"></select>
+                    <label class="agent-select composer-picker workdir-picker">
+                      <span class="picker-label">工作目录</span>
+                      <select id="pathSelect" aria-label="工作目录"></select>
                     </label>
                     <button class="ghost-button session-action" type="button" data-action="new-session">新会话</button>
                   </div>
                   <div class="input-row">
                     <textarea id="taskInput" placeholder="告诉 AI 你想做什么"></textarea>
                     <div class="send-row">
+                      <button class="voice-button" type="button" data-action="voice">语音</button>
                       <button class="primary-button" type="button" data-action="send" id="sendButton">添加机器</button>
                     </div>
                   </div>
@@ -2136,26 +2416,21 @@
               <button class="drawer-backdrop" type="button" data-action="close-drawer" aria-label="关闭菜单"></button>
               <aside class="drawer-panel">
                 <div class="drawer-head">
-                  <strong>AI Workbench</strong>
+                  <strong>机器连接</strong>
                   <button class="text-button" type="button" data-action="close-drawer">完成</button>
                 </div>
                 <div class="rail-section">
-                  <p class="rail-title">连接</p>
-                  <button class="rail-card" type="button" data-flow="connected">
-                    <strong>我的云服务器</strong>
-                    <span>已连接</span>
-                  </button>
-                </div>
-                <div class="rail-section">
-                  <p class="rail-title">模型</p>
-                  <button class="agent-row" type="button" data-agent="codex">
-                    <span class="agent-logo codex-logo"><img src="public/icons/codex.svg" alt="" /></span>
-                    <span><strong>Codex</strong><small>写代码</small></span>
-                  </button>
-                  <button class="agent-row" type="button" data-agent="claude">
-                    <span class="agent-logo claude-logo"><img src="public/icons/claude.svg" alt="" /></span>
-                    <span><strong>Claude</strong><small>读代码</small></span>
-                  </button>
+                  <p class="rail-title">当前机器</p>
+                  <div class="rail-card machine-status-card">
+                    <span class="machine-status-title">
+                      <span class="dot"></span>
+                      <span class="machine-card-title">
+                        <strong>默认服务器</strong>
+                        <span>example.com</span>
+                      </span>
+                    </span>
+                    <button class="rail-connect-button" type="button" data-action="save-test">连接</button>
+                  </div>
                 </div>
               </aside>
             </div>
@@ -2172,7 +2447,7 @@
                 </header>
                 <p class="settings-note">填完后点连接。成功后会直接进入对话页面。</p>
                 <div class="settings-grid">
-                  <label class="settings-field"><span>服务器地址</span><input id="hostInput" value="47.236.117.100" /></label>
+                  <label class="settings-field"><span>服务器地址</span><input id="hostInput" value="example.com" /></label>
                   <label class="settings-field"><span>用户名</span><input id="usernameInput" value="root" /></label>
                   <label class="settings-field"><span>登录密码</span><input id="passwordInput" type="password" placeholder="输入后测试连接" /></label>
                   <div class="settings-field">
@@ -2195,15 +2470,15 @@
     <script>
       const state = {
         device: "phone",
-        flow: "machines",
-        agent: "codex",
+        flow: "connected",
+        agent: "main",
         lastPrompt: "",
         lastReply: "",
         apiToken: "",
         clientSessionId: "",
         remoteSessionId: "",
         realMode: location.protocol.startsWith("http"),
-        paths: ["/opt/limpet-workspace"],
+        paths: ["/opt/limpet-workspace", "/opt/limpet-workspace/mobile-app", "/root/projects/beex-admin"],
         activePathIndex: 0,
         rawOpen: false,
         drawerOpen: false,
@@ -2250,12 +2525,12 @@
           label: "已连接",
           host: "我的云服务器",
           title: "工作台就绪",
-          body: "直接告诉 AI 你想做什么。",
+          body: "选择 AI 类型和工作目录，然后直接告诉 AI 你想做什么。",
           metric: "可以开始",
           cta: "重新测试",
           raw: "",
           dot: "connected",
-          composer: "发送任务到 Codex",
+          composer: "告诉主 AI 你想做什么",
           send: "发送",
         },
         running: {
@@ -2287,6 +2562,7 @@
       };
 
       const agentCopy = {
+        main: { name: "主 AI", short: "主 AI", session: "orchestrator" },
         codex: { name: "Codex", short: "Codex", session: "codex" },
         claude: { name: "Claude", short: "Claude", session: "claude" },
       };
@@ -2326,7 +2602,13 @@
         return state.paths[state.activePathIndex] || state.paths[0] || "/opt/limpet-workspace";
       }
 
+      function workdirName(path) {
+        const parts = String(path || "").replace(/[\\/]+$/, "").split(/[\\/]+/).filter(Boolean);
+        return parts[parts.length - 1] || path || "工作目录";
+      }
+
       function agentLogoHTML(agentId) {
+        if (agentId === "main") return `<img src="public/icons/workbench.png" alt="" />`;
         const normalized = agentId === "claude" ? "claude" : "codex";
         return `<img src="public/icons/${normalized}.svg" alt="" />`;
       }
@@ -2349,7 +2631,7 @@
         const pathSelect = $("#pathSelect");
         if (pathSelect) {
           pathSelect.innerHTML = state.paths
-            .map((path, index) => `<option value="${index}">${escapeHTML(path || `工程路径 ${index + 1}`)}</option>`)
+            .map((path, index) => `<option value="${index}">${escapeHTML(workdirName(path) || `工作目录 ${index + 1}`)}</option>`)
             .join("");
           pathSelect.value = String(Math.min(state.activePathIndex, state.paths.length - 1));
         }
@@ -2452,7 +2734,9 @@
         $("#taskInput").placeholder = waitingForReply ? "等待 AI 回复后再继续" : connected ? `发送任务到 ${agent.short}` : copy.composer;
         $("#taskInput").disabled = !connected || waitingForReply;
         $("#sendButton").textContent = waitingForReply ? "等待回复" : connected ? copy.send : copy.send;
-        $("#composerMark").className = `agent-logo ${state.agent === "claude" ? "claude-logo" : "codex-logo"}`;
+        $("#composerMark").className = `agent-logo ${
+          state.agent === "main" ? "main-logo" : state.agent === "claude" ? "claude-logo" : "codex-logo"
+        }`;
         $("#composerMark").innerHTML = agentLogoHTML(state.agent);
         $("#agentSelect").value = state.agent;
         $("#rawText").textContent = copy.raw;
@@ -2465,10 +2749,18 @@
 
         $("#topDot").className = `dot ${copy.dot === "connected" ? "" : copy.dot}`;
         $("#rawDot").className = `dot ${copy.dot === "connected" ? "" : copy.dot}`;
+        $("#chatEmpty").hidden = !(state.flow === "connected" && !state.lastPrompt);
+        $$(".rail-connect-button").forEach((button) => {
+          button.textContent = connected ? "连接" : "连接";
+          button.classList.toggle("idle", !connected);
+        });
 
         $$("[data-device]").forEach((button) => button.classList.toggle("active", button.dataset.device === state.device));
         $$("[data-flow]").forEach((button) => button.classList.toggle("active", button.dataset.flow === state.flow));
         $$("[data-agent]").forEach((button) => button.classList.toggle("active", button.dataset.agent === state.agent));
+        $$("[data-path-short]").forEach((button) => {
+          button.classList.toggle("active", activeWorkdir().includes(button.dataset.pathShort));
+        });
 
         renderMessages();
         renderPaths();
@@ -2477,6 +2769,11 @@
 
       async function simulateSend() {
         if (state.flow === "setup" || state.flow === "machines") {
+          state.settingsOpen = true;
+          render();
+          return;
+        }
+        if (state.realMode && !state.apiToken) {
           state.settingsOpen = true;
           render();
           return;
@@ -2509,7 +2806,7 @@
         try {
           const data = await postApi("/api/send", {
             token: state.apiToken,
-            agent: state.agent,
+            agent: state.agent === "main" ? "codex" : state.agent,
             prompt,
             workdir: activeWorkdir(),
           });
@@ -2529,7 +2826,7 @@
         const button = event.target.closest("button");
         if (!button) return;
 
-        const { action, flow, device, agent, pathIndex } = button.dataset;
+        const { action, flow, device, agent, pathIndex, pathShort } = button.dataset;
         if (flow === "connected" && state.realMode && !state.apiToken) {
           state.settingsOpen = true;
           render();
@@ -2542,8 +2839,20 @@
           state.drawerOpen = false;
           render();
         }
+        if (pathShort) {
+          const nextPathIndex = state.paths.findIndex((path) => path.includes(pathShort));
+          if (nextPathIndex >= 0) state.activePathIndex = nextPathIndex;
+          state.drawerOpen = false;
+          render();
+        }
 
         if (action === "open-settings") state.settingsOpen = true;
+        if (action === "voice") {
+          $("#taskInput").value = "帮我检查当前工作区，并告诉我下一步应该做什么";
+          $("#taskInput").focus();
+          syncComposerState();
+          return;
+        }
         if (action === "copy-message") {
           const bubble = button.closest(".chat-bubble");
           copyText(bubble?.dataset.copyText || bubble?.innerText || "", button);
@@ -2621,9 +2930,12 @@
         if (event.target === $("#taskInput")) syncComposerState();
       });
 
-      $("#taskInput").addEventListener("keydown", (event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") simulateSend();
-      });
+	      $("#taskInput").addEventListener("keydown", (event) => {
+	        if (event.key !== "Enter" || event.isComposing) return;
+	        if (event.shiftKey) return;
+	        event.preventDefault();
+	        simulateSend();
+	      });
 
       render();
     </script>

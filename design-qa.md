@@ -1,3 +1,48 @@
+**2026-07-10 iPhone Redesign QA**
+- Visual source: `/Users/zwp/.codex/generated_images/019f467a-d5c1-75d2-a3a9-405bc7a29b0e/ig_0f240a843e36f84a016a4f9c45e7f0819189ad2447589c5e46.png`
+- User issue screenshot: `/Users/zwp/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/zacao135792_592b/temp/RWTemp/2026-07/9e20f478899dc29eb19741386f9343c8/2f659a79d32b9669485352d7a25f22ce.jpg`
+- Final chat screenshot: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-release-ready-final.png`
+- Final full-screen switcher: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-session-fullscreen-final-search.png`
+- Chat comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-source-vs-final.png`
+- Switcher comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-switcher-source-vs-final-search.png`
+- Device: iPhone 16 Pro simulator, iOS 18.4, portrait only (`402 x 874` CSS points; `1206 x 2622` screenshot pixels).
+
+**iPhone Findings**
+- No actionable P0/P1/P2 findings remain.
+- Safe areas: the top bar clears Dynamic Island/status controls and the composer clears the Home Indicator. The page shell itself cannot pan horizontally or vertically; only the conversation region scrolls vertically.
+- Navigation: text pills were replaced by native icon controls. The session switcher is a full-screen iPhone view with search, compact task rows, connection state, add, and close actions.
+- Conversation: dark-mode Markdown now inherits iPhone text tokens, restoring readable contrast. User prompts use a compact blue bubble and assistant responses use a single-column reading measure.
+- Files: standalone Markdown file paths are removed when an actionable file row exists. File rows remain compact with visible preview/download actions.
+- Composer: the input dock has a stable compact height, remains above the home indicator, and keeps download/image/send behavior. Voice controls still appear only when voice input is enabled.
+- Intentional data difference: the source shows six illustrative sessions and an active Claude task; QA uses one real local fixture session with Codex and three file references so no fake production sessions ship in the app.
+- Verification: `npm run build:ios` passed; Capacitor sync passed; `xcodebuild` for the iPhone 16 Pro simulator passed; final simulator install and launch passed.
+
+final result: passed
+
+---
+
+**2026-07-10 Mac Workspace Redesign QA**
+- Visual source: `/Users/zwp/.codex/generated_images/019f467a-d5c1-75d2-a3a9-405bc7a29b0e/ig_0b2b9406aadcf9c9016a4f9a67926c8191a22f35b2d603007b.png`
+- Source crop: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/source-ipad-expanded-crop.png`
+- Packaged implementation: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-installed-qa-final-v3.png`
+- Full comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-source-vs-qa-final-v3.png`
+- Focused sidebar comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-sidebar-comparison-final.png`
+- Viewport: implementation `1177 x 768`; source crop normalized to `1085 x 768`.
+- State: source uses illustrative running-task data; implementation uses the user's real connected Claude session and completed Markdown output. The comparison validates the same expanded-sidebar workspace state without replacing real data with mock sessions.
+
+**Mac Findings**
+- No actionable P0/P1/P2 findings remain.
+- Structure: the sidebar, centered session header, conversation canvas, and docked composer follow the selected design direction.
+- Sidebar: sessions now use a two-line hierarchy of task name plus connection state/channel. Repeated AI and directory labels were removed, as was the blue selection rail.
+- Conversation: content is constrained to a readable measure, user prompts remain compact, Markdown is readable, and remote files use a quiet inline card.
+- Composer: the Mac view is a compact single-row surface with icon controls and a stable width; it no longer resembles the old multi-control panel.
+- Intentional differences: Mac window controls replace the iPad status bar; the neutral selected row follows the user's explicit request to avoid blue selected borders/backgrounds; only real sessions are shown.
+- Build: `npm run build` passed. `npm run mac:pack` passed and installed `/Applications/AI Workbench.app`.
+
+final result: passed
+
+---
+
 **Build 7 Mobile Polish**
 - Trigger: real iPhone TestFlight screenshot showed status bar/topbar overlap, desktop-like density, raw output taking too much space, and missing SSH password leaking as a native error.
 - Fixed safe-area handling by adding `viewport-fit=cover` and safe-area aware app rows/header/bottom panels.
@@ -56,7 +101,7 @@
 - iPhone responsive check: passed, `overflowingCount: 0`.
 - Production build: passed with `npm run build`.
 - Native iOS simulator build: passed with `xcodebuild ... iphonesimulator ... build`.
-- Direct Citadel SSH smoke: passed against ECS `47.236.117.100`.
+- Direct Citadel SSH smoke: passed against a test ECS host.
 - Remote tmux buffer send/capture smoke: passed against `/opt/limpet-workspace`.
 
 **Follow-up Polish**

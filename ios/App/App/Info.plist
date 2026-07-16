@@ -22,12 +22,22 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AI Workbench 使用麦克风把语音转成任务文本。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>AI Workbench 需要读取你选择的图片，用于上传到远端工作会话。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>AI Workbench 使用语音识别把你的语音转成文字。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AI Workbench 需要访问局域网内的开发机器，用于通过 SSH 连接你的工作会话。</string>
+	<key>DashScopeAPIKey</key>
+	<string></string>
+	<key>DashScopeWorkspaceID</key>
+	<string>llm-0hn2qaqnqgcdfnbg</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -36,11 +46,11 @@
 	<array>
 		<string>armv7</string>
 	</array>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

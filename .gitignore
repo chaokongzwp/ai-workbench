@@ -8,6 +8,7 @@ node_modules/
 # Build outputs
 dist/
 build/
+index-*.js
 *.ipa
 *.xcarchive
 *.dSYM
@@ -35,3 +36,6 @@ ios/capacitor-cordova-ios-plugins/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Local QA artifacts
+qa-screenshots/

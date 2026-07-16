@@ -192,7 +192,7 @@ set -e
 mkdir -p ${shQuote(profile.workdir)}
 cd ${shQuote(profile.workdir)}
 set +e
-${shQuote(profile.codexCommand)} exec --skip-git-repo-check --sandbox workspace-write --cd ${shQuote(profile.workdir)} --output-last-message ${shQuote(outputFile)} ${resumeArgs} ${shQuote(prompt)} >${shQuote(logFile)} 2>&1
+${shQuote(profile.codexCommand)} exec --skip-git-repo-check --sandbox danger-full-access --cd ${shQuote(profile.workdir)} --output-last-message ${shQuote(outputFile)} ${resumeArgs} ${shQuote(prompt)} >${shQuote(logFile)} 2>&1
 AIWB_STATUS=$?
 set -e
 if [ "$AIWB_STATUS" -ne 0 ]; then
@@ -219,7 +219,7 @@ Set-Location -LiteralPath $AIWB_WORKDIR
 $AIWB_PROMPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encodedPrompt)}))
 $AIWB_OUTPUT = Join-Path $env:TEMP ("aiwb-codex-output-" + [guid]::NewGuid().ToString() + ".txt")
 $AIWB_LOG = Join-Path $env:TEMP ("aiwb-codex-log-" + [guid]::NewGuid().ToString() + ".log")
-$AIWB_ARGS = @("exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT)
+$AIWB_ARGS = @("exec", "--skip-git-repo-check", "--sandbox", "danger-full-access", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT)
 if (${psQuote(codexSessionId)} -match "^[0-9a-fA-F-]{36}$") {
   $AIWB_ARGS += @("resume", ${psQuote(codexSessionId)}, $AIWB_PROMPT)
 } else {

@@ -1,0 +1,807 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  DotsThree,
+  File as FileIcon,
+  FileZip,
+  GearSix,
+  List,
+  MagnifyingGlass,
+  Paperclip,
+  Plus,
+  X,
+} from "@phosphor-icons/react";
+import { AgentLogo, ArrowUpIcon, BoltIcon, DownloadIcon, ImagePlusIcon, MicIcon, StatusDot, StopIcon } from "../../features/primitives.jsx";
+import {
+  agentById,
+  connectionIsLive,
+  connectionModeForServer,
+  conversationIdSuffix,
+  dataTransferHasFiles,
+  defaultWakeWordPhrases,
+  filesFromClipboardEvent,
+  normalizeProfile,
+  serverSessionName,
+  serverTaskRunning,
+  shortError,
+  workdirDisplayName,
+} from "../../core/workbenchCore.js";
+
+function IphoneComposer({
+  activeAgent,
+  composer,
+  imageAttachments = [],
+  busy,
+  operationBusy = false,
+  pendingAction,
+  profileReady,
+  voiceInputEnabled = false,
+  voiceState,
+  voiceError,
+  voiceLevel = 0,
+  wakeState,
+  wakeError,
+  wakePhrases,
+  runningTask,
+  setComposer,
+  onOpenSettings,
+  onOpenVoiceSettings,
+  onAttachFiles,
+  onAttachImages,
+  onPasteClipboard,
+  onRemoveImageAttachment,
+  onOpenDownloadFile,
+  onSend,
+  onVoice,
+  onWake,
+  onReleaseRunningTask,
+  onCancelRunningTask,
+}) {
+  const fileInputRef = useRef(null);
+  const disabled = busy || pendingAction || !profileReady;
+  const hasPayload = Boolean(composer.trim() || imageAttachments.length);
+  const stopMode = Boolean(runningTask);
+  const stopDisabled = operationBusy || !profileReady;
+  const sendDisabled = disabled || !hasPayload;
+  const voiceActive = voiceState === "listening" || voiceState === "stopping";
+  const wakeActive =
+    wakeState === "listening" ||
+    wakeState === "detected" ||
+    wakeState === "dictating" ||
+    wakeState === "speaking" ||
+    wakeState === "stopping";
+  const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
+  const voiceDisabled = !profileReady || (operationBusy && !voiceActive);
+  const wakeDisabled = !profileReady || (operationBusy && !wakeActive);
+  const statusText = runningTask
+    ? "任务正在同步等待最终结果。"
+    : !voiceInputEnabled
+      ? ""
+      : wakeState === "listening"
+        ? `等待唤醒词：${wakePhraseLabel}`
+        : wakeState === "detected" || wakeState === "dictating"
+          ? "正在整理语音"
+	            : wakeState === "speaking"
+	              ? "正在播放回复"
+	              : voiceActive
+	                ? "正在听..."
+	                : "";
+
+  useEffect(() => {
+    return () => {
+      if (typeof document === "undefined") return;
+      document.documentElement.classList.remove("aiwb-keyboard-focus");
+      document.body?.classList.remove("aiwb-keyboard-focus");
+    };
+  }, []);
+
+  function setKeyboardFocus(focused) {
+    if (typeof document === "undefined") return;
+    document.documentElement.classList.toggle("aiwb-keyboard-focus", focused);
+    document.body?.classList.toggle("aiwb-keyboard-focus", focused);
+  }
+
+  function handleVoiceClick() {
+    if (!voiceInputEnabled) {
+      onOpenVoiceSettings?.();
+      return;
+    }
+    onVoice?.();
+  }
+
+  function handleWakeClick() {
+    if (!voiceInputEnabled) {
+      onOpenVoiceSettings?.();
+      return;
+    }
+    onWake?.();
+  }
+
+  return (
+    <footer className="iphone-composer-wrap">
+      <section className="iphone-composer" aria-label="发送任务">
+        <input
+          ref={fileInputRef}
+          className="composer-file-input"
+          type="file"
+          multiple
+          onChange={(event) => {
+            (onAttachFiles || onAttachImages)?.(event.currentTarget.files);
+            event.currentTarget.value = "";
+          }}
+        />
+
+        {imageAttachments.length ? (
+          <div className="iphone-attachments" aria-label="待上传文件">
+            {imageAttachments.map((item) => (
+              <figure className="iphone-attachment" key={item.id}>
+                {item.isImage && item.previewUrl ? (
+                  <img src={item.previewUrl} alt="" />
+                ) : (
+                  <span className="iphone-attachment-file" aria-hidden="true">
+                    <FileIcon size={22} weight="regular" />
+                  </span>
+                )}
+                <figcaption>{item.name}</figcaption>
+                <button type="button" onClick={() => onRemoveImageAttachment?.(item.id)} aria-label={`移除 ${item.name}`}>
+                  <X size={12} weight="bold" aria-hidden="true" />
+                </button>
+              </figure>
+            ))}
+          </div>
+        ) : null}
+
+        <textarea
+          value={composer}
+          disabled={!profileReady}
+          onFocus={() => setKeyboardFocus(true)}
+          onBlur={() => {
+            window.setTimeout(() => setKeyboardFocus(false), 120);
+          }}
+          onChange={(event) => setComposer(event.target.value)}
+          onPaste={(event) => {
+            const files = filesFromClipboardEvent(event);
+            if (files.length) {
+              event.preventDefault();
+              (onAttachFiles || onAttachImages)?.(files);
+              return;
+            }
+            const types = Array.from(event.clipboardData?.types || []);
+            const plainText = event.clipboardData?.getData("text/plain") || "";
+            if (onPasteClipboard && (types.includes("Files") || types.includes("text/uri-list") || !plainText)) {
+              event.preventDefault();
+              void onPasteClipboard();
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent?.isComposing) return;
+            if (event.shiftKey) return;
+
+            event.preventDefault();
+            if (!disabled && hasPayload) onSend?.();
+          }}
+          placeholder={
+            pendingAction
+              ? "先完成上面的操作"
+              : voiceState === "listening"
+                ? "正在听..."
+                : profileReady
+                  ? `告诉 ${activeAgent.shortName} 你想做什么`
+                  : "先添加一个工作会话"
+          }
+          rows={1}
+        />
+
+        <div className="iphone-composer-bottom">
+          <p className="iphone-composer-status">{statusText}</p>
+          {runningTask ? (
+            <button
+              type="button"
+              className="iphone-release-button"
+              onClick={onReleaseRunningTask}
+              disabled={operationBusy}
+            >
+              释放输入
+            </button>
+          ) : null}
+          <div className="iphone-composer-actions">
+            {profileReady ? (
+              <>
+                <button type="button" className="iphone-icon-button" onClick={onOpenDownloadFile} aria-label="下载远程文件">
+                  <DownloadIcon />
+                </button>
+                <button
+                  type="button"
+                  className="iphone-icon-button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                  aria-label="添加文件"
+                >
+                  <Paperclip size={17} weight="regular" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className={`iphone-icon-button ${voiceActive ? "active danger" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
+                  onClick={handleVoiceClick}
+                  disabled={voiceDisabled}
+                  aria-label={
+                    !voiceInputEnabled ? "语音未开启，打开语音设置" : voiceActive ? "停止语音输入" : "语音输入"
+                  }
+                >
+                  <MicIcon />
+                </button>
+                <button
+                  type="button"
+                  className={`iphone-icon-button ${wakeActive ? "active" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
+                  onClick={handleWakeClick}
+                  disabled={wakeDisabled}
+                  aria-label={
+                    !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
+                  }
+                >
+                  <BoltIcon />
+                </button>
+                <button
+                  type="button"
+                  className={`iphone-send-button ${stopMode ? "stop" : ""}`}
+                  onClick={() => {
+                    if (stopMode) onCancelRunningTask?.();
+                    else onSend?.();
+                  }}
+                  disabled={stopMode ? stopDisabled : sendDisabled}
+                  aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
+                >
+                  {stopMode ? <StopIcon /> : <ArrowUpIcon />}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="iphone-add-session-button" onClick={onOpenSettings}>
+                添加工作会话
+              </button>
+            )}
+          </div>
+        </div>
+
+        {voiceInputEnabled && voiceActive ? (
+          <div className="voice-level" aria-hidden="true">
+            <span style={{ transform: `scaleX(${Math.max(0.04, Math.min(1, voiceLevel))})` }} />
+          </div>
+        ) : null}
+        {voiceInputEnabled && wakeError ? <p className="iphone-voice-error">{wakeError}</p> : null}
+        {voiceInputEnabled && voiceError ? <p className="iphone-voice-error">{voiceError}</p> : null}
+      </section>
+    </footer>
+  );
+}
+
+export function IphoneWorkbenchShell({
+  components,
+  resolvedTheme,
+  appearanceMode,
+  platform,
+  activeSessionName,
+  activeConnectionMode,
+  servers,
+  activeServerId,
+  profile,
+  connection,
+  diagnostics,
+  discovery,
+  mobileNavOpen,
+  setMobileNavOpen,
+  busy,
+  rawOpen,
+  rawOutput,
+  activeAgent,
+  activeBusy,
+  activeTaskRunning,
+  activeRunningMessage,
+  hasPendingAction,
+  isProfileReady,
+  mainAIReady,
+  composer,
+  imageAttachments,
+  voiceState,
+  voiceError,
+  voiceLevel,
+  wakeState,
+  wakeError,
+  wakePhrases,
+  messages,
+  conversationClassName,
+  conversationScrollRef,
+  handleConversationScroll,
+  showConnectionSummary,
+  shouldShowDiscovery,
+  showComposer,
+  downloadingFilePath,
+  deletingFilePath,
+  deletedRemoteFilePaths,
+  fileDownload,
+  taskNotice,
+  settingsOpen,
+  settingsDiscovery,
+  settingsAgentTab,
+  settingsSelectedSessions,
+  editingServerId,
+  draftProfile,
+  filePreview,
+  remoteDownloadOpen,
+  onSelectServer,
+  onConfigureServer,
+  onAddServer,
+  onDuplicateServer,
+  onOpenGlobalSettings,
+  onTestConnection,
+  onDisconnectServer,
+  onRefreshOutput,
+  onScanDiscovery,
+  onAddWorkdir,
+  onModelChoice,
+  onCodexLogin,
+  onPreviewFile,
+  onDownloadFile,
+  onDeleteFile,
+  onOpenRemoteDownload,
+  onCloseRemoteDownload,
+  onInterruptAgent,
+  onMarkStuck,
+  onRetryMessage,
+  onShowDetails,
+  onOpenSettingsFromMessage,
+  setComposer,
+  onAttachFiles,
+  onAttachImages,
+  onPasteClipboard,
+  onRemoveImageAttachment,
+  onSend,
+  onVoice,
+  onWake,
+  onReleaseRunningTask,
+  onCancelRunningTask,
+  onToggleRaw,
+  onKillAgentSession,
+  onOpenTaskNotice,
+  onCloseTaskNotice,
+  onCloseSettings,
+  onScanSettings,
+  onAddSelectedSessions,
+  onSaveSettings,
+  onDeleteProfile,
+  onDuplicateEditingServer,
+  onOpenTerminal,
+  agentManagementTargetId,
+  onInstallAgent,
+  onRefreshAgent,
+  onOpenAgentSettings,
+  onInstallWsl,
+  onInstallGit,
+  onGitDownload,
+  onExportConfig,
+  onExportLogs,
+  onImportConfig,
+  setDraftProfile,
+  setSettingsAgentTab,
+  setSettingsSelectedSessions,
+  onCloseFilePreview,
+}) {
+  const {
+    ConnectionSummary,
+    DiscoveryPanel,
+    MessageBubble,
+    RawOutput,
+    TaskNotice,
+    SettingsPanel,
+    FilePreviewPanel,
+    RemoteDownloadDialog,
+  } = components;
+  const sessionStateText = activeTaskRunning
+    ? `${activeAgent.shortName} 执行中`
+    : connectionIsLive(connection)
+      ? `${activeAgent.shortName} 已连接`
+      : `${activeAgent.shortName} 未连接`;
+  const editingServer = servers.find((server) => server.id === editingServerId) || servers.find((server) => server.id === activeServerId);
+  const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [exportingLogs, setExportingLogs] = useState(false);
+  const [exportNotice, setExportNotice] = useState(null);
+  const visibleSessions = useMemo(() => {
+    const query = sessionQuery.trim().toLocaleLowerCase();
+    return servers
+      .map((server, index) => ({ server, index }))
+      .filter(({ server, index }) => {
+        if (!query) return true;
+        const serverProfile = normalizeProfile(server.profile);
+        const agent = agentById(serverProfile.agentId);
+        return [
+          serverSessionName(server, index),
+          agent.shortName,
+          serverProfile.host,
+          serverProfile.workdir,
+          server.conversationId,
+          conversationIdSuffix(server.conversationId),
+          String(index + 1),
+        ].some((value) => String(value || "").toLocaleLowerCase().includes(query));
+      });
+  }, [servers, sessionQuery]);
+
+  const closeSessionSheet = () => setMobileNavOpen(false);
+  const closeMoreMenu = () => setMoreMenuOpen(false);
+  const selectSession = async (server) => {
+    await onSelectServer?.(server.id);
+    const serverConnection = server.id === activeServerId ? connection : server.connection;
+    if (!connectionIsLive(serverConnection) && !serverTaskRunning(server)) {
+      await onTestConnection?.(server.id);
+    }
+    closeSessionSheet();
+  };
+
+  async function handleExportLogsFromMenu() {
+    if (!onExportLogs || exportingLogs) return;
+    closeMoreMenu();
+    setExportingLogs(true);
+    setExportNotice({ tone: "loading", message: "正在打包诊断日志..." });
+    try {
+      const result = await onExportLogs();
+      setExportNotice({ tone: "done", message: result?.message || "诊断日志已导出。" });
+    } catch (error) {
+      setExportNotice({ tone: "error", message: shortError(error) });
+    } finally {
+      setExportingLogs(false);
+      window.setTimeout(() => setExportNotice(null), 3200);
+    }
+  }
+
+  return (
+    <main
+      className={`iphone-shell ${conversationClassName || ""} ${mobileNavOpen ? "session-open" : ""}`}
+      data-theme={resolvedTheme}
+      data-appearance={appearanceMode}
+      data-platform={platform}
+    >
+      <header className="iphone-topbar">
+        <button
+          type="button"
+          className="iphone-top-button"
+          onClick={() => setMobileNavOpen(true)}
+          aria-label="打开工作会话"
+          title="工作会话"
+        >
+          <List size={20} weight="bold" aria-hidden="true" />
+        </button>
+        <button type="button" className="iphone-title-button" onClick={() => setMobileNavOpen(true)}>
+          <span>{activeSessionName}</span>
+          <small className={activeTaskRunning ? "running" : connectionIsLive(connection) ? "connected" : "idle"}>
+            {sessionStateText}
+          </small>
+        </button>
+        <button
+          type="button"
+          className="iphone-top-button"
+          onClick={() => setMoreMenuOpen((open) => !open)}
+          aria-label="更多操作"
+          aria-expanded={moreMenuOpen}
+          title="更多操作"
+        >
+          <DotsThree size={21} weight="bold" aria-hidden="true" />
+        </button>
+      </header>
+
+      {moreMenuOpen ? (
+        <div className="iphone-more-layer" role="presentation">
+          <button className="iphone-more-backdrop" type="button" aria-label="关闭更多操作" onClick={closeMoreMenu} />
+          <div className="iphone-more-menu" role="menu" aria-label="更多操作">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMoreMenu();
+                onOpenGlobalSettings?.();
+              }}
+            >
+              <GearSix size={18} weight="bold" aria-hidden="true" />
+              <span>全局设置</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleExportLogsFromMenu}
+              disabled={!onExportLogs || exportingLogs}
+            >
+              <FileZip size={18} weight="bold" aria-hidden="true" />
+              <span>{exportingLogs ? "正在导出" : "导出日志"}</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {exportNotice ? <div className={`iphone-export-notice ${exportNotice.tone || ""}`}>{exportNotice.message}</div> : null}
+
+      <section
+        className={`iphone-chat ${draggingFiles ? "file-drop-active" : ""}`}
+        aria-label="当前对话"
+        onDragEnter={(event) => {
+          if (!showComposer || !isProfileReady || !dataTransferHasFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          setDraggingFiles(true);
+        }}
+        onDragOver={(event) => {
+          if (!dataTransferHasFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setDraggingFiles(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDraggingFiles(false);
+          if (!showComposer || !isProfileReady) return;
+          onAttachFiles?.(event.dataTransfer?.files);
+        }}
+      >
+        {draggingFiles ? (
+          <div className="file-drop-overlay" aria-hidden="true">
+            <strong>松开以添加文件</strong>
+            <span>文件会加入当前任务，发送时上传到工作目录</span>
+          </div>
+        ) : null}
+        <div className="iphone-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
+          {showConnectionSummary ? (
+            <ConnectionSummary
+              profile={profile}
+              connection={connection}
+              diagnostics={diagnostics}
+              discovery={discovery}
+              profileReady={isProfileReady}
+            />
+          ) : null}
+          {shouldShowDiscovery ? (
+            <DiscoveryPanel
+              discovery={discovery}
+              profile={profile}
+              servers={servers}
+              busy={busy}
+              onRescan={onScanDiscovery}
+              onAddWorkdir={onAddWorkdir}
+            />
+          ) : null}
+          {messages.map((message) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              activeAgent={activeAgent}
+              profile={profile}
+              busy={busy}
+              operationBusy={busy}
+              onModelChoice={onModelChoice}
+              onCodexLogin={onCodexLogin}
+              onPreviewFile={onPreviewFile}
+              onDownloadFile={onDownloadFile}
+              onDeleteFile={onDeleteFile}
+              downloadingFilePath={downloadingFilePath}
+              deletingFilePath={deletingFilePath}
+              deletedRemoteFilePaths={deletedRemoteFilePaths}
+              fileDownload={fileDownload}
+              onRefreshOutput={onRefreshOutput}
+              onInterruptAgent={onInterruptAgent}
+              onMarkStuck={onMarkStuck}
+              onRetryMessage={onRetryMessage}
+              onShowDetails={onShowDetails}
+              onOpenSettings={onOpenSettingsFromMessage}
+            />
+          ))}
+        </div>
+
+        {showComposer ? (
+          <IphoneComposer
+            activeAgent={activeAgent}
+            composer={composer}
+            imageAttachments={imageAttachments}
+            busy={activeBusy}
+            operationBusy={busy}
+            pendingAction={hasPendingAction}
+            profileReady={isProfileReady}
+            mainAIRouterReady={mainAIReady}
+            mainAIEnabled={profile.mainAIEnabled}
+            mainAIModel={profile.mainAIModel}
+            voiceInputEnabled={profile.voiceInputEnabled === true}
+            voiceState={voiceState}
+            voiceError={voiceError}
+            voiceLevel={voiceLevel}
+            wakeState={wakeState}
+            wakeError={wakeError}
+            wakePhrases={wakePhrases}
+            runningTask={activeTaskRunning ? activeRunningMessage || { status: "running" } : null}
+            setComposer={setComposer}
+	            onOpenSettings={onAddServer}
+	            onOpenVoiceSettings={onOpenGlobalSettings}
+            onAttachFiles={onAttachFiles || onAttachImages}
+            onPasteClipboard={onPasteClipboard}
+            onRemoveImageAttachment={onRemoveImageAttachment}
+            onOpenDownloadFile={onOpenRemoteDownload}
+            onSend={onSend}
+            onVoice={onVoice}
+            onWake={onWake}
+            onReleaseRunningTask={onReleaseRunningTask}
+            onCancelRunningTask={onCancelRunningTask}
+          />
+        ) : null}
+      </section>
+
+      {mobileNavOpen ? (
+        <div className="iphone-session-sheet" role="dialog" aria-modal="true" aria-label="工作会话">
+          <button className="iphone-sheet-backdrop" type="button" aria-label="关闭会话列表" onClick={closeSessionSheet} />
+          <aside className="iphone-session-panel">
+            <header>
+              <div>
+                <strong>工作会话</strong>
+                <span>选择一个任务继续</span>
+              </div>
+              <div className="iphone-session-header-actions">
+                <button
+                  type="button"
+                  className="iphone-session-add"
+                  onClick={() => {
+                    onAddServer?.();
+                    closeSessionSheet();
+                  }}
+                  aria-label="添加工作会话"
+                >
+                  <Plus size={20} weight="bold" aria-hidden="true" />
+                </button>
+                <button type="button" className="iphone-session-close" onClick={closeSessionSheet} aria-label="关闭会话列表">
+                  <X size={20} weight="bold" aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+            <label className="iphone-session-search">
+              <MagnifyingGlass size={17} aria-hidden="true" />
+              <input
+                type="search"
+                value={sessionQuery}
+                onChange={(event) => setSessionQuery(event.target.value)}
+                placeholder="搜索会话或说第几个"
+                aria-label="搜索工作会话"
+              />
+            </label>
+            <div className="iphone-session-body">
+              <div className="iphone-session-list" role="list" aria-label="工作会话列表">
+                {visibleSessions.map(({ server, index }) => {
+                  const isActive = server.id === activeServerId;
+                  const serverConnection = isActive ? connection : server.connection;
+                  const taskRunning = serverTaskRunning(server);
+                  const connected = connectionIsLive(serverConnection);
+                  const normalizedProfile = normalizeProfile(server.profile);
+                  const agent = agentById(normalizedProfile.agentId);
+                  const connectionMode = connectionModeForServer(server, serverConnection);
+                  const stateLabel = taskRunning ? "执行中" : connected ? "已连接" : server.unreadResult ? "已完成" : "未连接";
+                  const stateTone = taskRunning ? "running" : connected ? "connected" : server.unreadResult ? "done" : "idle";
+                  const contextLabel = workdirDisplayName(normalizedProfile.workdir) || connectionMode.shortLabel;
+                  const sessionName = serverSessionName(server, index);
+                  const sessionIdTail = conversationIdSuffix(server.conversationId);
+
+	                  return (
+	                    <div
+	                      key={server.id}
+	                      role="listitem"
+	                      className={`iphone-session-row ${isActive ? "active" : ""}`}
+	                    >
+	                      <button
+	                        type="button"
+	                        className="iphone-session-select"
+	                        onClick={() => selectSession(server)}
+	                        disabled={busy}
+	                        aria-label={`打开 ${sessionName}${sessionIdTail ? `，会话编号末四位 ${sessionIdTail}` : ""}`}
+	                      >
+	                        <span className="iphone-session-index">{index + 1}</span>
+	                        <AgentLogo agentId={agent.id} compact />
+	                        <span className="iphone-session-copy">
+	                          <strong>{sessionName}</strong>
+	                          <small>
+                              {agent.shortName} · {contextLabel}
+                              {sessionIdTail ? ` · #${sessionIdTail}` : ""}
+                            </small>
+	                        </span>
+	                        <span className={`iphone-session-state ${stateTone}`}>
+	                          <StatusDot status={taskRunning ? "testing" : connected || server.unreadResult ? "connected" : "idle"} />
+	                          {stateLabel}
+	                        </span>
+	                      </button>
+	                      <button
+	                        type="button"
+	                        className="iphone-session-edit"
+	                        onClick={() => {
+	                          onConfigureServer?.(server.id);
+	                          closeSessionSheet();
+	                        }}
+	                        disabled={busy}
+	                        aria-label={`设置 ${sessionName}`}
+	                        title="设置"
+	                      >
+	                        <GearSix size={18} weight="bold" aria-hidden="true" />
+	                      </button>
+	                    </div>
+	                  );
+	                })}
+                {!visibleSessions.length ? <p className="iphone-session-empty">没有找到对应会话</p> : null}
+              </div>
+	              <p className="iphone-session-footnote">当前任务会同步等待最终结果</p>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      <RawOutput
+        open={rawOpen}
+        agent={activeAgent}
+        profile={profile}
+        connection={connection}
+        connectionMode={activeConnectionMode}
+        rawOutput={rawOutput}
+        busy={busy}
+        onToggle={onToggleRaw}
+        onRefresh={onRefreshOutput}
+        onInterrupt={onInterruptAgent}
+        onKill={onKillAgentSession}
+      />
+
+      {taskNotice ? <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} /> : null}
+
+      {settingsOpen ? (
+        <SettingsPanel
+          servers={servers}
+          draftProfile={draftProfile}
+          editingServer={editingServer}
+          editingServerIndex={editingServerIndex}
+          busy={busy}
+          mode={editingServerId === "global" ? "global" : editingServerId ? "edit" : "add"}
+          settingsDiscovery={settingsDiscovery}
+          settingsAgentTab={settingsAgentTab}
+          settingsSelectedSessions={settingsSelectedSessions}
+          setDraftProfile={setDraftProfile}
+          setSettingsAgentTab={setSettingsAgentTab}
+          setSettingsSelectedSessions={setSettingsSelectedSessions}
+          onClose={onCloseSettings}
+          onScan={onScanSettings}
+          onAddSelected={onAddSelectedSessions}
+          onSave={onSaveSettings}
+          onDelete={onDeleteProfile}
+          onDuplicate={onDuplicateEditingServer}
+          onOpenTerminal={onOpenTerminal}
+          agentManagementTargetId={agentManagementTargetId}
+          onInstallAgent={onInstallAgent}
+          onRefreshAgent={onRefreshAgent}
+          onOpenAgentSettings={onOpenAgentSettings}
+          onInstallWsl={onInstallWsl}
+          onInstallGit={onInstallGit}
+          onGitDownload={onGitDownload}
+          onExportConfig={onExportConfig}
+          onExportLogs={onExportLogs}
+          onImportConfig={onImportConfig}
+          onTest={onScanSettings}
+        />
+      ) : null}
+
+      {filePreview ? (
+        <FilePreviewPanel
+          preview={filePreview}
+          downloadState={fileDownload}
+          onPreviewFile={onPreviewFile}
+          onDownloadFile={onDownloadFile}
+          onDeleteFile={onDeleteFile}
+          onClose={onCloseFilePreview}
+        />
+      ) : null}
+
+      <RemoteDownloadDialog
+        open={remoteDownloadOpen}
+        profile={profile}
+        downloadState={fileDownload}
+        onDownloadFile={onDownloadFile}
+        onClose={onCloseRemoteDownload}
+      />
+    </main>
+  );
+}

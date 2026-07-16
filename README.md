@@ -15,7 +15,7 @@ Universal iPhone/iPad app for connecting directly to an Alibaba Cloud ECS over S
 Default ECS profile:
 
 ```text
-Host: 47.236.117.100
+Host: example.com
 Port: 22
 User: root
 Workdir: /opt/limpet-workspace
