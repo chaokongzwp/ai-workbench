@@ -49,6 +49,7 @@ const {
   buildWorkbenchAgentCreateCommand,
   buildWorkbenchAgentStatusCommand,
   buildWorkbenchAgentTaskListCommand,
+  buildWorkbenchAgentWaitTaskCommand,
   buildWorkspaceMigrationPayload,
   builtInAliyunVoiceConfig,
   chineseNumber,
@@ -274,6 +275,7 @@ const remoteTaskTerminalStatuses = new Set(["done", "error", "cancelled"]);
 const agentSynchronousWaitTimeoutMs = 2 * 60 * 60 * 1000;
 const agentSynchronousPollInitialDelayMs = 900;
 const agentSynchronousPollIntervalMs = 15_000;
+const agentLongPollTimeoutSeconds = 55;
 
 function wslProfileFromWindowsProfile(profile) {
   const normalized = normalizeProfile(profile);
@@ -405,7 +407,9 @@ function inferAssistantTaskIdsFromRemoteMessages(messages = []) {
     const looksLikeLocalPlaceholder =
       message?.role === "assistant" &&
       !String(message?.remoteTaskId || "").trim() &&
-      (message?.status === "running" || message?.status === "idle" || /已发送|等待|正在|无法确认|没有最终内容/.test(titleAndBody));
+      (message?.status === "running" ||
+        message?.status === "idle" ||
+        /已发送|等待|正在|无法确认|没有最终内容|任务未能恢复|没有关联 Agent 后台任务 ID/.test(titleAndBody));
     if (looksLikeLocalPlaceholder && !String(message?.promptText || "").trim() && latestUserPrompt) {
       message.promptText = latestUserPrompt;
     }
@@ -433,7 +437,11 @@ function inferAssistantTaskIdsFromRemoteMessages(messages = []) {
       }
       const candidatePrompt = String(candidate.promptText || "").trim();
       const distance = Math.abs(messageTimelineTime(candidate) - remoteTime);
-      const promptMatches = Boolean(promptText) && candidatePrompt === promptText && distance <= 5 * 60_000;
+      // Older builds did not always persist createdAtMs/startedAt. After an App
+      // restart those messages can receive a new local timestamp, so an exact
+      // prompt match must not depend on the clock. Distance is still used below
+      // to choose the nearest candidate when the same prompt was sent twice.
+      const promptMatches = Boolean(promptText) && candidatePrompt === promptText;
       const timeMatches =
         !promptMatches &&
         (!promptText || !candidatePrompt) &&
@@ -1237,7 +1245,7 @@ export function useWorkbenchController() {
             : agentFailure || taskStatus === "error"
             ? "error"
             : "done",
-          backend: currentProfile.useWorkbenchAgent === true ? "agent" : "ssh",
+          backend: "agent",
           conversationId: conversation.id,
           remoteTaskId: taskId,
           remoteTaskStatus: deferredWaitingResult ? "deferred-waiting-answer" : taskStatus,
@@ -1395,15 +1403,17 @@ export function useWorkbenchController() {
     if (serverTaskRunning(server)) return true;
     return (server?.messages || []).some((message) => {
       if (message?.backend !== "agent") return false;
+      const hasTaskId = Boolean(String(message.remoteTaskId || "").trim());
       const status = String(message.remoteTaskStatus || "").trim();
       const remoteTaskFinished = ["done", "error", "cancelled", "missing", "deferred-waiting-answer"].includes(status);
       const text = `${message.title || ""}\n${message.body || ""}\n${message.remoteSyncError || ""}`;
       return (
+        (!hasTaskId && (message.resultMissing === true || /任务未能恢复|没有关联 Agent 后台任务 ID/.test(text))) ||
         (message.status === "running" && !remoteTaskFinished) ||
         (remoteResultNeedsSync(message) && !remoteTaskFinished) ||
         status === "sync-lost" ||
         status === "sync-lost-no-task-id" ||
-        (!String(message.remoteTaskId || "").trim() && Boolean(message.remoteSyncError)) ||
+        (!hasTaskId && Boolean(message.remoteSyncError)) ||
         /连不上服务器|恢复连接|同步连接中断|网络恢复|网络异常/i.test(text)
       );
     });
@@ -3515,6 +3525,42 @@ export function useWorkbenchController() {
 
       for (let attempt = 1; attempt <= maxAgentStartupAttempts; attempt += 1) {
         const remoteTaskId = createRemoteTaskId(conversationId, agent.id);
+        const optimisticStartedAt = Date.now();
+        setServerTask(serverId, {
+          state: "running",
+          backend: "agent",
+          conversationId,
+          remoteTaskId,
+          agentId: agent.id,
+          startedAt: optimisticStartedAt,
+          label: `正在提交 ${agent.shortName}`,
+        });
+        if (userMessageId) {
+          updateAssistantMessageInServer(serverId, userMessageId, {
+            backend: "agent",
+            conversationId,
+            remoteTaskId,
+            agentId: agent.id,
+            promptText: text,
+            startedAt: optimisticStartedAt,
+            forceUpdate: true,
+          });
+        }
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: `正在提交给 ${agent.shortName}`,
+          body: "任务 ID 已在本地保存，正在交给远端 Agent。即使连接中断，也会用这个 ID 继续同步。",
+          status: "running",
+          backend: "agent",
+          conversationId,
+          remoteTaskId,
+          agentId: agent.id,
+          promptText: text,
+          startedAt: optimisticStartedAt,
+          remoteTaskStatus: "preparing",
+          remoteTaskCheckedAt: Date.now(),
+          remoteSyncError: "",
+          forceUpdate: true,
+        });
         const createOutput = await runRemoteCommandForProfile(
           currentProfile,
           buildWorkbenchAgentCreateCommand(currentProfile, remoteTaskId, command, {
@@ -3534,6 +3580,16 @@ export function useWorkbenchController() {
           const raw = created.output || created.raw || createOutput;
           const failure = classifyAgentFailure(raw, agent, created);
           const startedAt = Date.now();
+          if (userMessageId) {
+            updateAssistantMessageInServer(serverId, userMessageId, {
+              remoteTaskId: blockingTaskId || undefined,
+              conversationId,
+              backend: "agent",
+              agentId: agent.id,
+              promptText: text,
+              forceUpdate: true,
+            });
+          }
           updateAssistantMessageInServer(serverId, assistantMessageId, {
             title: failure?.title || `${agent.shortName} 会话正在执行`,
             body:
@@ -3580,11 +3636,28 @@ export function useWorkbenchController() {
         }
         const createdTaskAccepted = ["queued", "running"].includes(created.taskStatus);
         if (created.status !== "ready" || !createdTaskAccepted) {
-          if (created.status === "missing" || created.status === "unsupported") return { used: false };
+          if (created.status === "missing" || created.status === "unsupported") {
+            if (userMessageId) {
+              updateAssistantMessageInServer(serverId, userMessageId, {
+                remoteTaskId: undefined,
+                conversationId: undefined,
+                backend: "ssh",
+                forceUpdate: true,
+              });
+            }
+            updateAssistantMessageInServer(serverId, assistantMessageId, {
+              remoteTaskId: undefined,
+              conversationId: undefined,
+              backend: "ssh",
+              remoteTaskStatus: undefined,
+              forceUpdate: true,
+            });
+            return { used: false };
+          }
           throw new Error(created.error || trimVisibleText(createOutput) || "Agent 创建任务失败。");
         }
 
-        const startedAt = Date.now();
+        const startedAt = optimisticStartedAt;
         setServerTask(serverId, {
           state: "running",
           backend: "agent",
@@ -3637,17 +3710,21 @@ export function useWorkbenchController() {
 
         let retryAgentStartup = false;
         let pollCount = 0;
+        let lastEventFingerprint = created.eventFingerprint || "";
         const synchronousWaitDeadlineAt = Date.now() + agentSynchronousWaitTimeoutMs;
         while (Date.now() < synchronousWaitDeadlineAt) {
-          await sleep(pollCount === 0 ? agentSynchronousPollInitialDelayMs : agentSynchronousPollIntervalMs);
+          if (pollCount === 0) await sleep(agentSynchronousPollInitialDelayMs);
           pollCount += 1;
           let statusOutput = "";
+          const remainingWaitSeconds = Math.max(5, Math.min(agentLongPollTimeoutSeconds, Math.ceil((synchronousWaitDeadlineAt - Date.now()) / 1000)));
           try {
             statusOutput = await runRemoteCommandForProfile(
               currentProfile,
-              buildWorkbenchAgentStatusCommand(currentProfile, remoteTaskId),
+              buildWorkbenchAgentWaitTaskCommand(currentProfile, remoteTaskId, lastEventFingerprint, {
+                timeoutSeconds: remainingWaitSeconds,
+              }),
               2_097_152,
-              45,
+              remainingWaitSeconds + 20,
             );
           } catch (error) {
             if (!isTransientSshSyncError(error)) throw error;
@@ -3680,11 +3757,13 @@ export function useWorkbenchController() {
             continue;
           }
           const status = parseWorkbenchAgentOutput(statusOutput);
+          if (status.eventFingerprint) lastEventFingerprint = status.eventFingerprint;
           const taskStatus = status.taskStatus || "unknown";
           if (taskStatus === "done") {
             if (!applyAgentOutput(status.output, true)) return { used: true, ok: false, pending: false };
             updateAssistantMessageInServer(serverId, assistantMessageId, {
               remoteTaskStatus: taskStatus,
+              remoteEventFingerprint: status.eventFingerprint || lastEventFingerprint,
               remoteTaskCheckedAt: Date.now(),
               remoteTaskPid: status.pid || "",
               remoteTaskStartedAt: status.startedAt || "",
@@ -3717,6 +3796,7 @@ export function useWorkbenchController() {
               agentId: agent.id,
               promptText: text,
               remoteTaskStatus: taskStatus,
+              remoteEventFingerprint: status.eventFingerprint || lastEventFingerprint,
               remoteTaskCheckedAt: Date.now(),
               remoteTaskPid: status.pid || "",
               remoteTaskStartedAt: status.startedAt || "",
@@ -3778,6 +3858,7 @@ export function useWorkbenchController() {
                   remoteTaskId,
                   agentId: agent.id,
                   promptText: text,
+                  remoteEventFingerprint: status.eventFingerprint || lastEventFingerprint,
                   agentFailure: undefined,
                   technicalDetail: cleanAgentFailureDetail(raw),
                 });
@@ -3841,6 +3922,7 @@ export function useWorkbenchController() {
               agentId: agent.id,
               promptText: text,
               remoteTaskStatus: taskStatus,
+              remoteEventFingerprint: status.eventFingerprint || lastEventFingerprint,
               remoteTaskCheckedAt: Date.now(),
               remoteTaskPid: status.pid || "",
               remoteTaskStartedAt: status.startedAt || "",
@@ -3872,6 +3954,7 @@ export function useWorkbenchController() {
             promptText: text,
             liveOutput,
             remoteTaskStatus: taskStatus,
+            remoteEventFingerprint: status.eventFingerprint || lastEventFingerprint,
             remoteTaskCheckedAt: Date.now(),
             remoteTaskPid: status.pid || "",
             remoteTaskStartedAt: status.startedAt || "",
@@ -3988,14 +4071,19 @@ export function useWorkbenchController() {
     const agent = agentById(message.agentId || currentProfile.agentId, activeAgent);
     syncingAgentTasksRef.current.add(lockKey);
     try {
+      const waitTimeoutSeconds =
+        serverId === activeServerIdRef.current && message.status === "running" ? agentLongPollTimeoutSeconds : 20;
       const statusOutput = await runRemoteCommandForProfile(
         currentProfile,
-        buildWorkbenchAgentStatusCommand(currentProfile, message.remoteTaskId),
+        buildWorkbenchAgentWaitTaskCommand(currentProfile, message.remoteTaskId, message.remoteEventFingerprint || "", {
+          timeoutSeconds: waitTimeoutSeconds,
+        }),
         2_097_152,
-        45,
+        waitTimeoutSeconds + 20,
       );
       const status = parseWorkbenchAgentOutput(statusOutput);
       const taskStatus = status.taskStatus || "unknown";
+      const eventFingerprint = status.eventFingerprint || message.remoteEventFingerprint || "";
       const raw = status.output || status.raw || statusOutput;
 
       if (taskStatus === "queued" || taskStatus === "running" || taskStatus === "preparing" || taskStatus === "unknown") {
@@ -4013,6 +4101,7 @@ export function useWorkbenchController() {
           promptText: message.promptText || "",
           liveOutput,
           remoteTaskStatus: taskStatus,
+          remoteEventFingerprint: eventFingerprint,
           remoteTaskCheckedAt: Date.now(),
           remoteTaskPid: status.pid || "",
           remoteTaskStartedAt: status.startedAt || "",
@@ -4058,6 +4147,7 @@ export function useWorkbenchController() {
             resultMissing: true,
             technicalDetail: deferredWaitingAnswer ? output : undefined,
             remoteTaskStatus: deferredWaitingAnswer ? "deferred-waiting-answer" : taskStatus,
+            remoteEventFingerprint: eventFingerprint,
             remoteTaskCheckedAt: Date.now(),
             remoteTaskPid: status.pid || "",
             remoteTaskStartedAt: status.startedAt || "",
@@ -4092,6 +4182,7 @@ export function useWorkbenchController() {
           agentFailure: undefined,
           technicalDetail: undefined,
           remoteTaskStatus: taskStatus,
+          remoteEventFingerprint: eventFingerprint,
           remoteTaskCheckedAt: Date.now(),
           remoteTaskPid: status.pid || "",
           remoteTaskStartedAt: status.startedAt || "",
@@ -4132,6 +4223,7 @@ export function useWorkbenchController() {
           agentFailure: undefined,
           technicalDetail: failure?.detail || cleanAgentFailureDetail(raw),
           remoteTaskStatus: taskStatus,
+          remoteEventFingerprint: eventFingerprint,
           remoteTaskCheckedAt: Date.now(),
           remoteTaskPid: status.pid || "",
           remoteTaskStartedAt: status.startedAt || "",
@@ -4166,6 +4258,7 @@ export function useWorkbenchController() {
         agentFailure: failure,
         technicalDetail: failure?.detail || cleanAgentFailureDetail(raw),
         remoteTaskStatus: taskStatus,
+        remoteEventFingerprint: eventFingerprint,
         remoteTaskCheckedAt: Date.now(),
         remoteTaskPid: status.pid || "",
         remoteTaskStartedAt: status.startedAt || "",
@@ -4324,6 +4417,15 @@ export function useWorkbenchController() {
                 },
         };
       });
+      void appLog("info", "agent.conversation.sync.success", {
+        serverId: server.id,
+        conversationId,
+        status,
+        taskId: conversation.taskId || "",
+        historyCount: Array.isArray(conversation.history) ? conversation.history.length : 0,
+        remoteMessageCount: allRemoteMessages.length,
+        newlyRestoredMessageCount: restoredMessages.length,
+      });
       return true;
     } catch (error) {
       if (isTransientSshSyncError(error)) {
@@ -4463,6 +4565,24 @@ export function useWorkbenchController() {
           const candidate = taskCandidates[0];
           agentConnectionPollAtRef.current.set(connectionKey, Date.now());
           await syncRemoteAgentMessage(candidate.server.id, candidate.message);
+          const conversationCandidate = connectionServers.find(
+            (server) => server.conversationId && serverNeedsAgentConversationRecovery(server),
+          );
+          if (conversationCandidate) {
+            const syncKey = `${conversationCandidate.id}:${conversationCandidate.conversationId}`;
+            const lastSyncedAt = Number(agentConversationAutoSyncAtRef.current.get(syncKey) || 0);
+            const lastFailedAt = Number(agentConversationSyncFailedAtRef.current.get(syncKey) || 0);
+            const syncNow = Date.now();
+            if ((!lastSyncedAt || syncNow - lastSyncedAt >= 60_000) && (!lastFailedAt || syncNow - lastFailedAt >= 60_000)) {
+              const ok = await syncAgentConversationForServer(conversationCandidate);
+              if (ok) {
+                agentConversationAutoSyncAtRef.current.set(syncKey, syncNow);
+                agentConversationSyncFailedAtRef.current.delete(syncKey);
+              } else {
+                agentConversationSyncFailedAtRef.current.set(syncKey, syncNow);
+              }
+            }
+          }
           continue;
         }
 
@@ -5495,6 +5615,20 @@ export function useWorkbenchController() {
           ) || targetMessage
         : null;
     if (hasExplicitTarget && !requestedAgentMessage) {
+      if (
+        targetMessage?.backend === "agent" &&
+        currentProfile.useWorkbenchAgent === true &&
+        server?.conversationId &&
+        !isWindowsProfile(currentProfile)
+      ) {
+        setBusy(true);
+        try {
+          const ok = await syncAgentConversationForServer(server, { showResult: true });
+          if (ok) return;
+        } finally {
+          setBusy(false);
+        }
+      }
       const detail = "这条消息没有关联 Agent 后台任务 ID，App 不能继续查询远端状态。可以查看原始输出，或重新发送这条任务。";
       setConnection({
         state: "connected",

@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "12";
+export const latestWorkbenchAgentVersion = "13";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -840,6 +840,109 @@ aiwb_print_task() {
   printf "\\n__AIWB_AGENT_TASK_OUTPUT_END__\\n"
 }
 
+aiwb_task_fingerprint() {
+  local task_dir="$1"
+  local status
+  local output_size
+  local output_mtime
+  local bootstrap_size
+  local bootstrap_mtime
+  local launcher_size
+  local launcher_mtime
+  local finished_at
+  local runner_started_at
+  local pid
+
+  if [ ! -d "$task_dir" ]; then
+    printf "missing:0:0:0:0:0:0:::\\n"
+    return 0
+  fi
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  output_size="$(wc -c < "$task_dir/output.log" 2>/dev/null | tr -d '[:space:]' || printf 0)"
+  output_mtime="$(aiwb_path_mtime_epoch "$task_dir/output.log")"
+  bootstrap_size="$(wc -c < "$task_dir/bootstrap.log" 2>/dev/null | tr -d '[:space:]' || printf 0)"
+  bootstrap_mtime="$(aiwb_path_mtime_epoch "$task_dir/bootstrap.log")"
+  launcher_size="$(wc -c < "$task_dir/launcher.log" 2>/dev/null | tr -d '[:space:]' || printf 0)"
+  launcher_mtime="$(aiwb_path_mtime_epoch "$task_dir/launcher.log")"
+  finished_at="$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
+  runner_started_at="$(cat "$task_dir/runner_started_at" 2>/dev/null || printf "")"
+  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+
+  printf "%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\\n" \\
+    "$status" \\
+    "$output_size" \\
+    "$output_mtime" \\
+    "$bootstrap_size" \\
+    "$bootstrap_mtime" \\
+    "$launcher_size" \\
+    "$launcher_mtime" \\
+    "$finished_at" \\
+    "$runner_started_at" \\
+    "$pid"
+}
+
+aiwb_wait_task() {
+  local task_id="$1"
+  local previous_fingerprint="\${2:-}"
+  local timeout_seconds="\${3:-55}"
+  local task_dir
+  local started_epoch
+  local now_epoch
+  local fingerprint
+  local status
+
+  case "$timeout_seconds" in
+    ''|*[!0-9]*) timeout_seconds="55" ;;
+  esac
+  if [ "$timeout_seconds" -lt 5 ] 2>/dev/null; then
+    timeout_seconds="5"
+  fi
+  if [ "$timeout_seconds" -gt 110 ] 2>/dev/null; then
+    timeout_seconds="110"
+  fi
+
+  task_dir="$(aiwb_task_dir "$task_id")"
+  if [ ! -d "$task_dir" ]; then
+    printf "__AIWB_AGENT_EVENT_FINGERPRINT__missing:0:0:0:0:0:0:::\\n"
+    aiwb_print_task "$task_id"
+    return 0
+  fi
+
+  aiwb_start_daemon >/dev/null 2>&1 || true
+  started_epoch="$(date -u +%s)"
+
+  while true; do
+    aiwb_mark_queued_stale_if_needed "$task_dir"
+    aiwb_mark_stale_if_needed "$task_dir"
+
+    fingerprint="$(aiwb_task_fingerprint "$task_dir")"
+    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    if [ -z "$previous_fingerprint" ] || [ "$fingerprint" != "$previous_fingerprint" ]; then
+      printf "__AIWB_AGENT_EVENT_FINGERPRINT__%s\\n" "$fingerprint"
+      aiwb_print_task "$task_id"
+      return 0
+    fi
+
+    case "$status" in
+      done|error|cancelled|missing)
+        printf "__AIWB_AGENT_EVENT_FINGERPRINT__%s\\n" "$fingerprint"
+        aiwb_print_task "$task_id"
+        return 0
+        ;;
+    esac
+
+    now_epoch="$(date -u +%s)"
+    if [ "$((now_epoch - started_epoch))" -ge "$timeout_seconds" ] 2>/dev/null; then
+      printf "__AIWB_AGENT_EVENT_FINGERPRINT__%s\\n" "$fingerprint"
+      aiwb_print_task "$task_id"
+      return 0
+    fi
+
+    sleep 1
+  done
+}
+
 aiwb_refresh_conversation_from_task_id() {
   local task_id="$1"
   local task_dir
@@ -1072,6 +1175,26 @@ case "$AIWB_CMD" in
       aiwb_print_health
     fi
     ;;
+  wait|wait-task)
+    AIWB_TASK_ID=""
+    AIWB_EVENT_FINGERPRINT=""
+    AIWB_WAIT_TIMEOUT="55"
+    if [ "$#" -gt 1 ]; then
+      AIWB_TASK_ID="$2"
+    fi
+    if [ "$#" -gt 2 ]; then
+      AIWB_EVENT_FINGERPRINT="$3"
+    fi
+    if [ "$#" -gt 3 ]; then
+      AIWB_WAIT_TIMEOUT="$4"
+    fi
+    if [ -z "$AIWB_TASK_ID" ]; then
+      printf "__AIWB_AGENT_STATUS__error\\n"
+      printf "__AIWB_AGENT_ERROR__missing task id\\n"
+      exit 2
+    fi
+    aiwb_wait_task "$AIWB_TASK_ID" "$AIWB_EVENT_FINGERPRINT" "$AIWB_WAIT_TIMEOUT"
+    ;;
   health)
     aiwb_print_health
     ;;
@@ -1293,6 +1416,20 @@ if [ ! -x "$AIWB_AGENT_CTL" ]; then
   exit 0
 fi
 "$AIWB_AGENT_CTL" status ${taskId ? shQuote(taskId) : ""}
+`);
+}
+
+export function buildWorkbenchAgentWaitTaskCommand(profile, taskId, fingerprint = "", options = {}) {
+  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
+  const rawTimeout = Number(options?.timeoutSeconds ?? 55);
+  const timeoutSeconds = Number.isFinite(rawTimeout) ? Math.max(5, Math.min(110, Math.floor(rawTimeout))) : 55;
+  return remoteBashCommand(profile, `
+AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
+if [ ! -x "$AIWB_AGENT_CTL" ]; then
+  printf '__AIWB_AGENT_STATUS__missing\\n'
+  exit 0
+fi
+"$AIWB_AGENT_CTL" wait-task ${shQuote(taskId)} ${shQuote(String(fingerprint || ""))} ${shQuote(String(timeoutSeconds))}
 `);
 }
 
@@ -2104,6 +2241,7 @@ export function parseWorkbenchAgentOutput(output) {
     startedAt: marker("TASK_STARTED_AT"),
     runnerStartedAt: marker("TASK_RUNNER_STARTED_AT"),
     finishedAt: marker("TASK_FINISHED_AT"),
+    eventFingerprint: marker("EVENT_FINGERPRINT"),
     error: marker("ERROR"),
     blockedByTaskId: marker("BLOCKED_BY_TASK_ID"),
     blockedByConversationId: marker("BLOCKED_BY_CONVERSATION_ID"),
@@ -2151,7 +2289,10 @@ export function timestampFromAgentTime(value) {
 }
 
 export function parseWorkbenchAgentConversations(output) {
-  const text = String(output || "");
+  // Native SSH clients commonly return CRLF even when the remote host is
+  // Linux. Normalize once so the block protocol behaves identically on Mac,
+  // iOS, Android and the shell-based development transport.
+  const text = String(output || "").replace(/\r\n?/g, "\n");
   const blocks = text.match(/__AIWB_AGENT_CONVERSATION_START__[\s\S]*?__AIWB_AGENT_CONVERSATION_END__/g) || [];
   return blocks
     .map((block) => {
