@@ -11,6 +11,9 @@ private struct SSHConnectionConfig {
     let username: String
     let password: String
     let connectTimeoutSeconds: Int64
+    let commandTimeoutSeconds: Int64
+    let stdin: String
+    let uploadScript: Bool
 
     init(call: CAPPluginCall) throws {
         guard let host = call.getString("host")?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty else {
@@ -28,6 +31,9 @@ private struct SSHConnectionConfig {
         self.password = password
         self.port = max(1, call.getInt("port", 22))
         self.connectTimeoutSeconds = Int64(max(3, min(call.getInt("connectTimeoutSeconds", 15), 60)))
+        self.commandTimeoutSeconds = Int64(max(5, min(call.getInt("commandTimeoutSeconds", 180), 7200)))
+        self.stdin = call.getString("stdin") ?? ""
+        self.uploadScript = call.getBool("uploadScript", false)
     }
 }
 
@@ -955,7 +961,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             let maxResponseSize = max(1024, min(call.getInt("maxResponseSize", 1_048_576), 83_886_080))
             let requestId = String(UUID().uuidString.prefix(8))
-            let commandKind = call.getBool("uploadScript", false) ? "uploaded-powershell" : ((call.getString("stdin") ?? "").isEmpty ? "exec" : "stdin")
+            let commandKind = config.uploadScript ? "uploaded-powershell" : (config.stdin.isEmpty ? "exec" : "stdin")
             appendDiagnosticLog("info", "ssh.native.start", fields: [
                 "requestId": requestId,
                 "host": config.host,
@@ -964,8 +970,9 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                 "passwordLength": config.password.count,
                 "commandKind": commandKind,
                 "commandLength": command.count,
-                "stdinLength": (call.getString("stdin") ?? "").count,
+                "stdinLength": config.stdin.count,
                 "connectTimeoutSeconds": config.connectTimeoutSeconds,
+                "commandTimeoutSeconds": config.commandTimeoutSeconds,
                 "maxResponseSize": maxResponseSize
             ])
 
@@ -1352,8 +1359,9 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
         let client = try await SSHClient.connect(to: settings)
         do {
+            let executableCommand = prepareExecutableCommand(command, config: config)
             var output = try await client.executeCommand(
-                command,
+                executableCommand,
                 maxResponseSize: maxResponseSize,
                 mergeStreams: true,
                 inShell: false
@@ -1365,6 +1373,28 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             try? await client.close()
             throw error
         }
+    }
+
+    private func prepareExecutableCommand(_ command: String, config: SSHConnectionConfig) -> String {
+        guard !config.stdin.isEmpty else {
+            return command
+        }
+
+        let lowercasedCommand = command.lowercased()
+        if config.uploadScript && lowercasedCommand.contains("powershell") {
+            return powershellEncodedCommand(config.stdin)
+        }
+        if lowercasedCommand.contains("powershell") && lowercasedCommand.contains("-command -") {
+            return powershellEncodedCommand(config.stdin)
+        }
+
+        return command
+    }
+
+    private func powershellEncodedCommand(_ script: String) -> String {
+        let data = script.data(using: .utf16LittleEndian) ?? Data()
+        let encoded = data.base64EncodedString()
+        return "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand \(encoded)"
     }
 
     private struct ZipEntry {
