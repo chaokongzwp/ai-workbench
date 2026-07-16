@@ -1,0 +1,10 @@
+{
+  "kind": "ai-workbench-agent",
+  "version": "12",
+  "scriptUrl": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v12/aiwbctl",
+  "scriptKey": "agent/v12/aiwbctl",
+  "sha256": "fb9b1e1be12b8308ef74208be8f5a1f37e96e640b4e8ffdd41c26357b9888913",
+  "runtime": "linux-shell",
+  "source": "github",
+  "publishedAt": "2026-07-16T02:11:20.620Z"
+}
