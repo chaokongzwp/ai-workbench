@@ -88,6 +88,16 @@
   background: transparent;
 }
 
+.mac-shell .topbar-actions,
+.app-shell[data-theme="dark"].mac-shell .topbar-actions {
+  position: absolute;
+  top: 6px;
+  right: 44px;
+  z-index: 2;
+  grid-column: auto;
+  justify-self: auto;
+}
+
 .mac-shell .workspace,
 .app-shell[data-theme="dark"].mac-shell .workspace {
   grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr);
@@ -271,37 +281,6 @@
   font-size: 10px;
 }
 
-.mac-shell .mac-sidebar-footer {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 0 0;
-}
-
-.mac-shell .mac-sidebar-tool {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  color: var(--mac-muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.mac-shell .mac-sidebar-tool:hover:not(:disabled) {
-  color: var(--mac-text);
-  background: var(--mac-surface-selected);
-}
-
-.mac-shell .mac-sidebar-tool:disabled {
-  opacity: 0.35;
-}
-
 .mac-shell.sidebar-collapsed .mac-session-row,
 .mac-shell .sidebar.collapsed .mac-session-row {
   grid-template-columns: 1fr;
@@ -324,11 +303,6 @@
 .mac-shell .sidebar.collapsed .mac-session-logo {
   display: inline-grid;
   margin: auto;
-}
-
-.mac-shell.sidebar-collapsed .mac-sidebar-footer {
-  justify-content: center;
-  flex-direction: column;
 }
 
 .mac-shell .conversation,

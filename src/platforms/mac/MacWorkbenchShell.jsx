@@ -191,10 +191,8 @@ export function MacWorkbenchShell({
             onConfigureServer={onConfigureServer}
             onAddServer={onAddServer}
             onDuplicateServer={onDuplicateServer}
-            onOpenSettings={onOpenGlobalSettings}
             onTestConnection={onTestConnection}
             onDisconnectServer={onDisconnectServer}
-            onRefreshOutput={onRefreshOutput}
             busy={busy}
           />
         </aside>

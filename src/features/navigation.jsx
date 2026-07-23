@@ -4,7 +4,6 @@ import {
   ArrowSquareOut,
   CopySimple,
   DotsThree,
-  GearSix,
   Plus,
   SidebarSimple,
 } from "@phosphor-icons/react";
@@ -368,10 +367,8 @@ export function NavigationPanel({
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
-  onOpenSettings,
   onTestConnection,
   onDisconnectServer,
-  onRefreshOutput,
   busy,
   variant = "default",
   emptyState = null,
@@ -695,33 +692,6 @@ export function NavigationPanel({
       </div>
 
       {macVariant ? <div className="sidebar-version-label">{appDisplayVersion}</div> : null}
-      {macVariant ? (
-        <div className="mac-sidebar-footer">
-          {onRefreshOutput ? (
-            <button
-              type="button"
-              className="mac-sidebar-tool"
-              aria-label="同步当前会话"
-              title="同步当前会话"
-              onClick={() => onRefreshOutput()}
-              disabled={busy}
-            >
-              <ArrowClockwise size={17} weight="regular" aria-hidden="true" />
-            </button>
-          ) : null}
-          {onOpenSettings ? (
-            <button
-              type="button"
-              className="mac-sidebar-tool"
-              aria-label="全局设置"
-              title="全局设置"
-              onClick={onOpenSettings}
-            >
-              <GearSix size={17} weight="regular" aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </>
   );
 }
