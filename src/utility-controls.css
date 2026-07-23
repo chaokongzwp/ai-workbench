@@ -1,19 +1,16 @@
-/* Shared utility icon language for Mac and iPad. Placement stays platform-specific. */
-.mac-shell,
+/* iPad utility icon language. Mac keeps its desktop-specific controls. */
 .native-app-shell[data-native-form-factor="ipad"] {
   --utility-icon-color: #59616d;
   --utility-icon-active: #202731;
   --utility-icon-hover: rgba(118, 118, 128, 0.1);
 }
 
-.app-shell[data-theme="dark"].mac-shell,
 .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] {
   --utility-icon-color: #aeb7c5;
   --utility-icon-active: #f5f7fb;
   --utility-icon-hover: rgba(255, 255, 255, 0.08);
 }
 
-.mac-shell .utility-icon-button,
 .native-app-shell[data-native-form-factor="ipad"] .utility-icon-button {
   display: inline-grid !important;
   place-items: center !important;
@@ -31,15 +28,12 @@
   line-height: 1 !important;
 }
 
-.mac-shell .utility-icon-button svg,
 .native-app-shell[data-native-form-factor="ipad"] .utility-icon-button svg {
   width: 17px !important;
   height: 17px !important;
   margin: 0 !important;
 }
 
-.mac-shell .utility-icon-button:hover:not(:disabled),
-.mac-shell .utility-icon-button:focus-visible:not(:disabled),
 .native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:hover:not(:disabled),
 .native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:focus-visible:not(:disabled) {
   color: var(--utility-icon-active) !important;
@@ -47,12 +41,10 @@
   outline: none !important;
 }
 
-.mac-shell .utility-icon-button:active:not(:disabled),
 .native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:active:not(:disabled) {
   transform: scale(0.94);
 }
 
-.mac-shell .utility-icon-button:disabled,
 .native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:disabled {
   color: var(--utility-icon-color) !important;
   background: transparent !important;
@@ -60,7 +52,6 @@
 }
 
 /* Send and stop are primary actions, not utility controls. */
-.mac-shell .send-button.composer-icon-button,
 .native-app-shell[data-native-form-factor="ipad"] .send-button.composer-icon-button {
   border-radius: 50% !important;
 }
@@ -69,8 +60,7 @@
   grid-template-columns: 32px minmax(0, 1fr) 32px;
 }
 
-/* Mac and iPad share one composer surface; docks only control placement and safe areas. */
-.mac-shell,
+/* iPad composer surface. Mac keeps the desktop composer from settings-redesign.css. */
 .native-app-shell[data-native-form-factor="ipad"] {
   --composer-surface-bg: #ffffff;
   --composer-surface-line: rgba(18, 24, 32, 0.16);
@@ -80,7 +70,6 @@
   --composer-surface-focus-shadow: 0 12px 30px rgba(26, 32, 40, 0.14);
 }
 
-.app-shell[data-theme="dark"].mac-shell,
 .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] {
   --composer-surface-bg: #1d2128;
   --composer-surface-line: rgba(255, 255, 255, 0.16);
@@ -90,7 +79,6 @@
   --composer-surface-focus-shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
 }
 
-.mac-shell .workbench-composer-surface.compact,
 .native-app-shell[data-native-form-factor="ipad"]
   .native-composer-dock
   .workbench-composer-surface.compact {
@@ -107,7 +95,6 @@
   box-shadow: var(--composer-surface-shadow) !important;
 }
 
-.mac-shell .workbench-composer-surface.compact:focus-within,
 .native-app-shell[data-native-form-factor="ipad"]
   .native-composer-dock
   .workbench-composer-surface.compact:focus-within {
@@ -116,9 +103,7 @@
   box-shadow: var(--composer-surface-focus-shadow) !important;
 }
 
-.mac-shell .workbench-composer-surface.compact .composer-editor,
 .native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact .composer-editor,
-.mac-shell .workbench-composer-surface.compact .input-row,
 .native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact .input-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -127,7 +112,6 @@
   min-width: 0;
 }
 
-.mac-shell .workbench-composer-surface.compact textarea,
 .native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact textarea {
   box-sizing: border-box;
   width: 100%;
@@ -145,12 +129,10 @@
   line-height: 1.6;
 }
 
-.mac-shell .workbench-composer-surface.compact textarea::placeholder,
 .native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact textarea::placeholder {
   color: var(--composer-surface-placeholder) !important;
 }
 
-.mac-shell .workbench-composer-surface.compact .composer-bottom-row,
 .native-app-shell[data-native-form-factor="ipad"]
   .native-composer-dock
   .workbench-composer-surface.compact
@@ -165,7 +147,6 @@
   padding: 0 0 2px 4px !important;
 }
 
-.mac-shell .workbench-composer-surface.compact .input-actions,
 .native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact .input-actions {
   display: flex;
   flex: 1 1 auto;

@@ -340,6 +340,7 @@ export function NativeWorkbenchShell({
           <div className="native-composer-dock">
             <Composer
               compact={isIpad}
+              utilityControls={isIpad}
               compactPlaceholder={
                 isProfileReady ? `告诉 ${activeAgent.shortName} 你想做什么` : "选择工作会话后即可开始"
               }

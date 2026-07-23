@@ -350,6 +350,7 @@ export function Composer({
   compact = false,
   compactPlaceholder = "",
   showSetupAction = true,
+  utilityControls = false,
 }) {
   const fileInputRef = useRef(null);
   const textareaRef = useAutoGrowingTextarea(composer, compact ? 120 : 180);
@@ -406,7 +407,11 @@ export function Composer({
             : "");
 
   return (
-    <footer className={`composer workbench-composer-surface ${compact ? "compact" : ""} ${ready ? "ready" : "not-ready"}`}>
+    <footer
+      className={`composer ${utilityControls ? "workbench-composer-surface" : ""} ${compact ? "compact" : ""} ${
+        ready ? "ready" : "not-ready"
+      }`}
+    >
       <input
         ref={fileInputRef}
         className="composer-file-input"
@@ -491,7 +496,7 @@ export function Composer({
               <>
                 <button
                   type="button"
-                  className="download-button composer-icon-button utility-icon-button"
+                  className={`download-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""}`}
                   onClick={onOpenDownloadFile}
                   disabled={downloadDisabled}
                   aria-label="下载远程文件"
@@ -501,7 +506,7 @@ export function Composer({
                 </button>
                 <button
                   type="button"
-                  className="directory-button composer-icon-button utility-icon-button"
+                  className={`directory-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""}`}
                   onClick={onOpenRemoteDirectory}
                   disabled={downloadDisabled}
                   aria-label="查看远程文件夹"
@@ -511,7 +516,7 @@ export function Composer({
                 </button>
                 <button
                   type="button"
-                  className="image-button composer-icon-button utility-icon-button"
+                  className={`image-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""}`}
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
                   aria-label="添加文件"
@@ -523,7 +528,9 @@ export function Composer({
                   <>
                     <button
                       type="button"
-                      className={`voice-button composer-icon-button utility-icon-button ${voiceActive ? "listening" : ""}`}
+                      className={`voice-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
+                        voiceActive ? "listening" : ""
+                      }`}
                       onClick={onVoice}
                       disabled={voiceDisabled}
                       aria-label={voiceActive ? "停止语音输入" : "语音输入"}
@@ -533,7 +540,9 @@ export function Composer({
                     </button>
                     <button
                       type="button"
-                      className={`wake-button composer-icon-button utility-icon-button ${wakeActive ? "listening" : ""}`}
+                      className={`wake-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
+                        wakeActive ? "listening" : ""
+                      }`}
                       onClick={onWake}
                       disabled={wakeDisabled}
                       aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}

@@ -308,7 +308,7 @@ export function TopBar({
 
   return (
     <header className="topbar">
-      <button className="nav-trigger utility-icon-button" type="button" aria-label="打开菜单" onClick={onOpenNav}>
+      <button className="nav-trigger" type="button" aria-label="打开菜单" onClick={onOpenNav}>
         <span>≡</span>
       </button>
       <div className={`topbar-session ${showSessionName ? "visible" : ""}`} aria-hidden={!showSessionName}>
@@ -334,7 +334,7 @@ export function TopBar({
         ) : null}
         <button
           type="button"
-          className="topbar-logo-button utility-icon-button"
+          className="topbar-logo-button"
           aria-label="服务器设置"
           title="服务器设置"
           onClick={onOpenSettings}
@@ -386,7 +386,7 @@ export function NavigationPanel({
         <SectionHeader title={macVariant || ipadVariant ? "工作会话" : "服务器"} />
         {onAddServer && !(hideAddWhenEmpty && servers.length === 0) ? (
           <button
-            className="sidebar-add utility-icon-button"
+            className={`sidebar-add ${ipadVariant ? "utility-icon-button" : ""}`}
             type="button"
             aria-label="添加服务器"
             title="添加服务器"
@@ -398,7 +398,7 @@ export function NavigationPanel({
         ) : null}
         {onDuplicateServer && !macVariant && !hideDuplicate ? (
           <button
-            className="sidebar-duplicate utility-icon-button"
+            className={`sidebar-duplicate ${ipadVariant ? "utility-icon-button" : ""}`}
             type="button"
             aria-label="复制当前服务器"
             title="复制当前服务器"
@@ -410,7 +410,7 @@ export function NavigationPanel({
         ) : null}
         {onToggleCollapse ? (
           <button
-            className="sidebar-collapse utility-icon-button"
+            className={`sidebar-collapse ${ipadVariant ? "utility-icon-button" : ""}`}
             type="button"
             aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
             title={collapsed ? "展开侧边栏" : "收起侧边栏"}
