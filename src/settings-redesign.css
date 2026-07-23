@@ -70,6 +70,13 @@
   transform: translate(-50%, -50%);
 }
 
+.app-shell.mac-shell .settings-panel.add-session-mode {
+  position: relative;
+  inset: auto;
+  max-height: min(780px, calc(100dvh - 56px));
+  transform: none;
+}
+
 .app-shell[data-theme="dark"].mac-shell .settings-panel,
 .app-shell[data-theme="dark"].mac-shell .settings-panel:not(.add-session-mode) {
   color: var(--settings-text);
