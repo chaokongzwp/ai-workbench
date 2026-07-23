@@ -68,8 +68,12 @@
 
 .mac-shell .topbar-session strong,
 .app-shell[data-theme="dark"].mac-shell .topbar-session strong {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   grid-column: 1 / -1;
   overflow: hidden;
+  width: 100%;
   max-width: 100%;
   color: var(--mac-text);
   font-size: 13.5px;
