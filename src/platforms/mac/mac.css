@@ -48,7 +48,9 @@
 
 .mac-shell .topbar-session,
 .mac-shell .topbar-session.visible,
-.app-shell:not(.sidebar-collapsed).mac-shell .topbar-session.visible {
+.app-shell:not(.sidebar-collapsed).mac-shell .topbar-session.visible,
+.app-shell.sidebar-collapsed.mac-shell .topbar-session.visible,
+.mac-shell.detached-chat-window .topbar-session.visible {
   position: absolute;
   top: 0;
   left: 50%;
@@ -130,7 +132,7 @@
 .app-shell[data-theme="dark"].mac-shell .desktop-sidebar {
   display: flex;
   min-height: 0;
-  padding: 12px 10px 10px;
+  padding: 10px 8px 8px;
   border-right: 1px solid var(--mac-line-soft);
   background: var(--mac-sidebar);
   overflow: hidden;
@@ -138,14 +140,14 @@
 
 .mac-shell .sidebar-toolbar {
   flex: 0 0 auto;
-  min-height: 30px;
-  margin: 0 3px 8px;
+  min-height: 26px;
+  margin: 0 4px 5px;
 }
 
 .mac-shell .sidebar-toolbar .section-header,
 .app-shell[data-theme="dark"].mac-shell .sidebar-toolbar .section-header {
   color: var(--mac-muted);
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 650;
 }
 
@@ -153,10 +155,10 @@
 .mac-shell .sidebar-collapse,
 .app-shell[data-theme="dark"].mac-shell .sidebar-add,
 .app-shell[data-theme="dark"].mac-shell .sidebar-collapse {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 7px;
   color: var(--mac-muted);
   background: transparent;
 }
@@ -174,30 +176,33 @@
   align-content: start;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 2px;
+  gap: 1px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 .mac-shell .mac-session-row {
-  grid-template-columns: 22px 30px minmax(0, 1fr) 50px;
-  min-height: 68px;
-  gap: 8px;
-  padding: 9px 8px;
-  border-radius: 9px;
+  grid-template-columns: 17px 24px minmax(0, 1fr) 40px;
+  min-height: 48px;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 0 !important;
+  border-radius: 8px;
   color: var(--mac-text);
   background: transparent;
+  box-shadow: none;
 }
 
 .mac-shell .mac-session-row:hover,
 .app-shell[data-theme="dark"].mac-shell .mac-session-row:hover {
-  background: color-mix(in srgb, var(--mac-surface-selected) 58%, transparent);
+  background: color-mix(in srgb, var(--mac-surface-selected) 46%, transparent);
 }
 
 .mac-shell .mac-session-row.active,
 .app-shell[data-theme="dark"].mac-shell .mac-session-row.active {
   outline: 0;
-  background: var(--mac-surface-selected);
+  background: color-mix(in srgb, var(--mac-surface-selected) 82%, transparent);
+  box-shadow: inset 0 0 0 1px var(--mac-line-soft);
 }
 
 .mac-shell .mac-session-row.active::before {
@@ -206,38 +211,41 @@
 
 .mac-shell .mac-session-index {
   color: var(--mac-subtle);
-  font-size: 11px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .mac-shell .mac-session-logo {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
 }
 
 .mac-shell .mac-session-logo .agent-logo,
 .mac-shell .mac-session-logo .agent-logo.compact {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
 }
 
 .mac-shell .mac-session-copy {
-  gap: 4px;
+  gap: 2px;
 }
 
 .mac-shell .mac-session-copy > strong {
   color: var(--mac-text);
-  font-size: 14px;
-  font-weight: 660;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 16px;
 }
 
 .mac-shell .mac-session-subline {
   display: flex;
   overflow: hidden;
   min-width: 0;
-  gap: 5px;
+  gap: 4px;
   white-space: nowrap;
 }
 
@@ -246,8 +254,9 @@
 .mac-shell .mac-session-channel,
 .app-shell[data-theme="dark"].mac-shell .mac-session-channel {
   color: var(--mac-muted);
-  font-size: 10.5px;
-  font-weight: 560;
+  font-size: 9px;
+  font-weight: 550;
+  line-height: 14px;
 }
 
 .mac-shell .mac-session-state {
@@ -263,9 +272,13 @@
 
 .mac-shell .mac-session-subline .session-id-tail {
   flex: 0 0 auto;
-  height: 17px;
-  max-width: 50px;
-  padding-inline: 5px;
+  height: 15px;
+  max-width: 46px;
+  padding-inline: 4px;
+  border: 0;
+  background: color-mix(in srgb, var(--mac-surface-selected) 58%, transparent);
+  font-size: 9px;
+  font-weight: 620;
 }
 
 .mac-shell .mac-session-state.running,
@@ -274,17 +287,19 @@
 .app-shell[data-theme="dark"].mac-shell .mac-session-state.running,
 .app-shell[data-theme="dark"].mac-shell .mac-session-state.connected,
 .app-shell[data-theme="dark"].mac-shell .mac-session-state.done {
-  color: #52c878;
+  color: #48bb70;
 }
 
 .mac-shell .mac-session-row-actions {
+  align-self: center;
   gap: 0;
 }
 
 .mac-shell .mac-session-more,
 .app-shell[data-theme="dark"].mac-shell .mac-session-more {
-  width: 25px;
-  height: 25px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
   color: var(--mac-muted);
   background: transparent;
 }
@@ -298,16 +313,16 @@
 .mac-shell .sidebar-version-label {
   flex: 0 0 auto;
   margin: 0;
-  padding: 8px 4px 4px;
+  padding: 6px 5px 3px;
   color: var(--mac-subtle);
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .mac-shell.sidebar-collapsed .mac-session-row,
 .mac-shell .sidebar.collapsed .mac-session-row {
   grid-template-columns: 1fr;
-  min-height: 46px;
-  padding: 4px 0;
+  min-height: 40px;
+  padding: 3px 0;
 }
 
 .mac-shell.sidebar-collapsed .mac-session-index,

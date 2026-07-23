@@ -21,6 +21,25 @@ final result: passed
 
 ---
 
+**2026-07-23 Mac Sidebar Density QA**
+- Selected visual source: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/call_3LdnahDUDZDFwPvTmkneSRgC.png`
+- Captured current state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/01-current-sidebar.png`
+- Final expanded state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/07-final-expanded.png`
+- Final collapsed state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/05-collapsed-final.png`
+- Before/after comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/03-before-vs-final.png`
+
+**Findings And Fixes**
+- Reduced session-row density from the previous oversized treatment to a compact Mac list with a `48px` minimum row, `22px` AI logo, `12px` title, and `9px` metadata.
+- Softened hover, selection, connection colors, and the four-character session suffix without removing useful state.
+- Reduced toolbar and action controls while preserving add, collapse, detach, settings, connection, and session selection behavior.
+- Verified both expanded and collapsed states. The two-line centered window title remains aligned after sidebar collapse.
+- Scope remains isolated to `.mac-shell`; iPhone and iPad styles were not changed.
+- `npm run build` and `npm run test:lifecycle` passed.
+
+final result: passed
+
+---
+
 **2026-07-23 Mac Main Workspace Option 1 QA**
 - Selected visual source: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/call_3LdnahDUDZDFwPvTmkneSRgC.png`
 - Final implementation: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-implementation-final.jpeg`
