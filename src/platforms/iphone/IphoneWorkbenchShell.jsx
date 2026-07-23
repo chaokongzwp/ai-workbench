@@ -394,11 +394,7 @@ function IphoneComposer({
                   {stopMode ? <Stop size={17} weight="fill" aria-hidden="true" /> : <ArrowUp size={17} weight="bold" aria-hidden="true" />}
                 </button>
               </>
-            ) : (
-              <button type="button" className="iphone-add-session-button" onClick={onOpenSettings}>
-                添加工作会话
-              </button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -554,6 +550,7 @@ export function IphoneWorkbenchShell({
     : connectionIsLive(connection)
       ? `${activeAgent.shortName} 已连接`
       : `${activeAgent.shortName} 未连接`;
+  const hasWorkSession = servers.length > 0 && isProfileReady;
   const editingServer = servers.find((server) => server.id === editingServerId) || servers.find((server) => server.id === activeServerId);
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const [sessionQuery, setSessionQuery] = useState("");
@@ -689,7 +686,7 @@ export function IphoneWorkbenchShell({
         className={`iphone-chat ${draggingFiles ? "file-drop-active" : ""}`}
         aria-label="当前对话"
         onDragEnter={(event) => {
-          if (!showComposer || !isProfileReady || !dataTransferHasFiles(event.dataTransfer)) return;
+          if (!showComposer || !hasWorkSession || !dataTransferHasFiles(event.dataTransfer)) return;
           event.preventDefault();
           setDraggingFiles(true);
         }}
@@ -704,7 +701,7 @@ export function IphoneWorkbenchShell({
         onDrop={(event) => {
           event.preventDefault();
           setDraggingFiles(false);
-          if (!showComposer || !isProfileReady) return;
+          if (!showComposer || !hasWorkSession) return;
           onAttachFiles?.(event.dataTransfer?.files);
         }}
       >
@@ -715,7 +712,15 @@ export function IphoneWorkbenchShell({
           </div>
         ) : null}
         <div className="iphone-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
-          {showConnectionSummary ? (
+          {!hasWorkSession ? (
+            <div className="iphone-empty-workspace">
+              <button type="button" onClick={onAddServer} aria-label="添加工作会话">
+                <Plus size={30} weight="regular" aria-hidden="true" />
+              </button>
+              <strong>添加工作会话</strong>
+            </div>
+          ) : null}
+          {hasWorkSession && showConnectionSummary ? (
             <ConnectionSummary
               profile={profile}
               connection={connection}
@@ -724,7 +729,7 @@ export function IphoneWorkbenchShell({
               profileReady={isProfileReady}
             />
           ) : null}
-          {shouldShowDiscovery ? (
+          {hasWorkSession && shouldShowDiscovery ? (
             <DiscoveryPanel
               discovery={discovery}
               profile={profile}
@@ -734,7 +739,7 @@ export function IphoneWorkbenchShell({
               onAddWorkdir={onAddWorkdir}
             />
           ) : null}
-          {messages.map((message) => (
+          {hasWorkSession ? messages.map((message) => (
             <MessageBubble
               key={message.id}
               message={message}
@@ -759,10 +764,10 @@ export function IphoneWorkbenchShell({
               onOpenSettings={onOpenSettingsFromMessage}
               onEditUserMessage={(text) => setComposer(text)}
             />
-          ))}
+          )) : null}
         </div>
 
-        {showComposer ? (
+        {showComposer && hasWorkSession ? (
           <IphoneComposer
             activeAgent={activeAgent}
             composer={composer}
