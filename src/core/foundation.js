@@ -355,8 +355,10 @@ export const serverPlatforms = [
 ];
 
 export const builtInAliyunVoiceConfig = {
-  apiKey: "",
-  workspaceId: "llm-0hn2qaqnqgcdfnbg",
+  apiKey: String(import.meta.env?.VITE_AIWB_DASHSCOPE_API_KEY || "").trim(),
+  workspaceId: String(
+    import.meta.env?.VITE_AIWB_DASHSCOPE_WORKSPACE_ID || "llm-0hn2qaqnqgcdfnbg",
+  ).trim(),
 };
 
 export const defaultProfile = {
@@ -2525,18 +2527,55 @@ export async function speakAssistantText(text, shouldContinue = () => true, voic
   if (!cleanText) return;
 
   if (!shouldContinue()) return;
+  const apiKey = String(voiceProfile.aliyunApiKey || builtInAliyunVoiceConfig.apiKey || "").trim();
+  const workspaceId = String(
+    voiceProfile.aliyunWorkspaceId || builtInAliyunVoiceConfig.workspaceId || "",
+  ).trim();
+  const voiceName = String(voiceProfile.ttsVoiceName || defaultProfile.ttsVoiceName).trim();
+  const model = String(voiceProfile.ttsModel || defaultProfile.ttsModel).trim();
+
+  if (!apiKey) {
+    const error = new Error("语音服务配置缺失，请安装包含阿里云语音配置的版本。");
+    await appLog("error", "voice.tts.blocked", {
+      reason: "missing_dashscope_api_key",
+      textLength: cleanText.length,
+      voiceName,
+      model,
+    });
+    throw error;
+  }
+
+  await appLog("info", "voice.tts.start", {
+    textLength: cleanText.length,
+    voiceName,
+    model,
+    workspaceConfigured: Boolean(workspaceId),
+  });
+
   try {
-    await VoiceWorkbench.speak?.({
+    const result = await VoiceWorkbench.speak?.({
       text: cleanText,
       locale: "zh-CN",
       streaming: true,
-      apiKey: voiceProfile.aliyunApiKey,
-      workspaceId: voiceProfile.aliyunWorkspaceId,
-      voiceName: voiceProfile.ttsVoiceName,
-      model: voiceProfile.ttsModel,
+      apiKey,
+      workspaceId,
+      voiceName,
+      model,
     });
-    return;
+    await appLog("info", "voice.tts.success", {
+      textLength: cleanText.length,
+      voiceName,
+      model,
+      provider: String(result?.provider || ""),
+    });
+    return result;
   } catch (error) {
+    await appLog("error", "voice.tts.failed", {
+      error: shortError(error),
+      textLength: cleanText.length,
+      voiceName,
+      model,
+    });
     throw error;
   }
 }

@@ -103,6 +103,12 @@ async function preflight() {
   await run("xcrun", ["--find", "xcodebuild"]);
 
   if (!existsSync(exportOptions)) fail(`缺少 TestFlight 导出配置：${exportOptions}`);
+  if (!officialVoiceApiKey()) {
+    fail(
+      "正式发布缺少阿里云语音配置。请先运行 npm run voice:configure-local，生成不会提交到 Git 的 .env.local。",
+    );
+  }
+  log("阿里云语音配置：已就绪（密钥未输出）\n");
 
   const identities = await capture("security", ["find-identity", "-v"]);
   const escapedTeam = teamId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -115,6 +121,18 @@ async function preflight() {
   if (status.trim()) {
     log("提示：工作区存在未提交修改；发布会保留这些修改并按当前内容构建。\n");
   }
+}
+
+function officialVoiceApiKey() {
+  const processKey = String(process.env.VITE_AIWB_DASHSCOPE_API_KEY || "").trim();
+  if (processKey) return processKey;
+
+  const localEnvPath = join(projectRoot, ".env.local");
+  if (!existsSync(localEnvPath)) return "";
+  const localEnv = readFileSync(localEnvPath, "utf8");
+  return String(
+    localEnv.match(/^VITE_AIWB_DASHSCOPE_API_KEY=(.*)$/m)?.[1] || "",
+  ).trim();
 }
 
 async function prepareIosProject() {

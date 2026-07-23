@@ -1,6 +1,6 @@
 {
   "name": "ecs-ai-workbench",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",
@@ -47,6 +47,7 @@
     "agent:export:github": "node scripts/export-agent-github.mjs",
     "agent:publish": "node scripts/release-agent.mjs",
     "agent:publish:oss": "node scripts/publish-agent-oss.mjs",
+    "voice:configure-local": "node scripts/configure-local-voice.mjs",
     "test:lifecycle": "node scripts/test-message-lifecycle.mjs"
   },
   "dependencies": {

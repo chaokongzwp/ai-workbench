@@ -16,6 +16,7 @@ index-*.js
 # Local env and credentials
 .env
 .env.*
+!.env.example
 *.p8
 *.mobileprovision
 *.provisionprofile
