@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, ArrowSquareOut, CopySimple, DotsThree, Plus, SidebarSimple } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  ArrowSquareOut,
+  CopySimple,
+  DotsThree,
+  GearSix,
+  Plus,
+  SidebarSimple,
+} from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -360,8 +368,10 @@ export function NavigationPanel({
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
+  onOpenSettings,
   onTestConnection,
   onDisconnectServer,
+  onRefreshOutput,
   busy,
   variant = "default",
   emptyState = null,
@@ -481,6 +491,9 @@ export function NavigationPanel({
                 onKeyDown={(event) => selectServerFromCard(event, server.id)}
               >
                 <span className="mac-session-index">{String(index + 1).padStart(2, "0")}</span>
+                <span className="mac-session-logo">
+                  <AgentLogo agentId={server.profile?.agentId || "codex"} compact />
+                </span>
                 <span className="mac-session-copy">
                   <strong>{taskName}</strong>
                   <span className="mac-session-subline">
@@ -682,6 +695,33 @@ export function NavigationPanel({
       </div>
 
       {macVariant ? <div className="sidebar-version-label">{appDisplayVersion}</div> : null}
+      {macVariant ? (
+        <div className="mac-sidebar-footer">
+          {onRefreshOutput ? (
+            <button
+              type="button"
+              className="mac-sidebar-tool"
+              aria-label="同步当前会话"
+              title="同步当前会话"
+              onClick={() => onRefreshOutput()}
+              disabled={busy}
+            >
+              <ArrowClockwise size={17} weight="regular" aria-hidden="true" />
+            </button>
+          ) : null}
+          {onOpenSettings ? (
+            <button
+              type="button"
+              className="mac-sidebar-tool"
+              aria-label="全局设置"
+              title="全局设置"
+              onClick={onOpenSettings}
+            >
+              <GearSix size={17} weight="regular" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
 }

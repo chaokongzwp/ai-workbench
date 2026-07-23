@@ -5,6 +5,7 @@ import "./styles.css";
 import "./settings-redesign.css";
 import "./platforms/ipad/ipad.css";
 import "./utility-controls.css";
+import "./platforms/mac/mac.css";
 
 function renderFatalError(error) {
   const root = document.getElementById("root");

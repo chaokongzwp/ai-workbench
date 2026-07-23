@@ -164,7 +164,7 @@ export function MacWorkbenchShell({
     <main className={shellClassName} data-theme={resolvedTheme} data-appearance={appearanceMode} data-platform={platform}>
       <TopBar
         sessionName={macSessionTitle}
-        sessionSubtitle={`${activeMachineName} · ${activeAgent.shortName} · ${profile.workdir || "未选择工作目录"}`}
+        sessionSubtitle={`${activeMachineName} · ${activeAgent.shortName}`}
         showSessionName
         connection={connection}
         activeTaskRunning={activeTaskRunning}
@@ -274,6 +274,13 @@ export function MacWorkbenchShell({
           {showComposer ? (
             <Composer
               compact
+              compactPlaceholder={
+                activeTaskRunning
+                  ? ""
+                  : isProfileReady
+                    ? `告诉 ${activeAgent.shortName} 你想做什么`
+                    : "选择工作会话后即可开始"
+              }
               activeAgent={activeAgent}
               composer={composer}
               imageAttachments={imageAttachments}

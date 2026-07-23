@@ -21,6 +21,35 @@ final result: passed
 
 ---
 
+**2026-07-23 Mac Main Workspace Option 1 QA**
+- Selected visual source: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/call_3LdnahDUDZDFwPvTmkneSRgC.png`
+- Final implementation: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-implementation-final.jpeg`
+- Full side-by-side comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-comparison-final.png`
+- Focused composer comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-composer-comparison.png`
+- Focused sidebar comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-sidebar-comparison.png`
+- Viewport: `1177 x 768`. The generated source was normalized to the same viewport for direct composition and relative-size review.
+- State: the source contains illustrative running-task content. The implementation uses the user's existing `us` Claude session and its real short local conversation; no fake server or conversation data was introduced.
+
+**Findings**
+- No actionable P0/P1/P2 findings remain.
+- Shell: the Mac workspace now has the selected dark continuous canvas, a stable wide sidebar, a quiet centered title bar, and a reading column aligned with the source.
+- Sidebar: AI logos, task names, connection state, session suffix, neutral selection, compact actions, version, sync, and settings remain readable. The collapsed state keeps one icon per session and preserves expand, sync, and settings access.
+- Conversation: user messages remain compact right-aligned bubbles; assistant output is unframed, uses a readable measure, and keeps copy controls quiet.
+- Composer: the input is a compact two-row surface with a visible contextual placeholder, neutral utility icons, and a circular white-gray send control. Running tasks still switch to the existing stop behavior.
+- Intentional differences: the source shows two sample sessions and a long running response; the implementation keeps the user's five real sessions and a completed two-message exchange. Existing product logos and real connection states are preserved.
+
+**Interaction Verification**
+- Sidebar collapse and expand: passed.
+- Composer focus, text entry, send-enabled state, and clear without dispatching a remote task: passed.
+- Existing settings, add-session, detached-window, sync, file, attachment, and send controls remain wired to their original handlers.
+- Scope check: styles are isolated under `.mac-shell`; iPhone and iPad platform styles were not changed.
+- Production build: `npm run build` passed.
+- Message lifecycle regression: `npm run test:lifecycle` passed.
+
+final result: passed
+
+---
+
 **2026-07-10 Mac Workspace Redesign QA**
 - Visual source: `/Users/zwp/.codex/generated_images/019f467a-d5c1-75d2-a3a9-405bc7a29b0e/ig_0b2b9406aadcf9c9016a4f9a67926c8191a22f35b2d603007b.png`
 - Source crop: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/source-ipad-expanded-crop.png`
