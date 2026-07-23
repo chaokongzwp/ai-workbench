@@ -1043,6 +1043,9 @@ if [ "$#" -gt 0 ]; then
 fi
 
 case "$AIWB_CMD" in
+  --version|version)
+    printf "%s\n" "$AIWB_VERSION"
+    ;;
   status)
     if [ "$#" -gt 1 ]; then
       aiwb_print_task "$2"

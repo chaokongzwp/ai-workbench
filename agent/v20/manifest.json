@@ -3,8 +3,8 @@
   "version": "20",
   "scriptUrl": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v20/aiwbctl",
   "scriptKey": "agent/v20/aiwbctl",
-  "sha256": "d5aa963f54c9ba3c9492e71bc6dc5a32186e905d79cad56f8090915720181f5d",
+  "sha256": "cf5787c0d4da1beaf0a30e397017a02e96582ec62c277918e80417287422fdbd",
   "runtime": "linux-shell",
   "source": "github",
-  "publishedAt": "2026-07-22T14:15:17.502Z"
+  "publishedAt": "2026-07-23T01:22:32.489Z"
 }
