@@ -21,6 +21,29 @@ final result: passed
 
 ---
 
+**Mac Detached Conversation Window**
+- Trigger: opening a session in its own Mac window left the hidden sidebar grid column active, compressing messages, file cards, and the composer into a narrow strip.
+- Scope: Mac-only CSS in `src/platforms/mac/mac.css`; iPhone and iPad shells were not changed.
+- Fix: detached windows now force a one-column workspace, reset the sidebar width to zero, keep the conversation in column one, and use responsive message/composer gutters.
+
+**Detached Window Evidence**
+- Main window before opening: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/01-main-before.png`
+- Detached window before fix: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/02-detached-before.png`
+- Detached window after fix: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/03-detached-after.png`
+- Combined comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/04-before-after.png`
+
+**Detached Window Verification**
+- Window size: approximately `900 x 750`.
+- Messages use the available width and remain readable.
+- File card actions remain on one row without clipping.
+- Composer stays docked, full-width within stable side gutters.
+- `npm run build`: passed.
+- `npm run test:lifecycle`: passed.
+
+final result: passed
+
+---
+
 **2026-07-23 Mac Sidebar Density QA**
 - Selected visual source: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/call_3LdnahDUDZDFwPvTmkneSRgC.png`
 - Captured current state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/01-current-sidebar.png`

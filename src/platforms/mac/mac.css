@@ -645,3 +645,55 @@
     padding-inline: 26px;
   }
 }
+
+/*
+ * Detached conversations do not render the sidebar. Keep these overrides after
+ * the responsive desktop rules so the missing sidebar never reserves a column.
+ */
+.mac-shell.detached-chat-window {
+  --mac-sidebar-width: 0px;
+  --mac-message-width: 820px;
+  min-width: 0;
+}
+
+.mac-shell.detached-chat-window .topbar,
+.app-shell[data-theme="dark"].mac-shell.detached-chat-window .topbar {
+  grid-template-columns: minmax(0, 1fr) 54px;
+}
+
+.mac-shell.detached-chat-window .workspace,
+.app-shell[data-theme="dark"].mac-shell.detached-chat-window .workspace {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.mac-shell.detached-chat-window .conversation,
+.app-shell[data-theme="dark"].mac-shell.detached-chat-window .conversation {
+  grid-column: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.mac-shell.detached-chat-window .conversation-scroll,
+.app-shell[data-theme="dark"].mac-shell.detached-chat-window .conversation-scroll {
+  padding-right: clamp(24px, 6vw, 72px);
+  padding-left: clamp(24px, 6vw, 72px);
+}
+
+.mac-shell.detached-chat-window .conversation .composer.compact,
+.app-shell[data-theme="dark"].mac-shell.detached-chat-window .conversation .composer.compact {
+  width: min(820px, calc(100% - 48px));
+}
+
+@media (max-width: 620px) {
+  .mac-shell.detached-chat-window .conversation-scroll,
+  .app-shell[data-theme="dark"].mac-shell.detached-chat-window .conversation-scroll {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .mac-shell.detached-chat-window .conversation .composer.compact,
+  .app-shell[data-theme="dark"].mac-shell.detached-chat-window .conversation .composer.compact {
+    width: calc(100% - 28px);
+    margin-bottom: 12px;
+  }
+}
