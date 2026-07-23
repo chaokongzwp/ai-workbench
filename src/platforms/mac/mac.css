@@ -16,7 +16,7 @@
   --mac-muted: #777b84;
   --mac-subtle: #999da6;
   --mac-message-width: 960px;
-  grid-template-rows: 40px minmax(0, 1fr) auto;
+  grid-template-rows: 46px minmax(0, 1fr) auto;
   color: var(--mac-text);
   background: var(--mac-canvas);
 }
@@ -38,7 +38,7 @@
 .mac-shell .topbar,
 .app-shell[data-theme="dark"].mac-shell .topbar {
   position: relative;
-  min-height: 40px;
+  min-height: 46px;
   grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr) 54px;
   padding: 0 10px 0 0;
   border-bottom: 1px solid var(--mac-line-soft);
@@ -53,31 +53,49 @@
   top: 0;
   left: 50%;
   z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  grid-template-rows: 18px 15px;
+  justify-content: center;
+  align-content: center;
+  column-gap: 6px;
+  row-gap: 1px;
   width: min(620px, calc(100% - 220px));
-  height: 40px;
-  gap: 8px;
+  height: 46px;
   transform: translateX(-50%);
   pointer-events: none;
 }
 
 .mac-shell .topbar-session strong,
 .app-shell[data-theme="dark"].mac-shell .topbar-session strong {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  max-width: 100%;
   color: var(--mac-text);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 680;
+  line-height: 18px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mac-shell .topbar-session-detail,
 .app-shell[data-theme="dark"].mac-shell .topbar-session-detail {
+  overflow: hidden;
   max-width: min(34vw, 340px);
   color: var(--mac-muted);
   font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mac-shell .topbar-session-status,
 .app-shell[data-theme="dark"].mac-shell .topbar-session-status {
   color: var(--mac-muted);
   font-size: 11px;
+  line-height: 15px;
 }
 
 .mac-shell .topbar-logo-button,
@@ -91,7 +109,7 @@
 .mac-shell .topbar-actions,
 .app-shell[data-theme="dark"].mac-shell .topbar-actions {
   position: absolute;
-  top: 6px;
+  top: 9px;
   right: 44px;
   z-index: 2;
   grid-column: auto;
