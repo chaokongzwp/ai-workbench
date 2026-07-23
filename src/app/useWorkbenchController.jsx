@@ -79,6 +79,7 @@ const {
   builtInAliyunVoiceConfig,
   chineseNumber,
   classifyAgentFailure,
+  clearBrowserDiagnosticLogs,
   cloudSyncDefaultEndpoint,
   cloudSyncSessionKeyForServer,
   claudeSetupAutomationSnippet,
@@ -2004,8 +2005,14 @@ export function useWorkbenchController() {
     if (!bridge?.onProfileUpdated) return undefined;
     return bridge.onProfileUpdated((payload) => {
       if (!workspaceStoreHasServers(payload?.profile)) return;
+      if (payload?.replaceMessages && typeof window !== "undefined" && workspaceSaveTimerRef.current) {
+        window.clearTimeout(workspaceSaveTimerRef.current);
+        workspaceSaveTimerRef.current = null;
+      }
       const loaded = normalizeWorkspaceStore(payload.profile);
-      loaded.servers = dedupeServerRemoteTaskMessages(mergeLocalMessageHistory(loaded.servers));
+      loaded.servers = dedupeServerRemoteTaskMessages(
+        payload?.replaceMessages ? loaded.servers : mergeLocalMessageHistory(loaded.servers),
+      );
       loaded.servers = preserveVolatileLocalServers(loaded.servers);
       const active =
         loaded.servers.find((server) => server.id === desktopWindowContext.serverId) ||
@@ -2391,6 +2398,63 @@ export function useWorkbenchController() {
       ...result,
       message: "诊断日志已打包，可以直接分享给微信或保存到文件。",
     };
+  }
+
+  async function clearWorkspaceCache({ logs = false, messages = false } = {}) {
+    const clearLogs = logs === true;
+    const clearMessages = messages === true;
+    if (!clearLogs && !clearMessages) return { ok: true, message: "没有选择要清理的内容。" };
+
+    const snapshot = serversRef.current.length ? serversRef.current : servers;
+    if (clearMessages && snapshot.some((server) => serverTaskRunning(server))) {
+      throw new Error("还有任务正在运行。请等待任务完成或取消任务后，再清空消息列表。");
+    }
+
+    setBusy(true);
+    try {
+      let clearedMessageCount = 0;
+      if (clearMessages) {
+        if (typeof window !== "undefined" && workspaceSaveTimerRef.current) {
+          window.clearTimeout(workspaceSaveTimerRef.current);
+          workspaceSaveTimerRef.current = null;
+        }
+        const nextServers = snapshot.map((server) => {
+          clearedMessageCount += Array.isArray(server.messages) ? server.messages.length : 0;
+          return {
+            ...server,
+            messages: [],
+            rawOutput: "",
+            task: { state: "idle" },
+            unreadResult: null,
+          };
+        });
+        const activeId = activeServerIdRef.current || activeServerId;
+        const persistedActiveId = desktopWindowContext.detachedChat
+          ? primaryActiveServerIdRef.current || activeId
+          : activeId;
+        const profileStore = serializeWorkspaceStore(nextServers, persistedActiveId);
+
+        setServers(nextServers);
+        serversRef.current = nextServers;
+        setRawOutput("");
+        setTaskNotice(null);
+        saveLocalMessageHistory(nextServers);
+        saveWorkspaceMirror(profileStore);
+        await SSHWorkbench.saveProfile({ profile: profileStore, replaceMessages: true });
+      }
+
+      if (clearLogs) {
+        await SSHWorkbench.clearLogs();
+        clearBrowserDiagnosticLogs();
+      }
+
+      const parts = [];
+      if (clearMessages) parts.push(`已清空 ${clearedMessageCount} 条本地消息`);
+      if (clearLogs) parts.push("已清空诊断日志");
+      return { ok: true, clearedMessageCount, message: `${parts.join("，")}。会话和服务器配置已保留。` };
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function importWorkspaceConfig(fileText) {
@@ -6842,6 +6906,7 @@ export function useWorkbenchController() {
     onGitDownload: editingServerId && editingServerId !== "global" ? runGitDownloadForEditingServer : undefined,
     onExportConfig: exportWorkspaceConfig,
     onExportLogs: exportDiagnosticsLogs,
+    onClearCache: clearWorkspaceCache,
     onImportConfig: importWorkspaceConfig,
     onCloudPullConfig: pullCloudWorkspaceConfig,
     onCloudPushConfig: pushCloudWorkspaceConfig,

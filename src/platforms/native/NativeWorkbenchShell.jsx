@@ -118,6 +118,7 @@ export function NativeWorkbenchShell({
   onGitDownload,
   onExportConfig,
   onExportLogs,
+  onClearCache,
   onImportConfig,
   onCloudPullConfig,
   onCloudPushConfig,
@@ -450,6 +451,7 @@ export function NativeWorkbenchShell({
           onGitDownload={onGitDownload}
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
+          onClearCache={onClearCache}
           onImportConfig={onImportConfig}
           onCloudPullConfig={onCloudPullConfig}
           onCloudPushConfig={onCloudPushConfig}

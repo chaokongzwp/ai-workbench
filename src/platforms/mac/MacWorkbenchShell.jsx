@@ -121,6 +121,7 @@ export function MacWorkbenchShell({
   onGitDownload,
   onExportConfig,
   onExportLogs,
+  onClearCache,
   onImportConfig,
   onCloudPullConfig,
   onCloudPushConfig,
@@ -407,6 +408,7 @@ export function MacWorkbenchShell({
           onGitDownload={onGitDownload}
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
+          onClearCache={onClearCache}
           onImportConfig={onImportConfig}
           onCloudPullConfig={onCloudPullConfig}
           onCloudPushConfig={onCloudPushConfig}

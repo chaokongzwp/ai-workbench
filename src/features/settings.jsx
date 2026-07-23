@@ -576,6 +576,7 @@ export function SettingsPanel({
   onGitDownload,
   onExportConfig,
   onExportLogs,
+  onClearCache,
   onImportConfig,
   onCloudPullConfig,
   onCloudPushConfig,
@@ -585,6 +586,8 @@ export function SettingsPanel({
 }) {
   const [migrationBusy, setMigrationBusy] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState(null);
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const [cacheStatus, setCacheStatus] = useState(null);
   const [cloudSyncBusy, setCloudSyncBusy] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState(null);
   const [cloudSyncForm, setCloudSyncForm] = useState(() => ({
@@ -831,6 +834,29 @@ export function SettingsPanel({
     }
   }
 
+  async function handleClearCache(options) {
+    if (!onClearCache || cacheBusy) return;
+    const clearLogs = options?.logs === true;
+    const clearMessages = options?.messages === true;
+    const confirmation = clearLogs && clearMessages
+      ? "清空当前设备上的全部诊断日志和聊天消息？\n\n服务器、密码、工作目录和会话配置会保留。此操作不可恢复。"
+      : clearMessages
+        ? "清空当前设备上的全部聊天消息？\n\n服务器、密码、工作目录和会话配置会保留。此操作不可恢复。"
+        : "清空当前设备上的诊断日志？\n\n已经导出的日志文件不会受到影响。";
+    if (!window.confirm(confirmation)) return;
+
+    setCacheBusy(true);
+    setCacheStatus({ tone: "loading", message: "正在清理当前设备的缓存..." });
+    try {
+      const result = await onClearCache({ logs: clearLogs, messages: clearMessages });
+      setCacheStatus({ tone: "done", message: result?.message || "缓存已清理。" });
+    } catch (error) {
+      setCacheStatus({ tone: "error", message: shortError(error) });
+    } finally {
+      setCacheBusy(false);
+    }
+  }
+
   async function handleImportConfigFile(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -931,6 +957,7 @@ export function SettingsPanel({
     "global-voice": "语音与播放",
     "global-cloud-sync": "云端配置",
     "global-migration": "配置迁移",
+    "global-storage": "存储与缓存",
     "global-main-ai": "主 AI",
   };
   const panelTitle = pageTitles[settingsPage] || pageTitles.root;
@@ -948,6 +975,18 @@ export function SettingsPanel({
   const currentAgent = agentById(draftProfile.agentId || defaultProfile.agentId);
   const currentModel = agentModelLabel(draftProfile.agentId || defaultProfile.agentId, draftProfile.aiModel || "") || "默认模型";
   const selectedSessionCount = Array.isArray(settingsSelectedSessions) ? settingsSelectedSessions.length : 0;
+  const totalMessageCount = useMemo(
+    () =>
+      (Array.isArray(servers) ? servers : []).reduce(
+        (count, server) => count + (Array.isArray(server?.messages) ? server.messages.length : 0),
+        0,
+      ),
+    [servers],
+  );
+  const runningTaskCount = useMemo(
+    () => (Array.isArray(servers) ? servers : []).filter((server) => server?.task?.state === "running").length,
+    [servers],
+  );
   const settingsPageNeedsSave = [
     "session-general",
     "global-appearance",
@@ -1196,12 +1235,15 @@ export function SettingsPanel({
                 detail="导入或导出会话配置"
                 onClick={() => setSettingsPage("global-migration")}
               />
-              <SettingsActionRow
-                icon={FileZip}
-                title="导出诊断日志"
-                detail="打包连接、Agent 和运行日志，保存后可以直接发送"
-                onClick={handleExportLogs}
-                disabled={busy || migrationBusy || !onExportLogs}
+              <SettingsMenuRow
+                icon={HardDrives}
+                title="存储与缓存"
+                detail="导出或清理当前设备的日志和聊天消息"
+                value={`${totalMessageCount} 条消息`}
+                onClick={() => {
+                  setCacheStatus(null);
+                  setSettingsPage("global-storage");
+                }}
               />
             </SettingsSection>
             {migrationStatus ? (
@@ -1589,6 +1631,72 @@ export function SettingsPanel({
             </SettingsSection>
             {migrationStatus ? (
               <p className={`settings-page-status ${migrationStatus.tone || ""}`}>{migrationStatus.message}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {globalSettings && settingsPage === "global-storage" ? (
+          <div className="settings-page-content">
+            <SettingsSection
+              title="本机数据"
+              footer={
+                runningTaskCount > 0
+                  ? `当前有 ${runningTaskCount} 个任务正在运行。为避免丢失任务映射，任务结束前不能清空消息。`
+                  : "清理操作只影响当前设备，不会删除服务器文件、远端 AI 会话或云端配置。"
+              }
+            >
+              <SettingsStatusRow
+                icon={TextT}
+                title="聊天消息"
+                detail="保存在当前设备，用于重新打开 App 后恢复聊天内容"
+                value={`${totalMessageCount} 条`}
+                tone="neutral"
+              />
+              <SettingsStatusRow
+                icon={FileZip}
+                title="诊断日志"
+                detail="包含连接、Agent 和运行状态，可先导出再清理"
+                value="本机"
+                tone="neutral"
+              />
+            </SettingsSection>
+            <SettingsSection title="日志">
+              <SettingsActionRow
+                icon={FileZip}
+                title="导出诊断日志"
+                detail="打包后可以保存或直接分享"
+                onClick={handleExportLogs}
+                disabled={busy || migrationBusy || cacheBusy || !onExportLogs}
+              />
+              <SettingsActionRow
+                icon={Trash}
+                title="清空诊断日志"
+                detail="删除当前设备内尚未导出的诊断记录"
+                destructive
+                onClick={() => handleClearCache({ logs: true })}
+                disabled={busy || cacheBusy || !onClearCache}
+              />
+            </SettingsSection>
+            <SettingsSection title="聊天记录">
+              <SettingsActionRow
+                icon={Trash}
+                title="清空消息列表"
+                detail="删除所有会话在当前设备上的聊天内容，保留连接配置"
+                destructive
+                onClick={() => handleClearCache({ messages: true })}
+                disabled={busy || cacheBusy || runningTaskCount > 0 || !onClearCache}
+              />
+              <SettingsActionRow
+                icon={Trash}
+                title="清空全部缓存"
+                detail="同时删除诊断日志和本地聊天消息"
+                destructive
+                onClick={() => handleClearCache({ logs: true, messages: true })}
+                disabled={busy || cacheBusy || runningTaskCount > 0 || !onClearCache}
+              />
+            </SettingsSection>
+            {cacheStatus ? (
+              <p className={`settings-page-status ${cacheStatus.tone || ""}`}>{cacheStatus.message}</p>
             ) : null}
           </div>
         ) : null}

@@ -220,11 +220,11 @@ function mergeWorkspaceProfile(currentProfile = {}, incomingProfile = {}) {
   };
 }
 
-function broadcastProfileUpdated(profile, senderWebContentsId) {
+function broadcastProfileUpdated(profile, senderWebContentsId, metadata = {}) {
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
     if (window.webContents.id === senderWebContentsId) continue;
-    window.webContents.send("aiwb:profile-updated", { profile });
+    window.webContents.send("aiwb:profile-updated", { profile, ...metadata });
   }
 }
 
@@ -2332,6 +2332,7 @@ ipcMain.handle("aiwb:stop-speech-output", async () => {
 
 ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
   const incomingProfile = payload.profile && typeof payload.profile === "object" ? payload.profile : {};
+  const replaceMessages = payload.replaceMessages === true;
   const senderId = event.sender.id;
   const saveOperation = profileSaveChain.then(async () => {
     const filePath = profileFilePath();
@@ -2347,7 +2348,7 @@ ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
         throw new Error("本地会话配置暂时无法读取，已停止覆盖写入以保护现有记录。");
       }
     }
-    const rawProfile = mergeWorkspaceProfile(currentProfile, incomingProfile);
+    const rawProfile = replaceMessages ? incomingProfile : mergeWorkspaceProfile(currentProfile, incomingProfile);
     const { passwordEncrypted, payloadEncrypted, insecurePasswordStorage, ...rest } = rawProfile;
     const profile = encryptProfilePayload(rest);
     await appendPersistentLog("info", "profile.native.save.start", {
@@ -2366,7 +2367,7 @@ ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
       serverCount: Array.isArray(rawProfile.servers) ? rawProfile.servers.length : 0,
       path: filePath,
     });
-    broadcastProfileUpdated(rawProfile, senderId);
+    broadcastProfileUpdated(rawProfile, senderId, { replaceMessages });
     return { ok: true, profile: rawProfile };
   });
   profileSaveChain = saveOperation.catch(() => {});
@@ -2402,6 +2403,13 @@ ipcMain.handle("aiwb:append-log", async (_event, payload = {}) => {
 
 ipcMain.handle("aiwb:export-logs", async (_event, payload = {}) => {
   return exportLogs(payload);
+});
+
+ipcMain.handle("aiwb:clear-logs", async () => {
+  const dir = diagnosticLogDir();
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  return { ok: true };
 });
 
 ipcMain.handle("aiwb:open-chat-window", async (_event, payload = {}) => {

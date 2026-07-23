@@ -937,7 +937,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "appendLog", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getAppInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "haptic", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "exportLogs", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "exportLogs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearLogs", returnType: CAPPluginReturnPromise)
     ]
 
     private let keychainService = "com.beexofficial.aiworkbench.connection"
@@ -1303,6 +1304,32 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             } catch {
                 DispatchQueue.main.async {
                     call.reject("导出诊断日志失败：\(self.safeErrorMessage(error))", "DIAGNOSTICS_EXPORT_FAILED", error)
+                }
+            }
+        }
+    }
+
+    @objc func clearLogs(_ call: CAPPluginCall) {
+        diagnosticLogQueue.async {
+            do {
+                let directory = try self.ensureDiagnosticLogDirectory()
+                let files = try FileManager.default.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: nil
+                )
+                for file in files where file.lastPathComponent.hasSuffix(".jsonl") {
+                    try FileManager.default.removeItem(at: file)
+                }
+                DispatchQueue.main.async {
+                    call.resolve(["ok": true])
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    call.reject(
+                        "清空诊断日志失败：\(self.safeErrorMessage(error))",
+                        "DIAGNOSTICS_CLEAR_FAILED",
+                        error
+                    )
                 }
             }
         }

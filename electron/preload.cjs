@@ -66,4 +66,7 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   exportLogs(payload) {
     return ipcRenderer.invoke("aiwb:export-logs", payload);
   },
+  clearLogs() {
+    return ipcRenderer.invoke("aiwb:clear-logs");
+  },
 });

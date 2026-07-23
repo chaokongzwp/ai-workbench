@@ -527,6 +527,7 @@ export function IphoneWorkbenchShell({
   onGitDownload,
   onExportConfig,
   onExportLogs,
+  onClearCache,
   onImportConfig,
   onCloudPullConfig,
   onCloudPushConfig,
@@ -950,6 +951,7 @@ export function IphoneWorkbenchShell({
           onGitDownload={onGitDownload}
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
+          onClearCache={onClearCache}
           onImportConfig={onImportConfig}
           onCloudPullConfig={onCloudPullConfig}
           onCloudPushConfig={onCloudPushConfig}

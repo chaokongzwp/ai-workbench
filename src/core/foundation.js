@@ -61,9 +61,9 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       if (bridge?.routeIntent) return bridge.routeIntent(payload);
       throw new Error("浏览器预览不能调用主 AI，请在 Mac、iPhone 或 iPad App 中测试。");
     },
-    async saveProfile({ profile }) {
+    async saveProfile({ profile, replaceMessages = false }) {
       const bridge = desktopBridge();
-      if (bridge?.saveProfile) return bridge.saveProfile({ profile });
+      if (bridge?.saveProfile) return bridge.saveProfile({ profile, replaceMessages });
       localStorage.setItem("ai-workbench-profile", JSON.stringify(profile ?? {}));
       return { ok: true };
     },
@@ -120,6 +120,12 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       return { ok: true, name };
+    },
+    async clearLogs() {
+      const bridge = desktopBridge();
+      if (bridge?.clearLogs) return bridge.clearLogs();
+      clearBrowserDiagnosticLogs();
+      return { ok: true };
     },
   }),
 });
@@ -729,6 +735,15 @@ export function loadBrowserDiagnosticLogs() {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+export function clearBrowserDiagnosticLogs() {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(browserDiagnosticLogStorageKey);
+  } catch {
+    // Diagnostics are best-effort cache data.
   }
 }
 

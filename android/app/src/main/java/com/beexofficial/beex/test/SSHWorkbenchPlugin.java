@@ -273,6 +273,28 @@ public class SSHWorkbenchPlugin extends Plugin {
         });
     }
 
+    @PluginMethod
+    public void clearLogs(PluginCall call) {
+        executor.execute(() -> {
+            try {
+                File directory = ensureDiagnosticsDir();
+                File[] files = directory.listFiles((dir, name) -> name.endsWith(".jsonl"));
+                if (files != null) {
+                    for (File file : files) {
+                        if (!file.delete() && file.exists()) {
+                            throw new IOException("Could not delete " + file.getName());
+                        }
+                    }
+                }
+                JSObject result = new JSObject();
+                result.put("ok", true);
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject("清空诊断日志失败：" + safeError(error), "DIAGNOSTICS_CLEAR_FAILED", error);
+            }
+        });
+    }
+
     private String executeWithRetry(SSHConfig config, String requestId) throws Exception {
         try {
             return execute(config);
