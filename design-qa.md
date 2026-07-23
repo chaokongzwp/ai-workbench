@@ -21,6 +21,28 @@ final result: passed
 
 ---
 
+**2026-07-23 iPhone Add Session QA**
+- Device: iPhone 16 Pro simulator, iOS 18.5.
+- Before: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/01-add-session-before.png`
+- After: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/02-add-session-after.png`
+- Safe-area comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/04-add-session-comparison.png`
+- Keyboard comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/06-keyboard-comparison.png`
+
+**Findings And Fixes**
+- The compact add-session header overrode the iPhone safe-area padding, placing the title under the Dynamic Island.
+- Editable controls used text smaller than 16px, which triggered iOS WebView auto-zoom and horizontal panning when the keyboard opened.
+- Added an iPhone-only stylesheet that restores safe-area-aware header sizing, keeps editable controls at the native 16px minimum, and prevents horizontal overscroll.
+- Scope is isolated to `.iphone-shell`; Mac and iPad styles are unchanged.
+
+**Verification**
+- Add-session header remains fully visible below the status area: passed.
+- Keyboard opens without horizontal zoom or clipped field labels: passed.
+- Native simulator build: passed.
+
+final result: passed
+
+---
+
 **Mac Detached Conversation Window**
 - Trigger: opening a session in its own Mac window left the hidden sidebar grid column active, compressing messages, file cards, and the composer into a narrow strip.
 - Scope: Mac-only CSS in `src/platforms/mac/mac.css`; iPhone and iPad shells were not changed.

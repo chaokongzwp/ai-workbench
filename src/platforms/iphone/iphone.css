@@ -1,0 +1,39 @@
+/*
+ * iPhone-only layout corrections.
+ * Keep phone safe-area and keyboard behavior isolated from iPad and Mac.
+ */
+
+.iphone-shell .settings-panel.add-session-mode > header.settings-navigation {
+  min-height: calc(66px + var(--safe-top));
+  padding:
+    calc(12px + var(--safe-top))
+    max(16px, var(--safe-right))
+    10px
+    max(16px, var(--safe-left));
+}
+
+/*
+ * iOS zooms and horizontally pans a WebView when an editable control uses text
+ * smaller than 16px. A native-sized control font keeps the form anchored while
+ * the keyboard opens.
+ */
+.iphone-shell .settings-panel :is(input, select, textarea) {
+  font-size: 16px !important;
+}
+
+.iphone-shell .settings-panel,
+.iphone-shell .settings-scroll-body {
+  width: 100%;
+  max-width: 100%;
+  overscroll-behavior-x: none;
+}
+
+.iphone-shell .settings-scroll-body {
+  padding-right: max(12px, var(--safe-right));
+  padding-left: max(12px, var(--safe-left));
+}
+
+.iphone-shell .settings-panel.add-session-mode .settings-scroll-body {
+  scroll-padding-top: 12px;
+  scroll-padding-bottom: 24px;
+}
