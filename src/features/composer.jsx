@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { File as FileIcon, Paperclip, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, DownloadSimple, File as FileIcon, FolderOpen, Lightning, Microphone, Paperclip, Stop, X } from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -265,17 +265,9 @@ const {
 } = Core;
 const {
   AgentLogo,
-  ArrowUpIcon,
-  BoltIcon,
   ConnectionModeBadge,
   DiagnosticRow,
-  DownloadIcon,
-  FileAttachmentIcon,
-  IconSvg,
-  ImagePlusIcon,
-  MicIcon,
   SectionHeader,
-  StopIcon,
   StatusDot,
   SummaryMetric,
   TaskNotice,
@@ -287,6 +279,41 @@ const {
   statusLabel,
   useRunningElapsed
 } = { ...Primitives };
+
+function numericCssPixel(value) {
+  const parsed = Number.parseFloat(String(value || ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function useAutoGrowingTextarea(value, fallbackMaxHeight = 180) {
+  const ref = useRef(null);
+  const resize = useCallback(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    const style = window.getComputedStyle(textarea);
+    const minHeight = numericCssPixel(style.minHeight);
+    const maxHeight = numericCssPixel(style.maxHeight) || fallbackMaxHeight;
+    textarea.style.height = "auto";
+    const nextHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight + 1 ? "auto" : "hidden";
+  }, [fallbackMaxHeight]);
+
+  useLayoutEffect(() => {
+    resize();
+  }, [resize, value]);
+
+  useEffect(() => {
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
+    };
+  }, [resize]);
+
+  return ref;
+}
 
 export function Composer({
   activeAgent,
@@ -315,22 +342,26 @@ export function Composer({
   onPasteClipboard,
   onRemoveImageAttachment,
   onOpenDownloadFile,
+  onOpenRemoteDirectory,
   onSend,
   onVoice,
   onWake,
-  onReleaseRunningTask,
   onCancelRunningTask,
   compact = false,
+  compactPlaceholder = "",
+  showSetupAction = true,
 }) {
   const fileInputRef = useRef(null);
-  const disabled = busy || pendingAction || !ready;
+  const textareaRef = useAutoGrowingTextarea(composer, compact ? 120 : 180);
+  const taskLocked = Boolean(runningTask);
+  const disabled = busy || pendingAction || !ready || taskLocked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
-  const stopMode = Boolean(runningTask);
-  const stopDisabled = operationBusy || !ready;
+  const stopMode = taskLocked;
+  const stopDisabled = !ready;
   const sendDisabled = disabled || !hasPayload;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const downloadDisabled = !ready;
-  const voiceDisabled = !voiceInputEnabled || !ready || (operationBusy && !voiceActive);
+  const voiceDisabled = !voiceInputEnabled || !ready || taskLocked || (operationBusy && !voiceActive);
   const voiceLabel = voiceState === "listening" ? "停止" : voiceState === "stopping" ? "停止中" : "语音";
   const wakeActive =
     wakeState === "listening" ||
@@ -338,7 +369,7 @@ export function Composer({
     wakeState === "dictating" ||
     wakeState === "speaking" ||
     wakeState === "stopping";
-  const wakeDisabled = !voiceInputEnabled || !ready || (operationBusy && !wakeActive);
+  const wakeDisabled = !voiceInputEnabled || !ready || taskLocked || (operationBusy && !wakeActive);
   const wakeLabel =
     wakeState === "stopping"
       ? "关闭中"
@@ -352,7 +383,14 @@ export function Composer({
             ? "唤醒中"
             : "唤醒";
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
-  const runningTaskText = runningTask ? "当前任务正在同步等待最终结果。" : "";
+  const runningRemoteStatus = String(runningTask?.remoteTaskStatus || "").trim();
+  const runningTaskText = runningTask
+    ? runningRemoteStatus === "sync-lost"
+      ? "正在恢复同步，暂时不能输入。"
+      : !String(runningTask?.remoteTaskId || "").trim()
+        ? "正在确认状态，暂时不能输入。"
+        : "执行中，完成后可继续输入。"
+    : "";
   const composerStatusText =
     runningTaskText ||
     (!voiceInputEnabled
@@ -368,7 +406,7 @@ export function Composer({
             : "");
 
   return (
-    <footer className={`composer ${compact ? "compact" : ""} ${ready ? "ready" : "not-ready"}`}>
+    <footer className={`composer workbench-composer-surface ${compact ? "compact" : ""} ${ready ? "ready" : "not-ready"}`}>
       <input
         ref={fileInputRef}
         className="composer-file-input"
@@ -379,7 +417,12 @@ export function Composer({
           event.currentTarget.value = "";
         }}
       />
-      <div className="input-row">
+      <div className="composer-topline" aria-hidden="true">
+        <span className="composer-label">输入任务</span>
+        <span className="composer-hint">Enter 发送 · Shift + Enter 换行</span>
+      </div>
+      <div className="composer-editor">
+        <div className="input-row">
         {imageAttachments.length ? (
           <div className="composer-attachments" aria-label="待上传文件">
             {imageAttachments.map((item) => (
@@ -400,8 +443,9 @@ export function Composer({
           </div>
         ) : null}
         <textarea
+          ref={textareaRef}
           value={composer}
-          disabled={!ready}
+          disabled={disabled}
           onChange={(event) => setComposer(event.target.value)}
           onPaste={(event) => {
             const files = filesFromClipboardEvent(event);
@@ -426,45 +470,48 @@ export function Composer({
             if (!disabled && hasPayload) onSend();
           }}
           placeholder={
-            pendingAction
-              ? "先完成上面的操作"
-              : voiceState === "listening"
-                ? "正在听..."
-                : ready
-                ? `告诉 ${activeAgent.shortName} 你想做什么`
-                : "先添加服务器后再发送任务"
+            compact
+              ? compactPlaceholder
+              : runningTask
+                ? "当前任务完成后继续输入"
+              : pendingAction
+                ? "先完成上面的操作"
+                : voiceState === "listening"
+                  ? "正在听..."
+                  : ready
+                  ? `告诉 ${activeAgent.shortName} 你想做什么`
+                  : "先添加服务器后再发送任务"
           }
           rows={compact ? 1 : 2}
         />
         <div className="composer-bottom-row">
           <p className="voice-hint inline">{composerStatusText}</p>
-          {runningTask ? (
-            <button
-              type="button"
-              className="composer-release-button"
-              onClick={onReleaseRunningTask}
-              disabled={operationBusy}
-              title="确认任务卡住时释放输入框"
-            >
-              释放输入
-            </button>
-          ) : null}
           <div className="input-actions">
-            {ready ? (
+            {ready || !showSetupAction ? (
               <>
                 <button
                   type="button"
-                  className="download-button composer-icon-button"
+                  className="download-button composer-icon-button utility-icon-button"
                   onClick={onOpenDownloadFile}
                   disabled={downloadDisabled}
                   aria-label="下载远程文件"
                   title="下载远程文件"
                 >
-                  <DownloadIcon />
+                  <DownloadSimple size={18} weight="regular" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  className="image-button composer-icon-button"
+                  className="directory-button composer-icon-button utility-icon-button"
+                  onClick={onOpenRemoteDirectory}
+                  disabled={downloadDisabled}
+                  aria-label="查看远程文件夹"
+                  title="查看远程文件夹"
+                >
+                  <FolderOpen size={18} weight="regular" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="image-button composer-icon-button utility-icon-button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
                   aria-label="添加文件"
@@ -476,23 +523,23 @@ export function Composer({
                   <>
                     <button
                       type="button"
-                      className={`voice-button composer-icon-button ${voiceActive ? "listening" : ""}`}
+                      className={`voice-button composer-icon-button utility-icon-button ${voiceActive ? "listening" : ""}`}
                       onClick={onVoice}
                       disabled={voiceDisabled}
                       aria-label={voiceActive ? "停止语音输入" : "语音输入"}
                       title={voiceLabel}
                     >
-                      <MicIcon />
+                      <Microphone size={18} weight="regular" aria-hidden="true" />
                     </button>
                     <button
                       type="button"
-                      className={`wake-button composer-icon-button ${wakeActive ? "listening" : ""}`}
+                      className={`wake-button composer-icon-button utility-icon-button ${wakeActive ? "listening" : ""}`}
                       onClick={onWake}
                       disabled={wakeDisabled}
                       aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}
                       title={wakeLabel}
                     >
-                      <BoltIcon />
+                      <Lightning size={18} weight={wakeActive ? "fill" : "regular"} aria-hidden="true" />
                     </button>
                   </>
                 ) : null}
@@ -507,7 +554,7 @@ export function Composer({
                   aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
                   title={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
                 >
-                  {stopMode ? <StopIcon /> : <ArrowUpIcon />}
+                  {stopMode ? <Stop size={18} weight="fill" aria-hidden="true" /> : <ArrowUp size={18} weight="bold" aria-hidden="true" />}
                 </button>
               </>
             ) : (
@@ -517,7 +564,8 @@ export function Composer({
             )}
           </div>
         </div>
-      </div>
+        </div>
+        </div>
       {voiceInputEnabled && voiceActive ? (
         <div className="voice-level" aria-hidden="true">
           <span style={{ transform: `scaleX(${Math.max(0.04, Math.min(1, voiceLevel))})` }} />

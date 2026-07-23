@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { appendFile, chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { connect as tlsConnect } from "node:tls";
@@ -67,6 +67,12 @@ function loadRenderer(window, query = {}) {
 
 function createWindow({ chatServerId = "", title = "" } = {}) {
   const detachedChat = Boolean(chatServerId);
+  appendPersistentLogSync("info", "app.window.create", {
+    detachedChat,
+    chatServerId,
+    title,
+    windowCount: BrowserWindow.getAllWindows().length,
+  });
   const window = new BrowserWindow({
     width: detachedChat ? 900 : 1180,
     height: detachedChat ? 760 : 820,
@@ -96,18 +102,63 @@ function createWindow({ chatServerId = "", title = "" } = {}) {
     callback(["media", "microphone"].includes(permission));
   });
 
-  if (isDev) {
+  const shouldLogRendererConsole =
+    isDev || process.env.AIWB_ELECTRON_MODE === "preview" || process.env.AIWB_LOG_RENDERER === "1";
+  if (shouldLogRendererConsole) {
     window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
       console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
-    });
-    window.webContents.on("render-process-gone", (_event, details) => {
-      console.error("[renderer gone]", details);
+      if (level >= 2) {
+        appendPersistentLogSync("warn", "app.renderer.console", {
+          detachedChat,
+          chatServerId,
+          level,
+          message,
+          line,
+          sourceId,
+        });
+      }
     });
   }
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[renderer gone]", details);
+    appendPersistentLogSync("error", "app.renderer.gone", {
+      detachedChat,
+      chatServerId,
+      reason: details?.reason || "",
+      exitCode: details?.exitCode ?? "",
+    });
+  });
+  window.webContents.on("unresponsive", () => {
+    appendPersistentLogSync("warn", "app.window.unresponsive", { detachedChat, chatServerId });
+  });
+  window.webContents.on("responsive", () => {
+    appendPersistentLogSync("info", "app.window.responsive", { detachedChat, chatServerId });
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    appendPersistentLogSync("error", "app.window.load_failed", {
+      detachedChat,
+      chatServerId,
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+  });
 
   loadRenderer(window, detachedChat ? { window: "chat", serverId: chatServerId } : {});
 
+  window.on("close", () => {
+    appendPersistentLogSync("info", "app.window.close", {
+      detachedChat,
+      chatServerId,
+      windowCount: BrowserWindow.getAllWindows().length,
+    });
+  });
   window.on("closed", () => {
+    appendPersistentLogSync("info", "app.window.closed", {
+      detachedChat,
+      chatServerId,
+      windowCount: BrowserWindow.getAllWindows().length,
+    });
     if (detachedChat) chatWindows.delete(chatServerId);
     else if (mainWindow === window) mainWindow = undefined;
   });
@@ -262,6 +313,21 @@ async function appendPersistentLog(level, event, fields = {}) {
       fields: sanitizeDiagnosticValue(fields),
     };
     await appendFile(diagnosticLogPath(), `${JSON.stringify(entry)}\n`, "utf8");
+  } catch (error) {
+    console.warn("[aiwb:diagnostics:write-failed]", error?.message || error);
+  }
+}
+
+function appendPersistentLogSync(level, event, fields = {}) {
+  try {
+    mkdirSync(diagnosticLogDir(), { recursive: true });
+    const entry = {
+      ts: new Date().toISOString(),
+      level: String(level || "info"),
+      event: String(event || "app.event"),
+      fields: sanitizeDiagnosticValue(fields),
+    };
+    appendFileSync(diagnosticLogPath(), `${JSON.stringify(entry)}\n`, "utf8");
   } catch (error) {
     console.warn("[aiwb:diagnostics:write-failed]", error?.message || error);
   }
@@ -491,18 +557,39 @@ function normalizeTerminalRequest(input = {}) {
   const username = String(input.username || "").trim();
   const port = Math.max(1, Number(input.port || 22) || 22);
   const platform = ["windows", "wsl"].includes(input.platform) ? input.platform : "linux";
+  const wslDistro = String(input.wslDistro || "").trim();
   const workdir = String(input.workdir || "").trim();
   const tmuxSession = String(input.tmuxSession || "").trim();
+  const action = String(input.action || "").trim();
+  const agentId = input.agentId === "claude" ? "claude" : "codex";
+  const agentCommand = String(input.agentCommand || (agentId === "claude" ? "claude" : "codex")).trim();
 
   if (!host) throw new Error("请先填写服务器 IP 或域名");
   if (!username) throw new Error("请先填写登录用户名");
 
-  return { host, username, port, platform, workdir, tmuxSession };
+  return { host, username, port, platform, wslDistro, workdir, tmuxSession, action, agentId, agentCommand };
+}
+
+function terminalLoginCommand(config) {
+  const command = config.agentCommand || (config.agentId === "claude" ? "claude" : "codex");
+  return config.agentId === "claude" ? command : `${command} login`;
+}
+
+function terminalAgentLabel(agentId) {
+  return agentId === "claude" ? "Claude" : "Codex";
 }
 
 function buildLinuxTerminalRemoteCommand(config) {
   const steps = [];
   if (config.workdir) steps.push(`cd ${shellLiteral(config.workdir)} 2>/dev/null || true`);
+  if (config.action === "agent-login") {
+    const label = terminalAgentLabel(config.agentId);
+    steps.push(`echo ${shellLiteral(`AI Workbench: 正在打开 ${label} 登录流程。登录完成后可以关闭这个窗口。`)}`);
+    steps.push(terminalLoginCommand(config));
+    steps.push(`echo ${shellLiteral(`AI Workbench: ${label} 登录命令已结束。可以关闭窗口，或继续在这里操作。`)}`);
+    steps.push(`exec "\${SHELL:-/bin/bash}" -l`);
+    return steps.join("; ");
+  }
   if (config.tmuxSession) {
     steps.push(
       `if command -v tmux >/dev/null 2>&1 && tmux has-session -t ${shellLiteral(config.tmuxSession)} 2>/dev/null; then exec tmux attach -t ${shellLiteral(config.tmuxSession)}; fi`,
@@ -512,14 +599,60 @@ function buildLinuxTerminalRemoteCommand(config) {
   return steps.join("; ");
 }
 
+function buildWslTerminalDistroSetup(config) {
+  return `
+$AIWB_DISTRO = ${powershellLiteral(config.wslDistro)}
+if (-not $AIWB_DISTRO) {
+  $AIWB_PROCESS = New-Object System.Diagnostics.Process
+  $AIWB_PROCESS.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $AIWB_PROCESS.StartInfo.FileName = "wsl.exe"
+  $AIWB_PROCESS.StartInfo.Arguments = "--list --quiet"
+  $AIWB_PROCESS.StartInfo.UseShellExecute = $false
+  $AIWB_PROCESS.StartInfo.CreateNoWindow = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardOutput = $true
+  $AIWB_PROCESS.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+  [void]$AIWB_PROCESS.Start()
+  $AIWB_OUTPUT = $AIWB_PROCESS.StandardOutput.ReadToEnd()
+  $AIWB_PROCESS.WaitForExit()
+  $AIWB_DISTRO = [string](@(
+    $AIWB_OUTPUT -split "[\\r\\n]+" |
+      ForEach-Object { ([string]$_).Trim() } |
+      Where-Object {
+        $_ -and $_ -notmatch '^(docker-desktop(?:-data)?|rancher-desktop(?:-data)?|podman-machine(?:-.+)?)$'
+      }
+  ) | Select-Object -First 1)
+}
+if (-not $AIWB_DISTRO) { throw "没有找到可用的 WSL Linux 发行版。" }
+`;
+}
+
 function buildTerminalRemoteCommand(config) {
   if (config.platform === "windows") {
+    if (config.action === "agent-login") {
+      const label = terminalAgentLabel(config.agentId);
+      const command = terminalLoginCommand(config);
+      const script = `
+if (${powershellLiteral(config.workdir)}) {
+  Set-Location -LiteralPath ${powershellLiteral(config.workdir)}
+}
+Write-Host ${powershellLiteral(`AI Workbench: 正在打开 ${label} 登录流程。登录完成后可以关闭这个窗口。`)}
+Invoke-Expression ${powershellLiteral(command)}
+Write-Host ${powershellLiteral(`AI Workbench: ${label} 登录命令已结束。可以关闭窗口，或继续在这里操作。`)}
+`;
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      return `powershell -NoLogo -NoExit -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
+    }
     if (!config.workdir) return "powershell -NoLogo -NoExit";
     return `powershell -NoLogo -NoExit -Command "Set-Location -LiteralPath ${powershellLiteral(config.workdir)}"`;
   }
   if (config.platform === "wsl") {
     const linuxCommand = buildLinuxTerminalRemoteCommand({ ...config, platform: "linux" });
-    return `wsl.exe bash -lc ${shellLiteral(linuxCommand)}`;
+    const script = `
+${buildWslTerminalDistroSetup(config)}
+& wsl.exe -d $AIWB_DISTRO -u root -- bash -lc ${powershellLiteral(linuxCommand)}
+`;
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    return `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
   }
   return buildLinuxTerminalRemoteCommand(config);
 }
@@ -1955,6 +2088,10 @@ function runSshCommand(payload) {
         });
       })
       .on("error", (error) => {
+        // A successful SFTP/SSH response closes the client before the remote
+        // socket finishes its final teardown. Ignore late EPIPE/ECONNRESET
+        // events after the promise has already been settled.
+        if (settled) return;
         console.error("[aiwb:ssh:error]", {
           requestId,
           host: config.host,
@@ -2274,9 +2411,16 @@ ipcMain.handle("aiwb:open-chat-window", async (_event, payload = {}) => {
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
+  appendPersistentLogSync("warn", "app.single_instance.lock_failed", {
+    pid: process.pid,
+    argv: process.argv,
+  });
   app.quit();
 } else {
   app.on("second-instance", () => {
+    appendPersistentLogSync("info", "app.single_instance.second_instance", {
+      windowCount: BrowserWindow.getAllWindows().length,
+    });
     if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
       return;
@@ -2287,14 +2431,73 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    appendPersistentLogSync("info", "app.ready", {
+      pid: process.pid,
+      platform: process.platform,
+      mode: process.env.AIWB_ELECTRON_MODE || "",
+      isDev,
+    });
     createWindow();
 
     app.on("activate", () => {
+      appendPersistentLogSync("info", "app.activate", {
+        windowCount: BrowserWindow.getAllWindows().length,
+      });
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 }
 
 app.on("window-all-closed", () => {
+  appendPersistentLogSync("info", "app.window_all_closed", {
+    platform: process.platform,
+    willQuit: process.platform !== "darwin",
+  });
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("before-quit", () => {
+  appendPersistentLogSync("info", "app.before_quit", {
+    windowCount: BrowserWindow.getAllWindows().length,
+  });
+});
+
+app.on("will-quit", () => {
+  appendPersistentLogSync("info", "app.will_quit", {
+    windowCount: BrowserWindow.getAllWindows().length,
+  });
+});
+
+app.on("quit", (_event, exitCode) => {
+  appendPersistentLogSync("info", "app.quit", {
+    exitCode,
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  appendPersistentLogSync("error", "app.uncaught_exception", {
+    message: error?.message || String(error),
+    stack: error?.stack || "",
+  });
+  console.error("[aiwb:uncaughtException]", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  appendPersistentLogSync("error", "app.unhandled_rejection", {
+    message: reason?.message || String(reason),
+    stack: reason?.stack || "",
+  });
+  console.error("[aiwb:unhandledRejection]", reason);
+});
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(signal, () => {
+    appendPersistentLogSync("warn", "app.signal", {
+      signal,
+      pid: process.pid,
+      ppid: process.ppid,
+      windowCount: BrowserWindow.getAllWindows().length,
+    });
+    process.exit(signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 129);
+  });
+}

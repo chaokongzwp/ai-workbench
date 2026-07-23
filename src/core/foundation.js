@@ -1,4 +1,10 @@
 import { registerPlugin } from "@capacitor/core";
+import {
+  mergeResponseLifecycle,
+  normalizeMessageLifecycle,
+  responsePhaseCompleted,
+  responsePhasePending,
+} from "./messageLifecycle.js";
 
 export function desktopBridge() {
   return typeof window !== "undefined" ? window.aiWorkbench : undefined;
@@ -10,6 +16,16 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       const bridge = desktopBridge();
       if (bridge?.runCommand) return bridge.runCommand(payload);
       throw new Error("浏览器预览不能直接发起 SSH，请在 iPhone 或 iPad App 中测试。");
+    },
+    async haptic(payload = {}) {
+      const bridge = desktopBridge();
+      if (bridge?.haptic) return bridge.haptic(payload);
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        const kind = String(payload.kind || payload.style || "light");
+        const pattern = kind === "error" ? [18, 30, 18] : kind === "success" ? [12, 20, 12] : 12;
+        navigator.vibrate(pattern);
+      }
+      return { ok: true };
     },
     async openTerminal(payload) {
       const bridge = desktopBridge();
@@ -339,6 +355,7 @@ export const builtInAliyunVoiceConfig = {
 
 export const defaultProfile = {
   platform: "linux",
+  wslDistro: "",
   host: "",
   port: 22,
   username: "root",
@@ -363,6 +380,10 @@ export const defaultProfile = {
   resultAudioMode: "summary",
   useWorkbenchAgent: true,
   appearanceMode: "light",
+  messageFontFamily: "system",
+  messageFontSize: "16",
+  messageFontWeight: "500",
+  messageLineHeight: "1.65",
   connectTimeoutSeconds: 30,
 };
 
@@ -397,7 +418,6 @@ export const agentModelOptions = {
     defaultModelOption,
     { id: "sonnet", label: "Sonnet（推荐）" },
     { id: "opus", label: "Opus" },
-    { id: "fable", label: "Fable" },
   ],
 };
 
@@ -410,9 +430,23 @@ const legacyClaudeModelAliases = {
   "claude-opus-4.5": "opus",
 };
 
+const invalidAgentModelValues = new Set([
+  "alloy",
+  "echo",
+  "fable",
+  "onyx",
+  "nova",
+  "shimmer",
+  "longanhuan",
+  "longanyang",
+  "cosyvoice-v2",
+  "cosyvoice-v3-flash",
+]);
+
 export function normalizeAgentModel(agentId, value) {
   const normalizedAgent = agentId === "claude" ? "claude" : "codex";
   const rawModel = String(value || "").trim();
+  if (invalidAgentModelValues.has(rawModel.toLowerCase())) return "";
   const model = normalizedAgent === "claude" ? legacyClaudeModelAliases[rawModel] || rawModel : rawModel;
   if (!model) return "";
   const options = agentModelOptions[normalizedAgent] || [];
@@ -459,6 +493,63 @@ export const appearanceModeOptions = [
   { id: "system", label: "跟随系统" },
 ];
 
+export const messageFontFamilyOptions = [
+  { id: "system", label: "系统字体" },
+  { id: "rounded", label: "圆润字体" },
+  { id: "serif", label: "衬线字体" },
+];
+
+export const messageFontSizeOptions = [
+  { id: "14", label: "小 · 14" },
+  { id: "15", label: "较小 · 15" },
+  { id: "16", label: "标准 · 16" },
+  { id: "17", label: "较大 · 17" },
+  { id: "18", label: "大 · 18" },
+];
+
+export const messageFontWeightOptions = [
+  { id: "400", label: "常规" },
+  { id: "500", label: "适中" },
+  { id: "600", label: "强调" },
+];
+
+export const messageLineHeightOptions = [
+  { id: "1.45", label: "紧凑" },
+  { id: "1.65", label: "标准" },
+  { id: "1.85", label: "宽松" },
+];
+
+export function normalizeMessageFontFamily(value) {
+  const candidate = String(value || "").trim();
+  return messageFontFamilyOptions.some((option) => option.id === candidate) ? candidate : defaultProfile.messageFontFamily;
+}
+
+export function normalizeMessageFontSize(value) {
+  const candidate = String(value || "").trim();
+  return messageFontSizeOptions.some((option) => option.id === candidate) ? candidate : defaultProfile.messageFontSize;
+}
+
+export function normalizeMessageFontWeight(value) {
+  const candidate = String(value || "").trim();
+  return messageFontWeightOptions.some((option) => option.id === candidate) ? candidate : defaultProfile.messageFontWeight;
+}
+
+export function normalizeMessageLineHeight(value) {
+  const candidate = String(value || "").trim();
+  return messageLineHeightOptions.some((option) => option.id === candidate) ? candidate : defaultProfile.messageLineHeight;
+}
+
+export function messageFontFamilyCss(value) {
+  switch (normalizeMessageFontFamily(value)) {
+    case "rounded":
+      return 'ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+    case "serif":
+      return '"Songti SC", "STSong", "Noto Serif CJK SC", serif';
+    default:
+      return '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif';
+  }
+}
+
 export const markerLabels = {
   history: "历史会话",
   active: "运行中",
@@ -482,6 +573,24 @@ export const browserDiagnosticLogStorageKey = "ai-workbench-diagnostics-log-v1";
 export const migrationFileKind = "ai-workbench-config";
 
 export const migrationFileVersion = 1;
+
+export const cloudSyncDefaultEndpoint = "https://inner-api.limpet-inc.cn/aiwb-config-sync";
+
+export const cloudSyncSettingsStorageKey = "ai-workbench-cloud-sync-settings-v1";
+
+export const cloudSyncPayloadKind = "ai-workbench-cloud-config";
+
+export const cloudSyncPayloadVersion = 2;
+
+export const cloudSyncEncryptionKind = "ai-workbench-cloud-config-encrypted";
+
+const cloudSyncKdfIterations = 150000;
+
+const cloudSyncTextEncoder = new TextEncoder();
+
+const cloudSyncTextDecoder = new TextDecoder();
+
+const cloudSyncAccountPattern = /^[A-Za-z0-9_.@+-]{2,96}$/;
 
 export const appVersion =
   typeof __AIWB_APP_VERSION__ === "string" && __AIWB_APP_VERSION__ ? __AIWB_APP_VERSION__ : "1.0.0";
@@ -653,7 +762,7 @@ export async function appLog(level, event, fields = {}) {
 }
 
 export function workspaceStoreHasServers(value) {
-  return Boolean(value?.version === 2 && Array.isArray(value.servers) && value.servers.length);
+  return Boolean(value?.version === 2 && Array.isArray(value.servers));
 }
 
 export function saveWorkspaceMirror(profile) {
@@ -884,6 +993,7 @@ export function formatAgentPrompt(prompt) {
     "不要先给阶段性结论再继续等待其它任务；如果还在等待，就继续等待，不要输出最终答案标记。",
     "禁止把“等待通知后继续”“I'll wait for the notification before continuing”“等测试完成后再继续”等等待话术作为最终答案；这类回答不是完成。",
     "如果外部系统不会主动把结果返回到当前进程，请主动轮询或检查状态，直到得到成功、失败或明确阻塞原因。",
+    "最终答案必须明确说明：实际完成了什么、修改了哪些文件、做了什么验证、验证是否通过；如果无法完成，必须给出明确阻塞原因和当前已完成部分。",
     `输出要求：只输出最终给用户看的答案，不要复述本段规则，不要输出过程、菜单、命令行日志或工具调用记录；最终答案必须放在 ${finalAnswerStart} 和 ${finalAnswerEnd} 之间。`,
   ].join("");
 }
@@ -893,14 +1003,14 @@ export let messageCounter = 0;
 export function createMessage(partial) {
   messageCounter += 1;
   const now = Date.now();
-  return {
+  return normalizeMessageLifecycle({
     id: `msg-${now}-${messageCounter}`,
     status: "done",
     output: "",
     createdAt: new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     createdAtMs: now,
     ...partial,
-  };
+  }, now);
 }
 
 export const maxPersistedMessagesPerServer = 120;
@@ -916,13 +1026,38 @@ export function clipPersistedText(value, limit = maxPersistedTextLength) {
 export function normalizePersistedMessage(message) {
   const source = message && typeof message === "object" ? message : { body: String(message ?? "") };
   const createdAtMs = Number(source.createdAtMs || 0) || Date.now();
-  const startedAt = Number(source.startedAt || 0) || (source.status === "running" ? createdAtMs : 0);
-  const resumableRemoteTask = source.status === "running" && source.backend === "agent" && source.remoteTaskId;
-  const status = source.status === "running" && !resumableRemoteTask ? "idle" : String(source.status || "done");
+  const lifecycleSource = normalizeMessageLifecycle({ ...source, createdAtMs });
+  const startedAt =
+    Number(lifecycleSource.startedAt || 0) ||
+    (lifecycleSource.responsePhase === responsePhasePending ? createdAtMs : 0);
+  const resumableRemoteTask =
+    lifecycleSource.responsePhase === responsePhasePending &&
+    lifecycleSource.backend === "agent" &&
+    lifecycleSource.remoteTaskId;
+  const remoteTaskStatus = String(source.remoteTaskStatus || "").trim();
+  const hasCompletedRemoteOutput =
+    lifecycleSource.role === "assistant" &&
+    lifecycleSource.backend === "agent" &&
+    Boolean(String(lifecycleSource.output || "").trim()) &&
+    !["error", "cancelled", "missing", "deferred-waiting-answer"].includes(remoteTaskStatus) &&
+    !["error", "cancelled"].includes(String(lifecycleSource.status || "").trim());
+  const status = hasCompletedRemoteOutput
+    ? "done"
+    : lifecycleSource.responsePhase === responsePhasePending && !resumableRemoteTask
+      ? "idle"
+      : String(lifecycleSource.status || "done");
   const completedAt = Number(source.completedAt || 0) || (startedAt && status !== "running" ? Date.now() : 0);
   const durationMs =
     Number(source.durationMs || 0) ||
     (startedAt && completedAt && status !== "running" ? Math.max(0, completedAt - startedAt) : 0);
+  const turnId = String(source.turnId || source.messagePairId || "").trim();
+  const responsePhase =
+    lifecycleSource.role === "assistant"
+      ? status === "running"
+        ? responsePhasePending
+        : responsePhaseCompleted
+      : undefined;
+  const syncState = lifecycleSource.role === "assistant" ? responsePhase : undefined;
   const agentFailure =
     source.agentFailure && typeof source.agentFailure === "object"
       ? {
@@ -931,25 +1066,33 @@ export function normalizePersistedMessage(message) {
         }
       : source.agentFailure;
 
-  return {
-    ...source,
+  return normalizeMessageLifecycle({
+    ...lifecycleSource,
     agentFailure,
     technicalDetail: clipPersistedText(source.technicalDetail, 12_000),
+    executionSummary: clipPersistedText(source.executionSummary, 30_000),
     status,
+    responsePhase,
+    turnId: turnId || undefined,
+    syncState,
+    remoteTaskStatus: hasCompletedRemoteOutput ? "done" : source.remoteTaskStatus,
+    resultMissing: hasCompletedRemoteOutput ? false : source.resultMissing,
     body:
-      source.status === "running"
+      responsePhase === responsePhasePending
         ? clipPersistedText(
-            resumableRemoteTask ? source.body || "正在重新同步远端任务状态。" : source.body || "上次任务在应用关闭前还没有完成。",
+            resumableRemoteTask
+              ? lifecycleSource.body || "正在重新同步远端任务状态。"
+              : lifecycleSource.body || "上次任务在应用关闭前还没有完成。",
           )
-        : clipPersistedText(source.body),
-    output: clipPersistedText(source.output),
-    liveOutput: clipPersistedText(source.liveOutput, 30_000),
+        : clipPersistedText(lifecycleSource.body),
+    output: clipPersistedText(lifecycleSource.output),
+    liveOutput: clipPersistedText(lifecycleSource.liveOutput, 30_000),
     createdAt: source.createdAt || new Date(createdAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     createdAtMs,
     startedAt: startedAt || undefined,
     completedAt: completedAt || undefined,
     durationMs: durationMs || undefined,
-  };
+  });
 }
 
 export function messagesForStorage(messages) {
@@ -987,26 +1130,32 @@ export function mergePersistedMessageLists(currentMessages = [], incomingMessage
       continue;
     }
 
-    const terminal = ["done", "error", "cancelled"].includes(String(message?.status || ""));
+    if (message?.role === "assistant" && existing?.role === "assistant") {
+      byId.set(id, mergeResponseLifecycle(existing, message));
+      continue;
+    }
+    const preferred = String(message?.body || message?.output || "").trim() ? message : existing;
+    const fallback = preferred === message ? existing : message;
+    const terminal = ["done", "error", "cancelled"].includes(String(preferred?.status || ""));
     byId.set(id, {
-      ...existing,
-      ...message,
+      ...fallback,
+      ...preferred,
       body: terminal
-        ? String(message?.body || "")
-        : String(message?.body || "").trim()
-          ? message.body
-          : existing.body || "",
-      output: String(message?.output || "").trim() ? message.output : existing.output || "",
+        ? String(preferred?.body || "")
+        : String(preferred?.body || "").trim()
+          ? preferred.body
+          : fallback.body || "",
+      output: String(preferred?.output || "").trim() ? preferred.output : fallback.output || "",
       liveOutput: terminal
         ? ""
-        : String(message?.liveOutput || "").trim()
-          ? message.liveOutput
-          : existing.liveOutput || "",
-      promptText: String(message?.promptText || "").trim() ? message.promptText : existing.promptText || "",
+        : String(preferred?.liveOutput || "").trim()
+          ? preferred.liveOutput
+          : fallback.liveOutput || "",
+      promptText: String(preferred?.promptText || "").trim() ? preferred.promptText : fallback.promptText || "",
       attachments:
-        Array.isArray(message?.attachments) && message.attachments.length
-          ? message.attachments
-          : existing.attachments,
+        Array.isArray(preferred?.attachments) && preferred.attachments.length
+          ? preferred.attachments
+          : fallback.attachments,
       createdAtMs: earliestPositiveNumber(existing.createdAtMs, message.createdAtMs),
       startedAt: earliestPositiveNumber(existing.startedAt, message.startedAt),
     });
@@ -1020,16 +1169,10 @@ export function mergePersistedMessageLists(currentMessages = [], incomingMessage
 export function saveLocalMessageHistory(servers = []) {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
+    // The controller has already paired and deduplicated the current state.
+    // Re-merging the old cache here would bring stale assistant placeholders
+    // back after every save and make one task look like several replies.
     const next = localMessageHistoryFromServers(servers);
-    const rawCurrent = window.localStorage.getItem(localMessageHistoryStorageKey);
-    const current = rawCurrent ? JSON.parse(rawCurrent) : null;
-    const currentByServer = new Map(
-      (current?.version === 1 && Array.isArray(current.servers) ? current.servers : []).map((item) => [item.id, item.messages || []]),
-    );
-    next.servers = next.servers.map((item) => ({
-      ...item,
-      messages: mergePersistedMessageLists(currentByServer.get(item.id) || [], item.messages || []),
-    }));
     window.localStorage.setItem(localMessageHistoryStorageKey, JSON.stringify(next));
   } catch {
     // Local chat history is a convenience cache. The encrypted profile save remains the primary store.
@@ -1091,12 +1234,13 @@ export function normalizeProfile(profile) {
   const platform = normalizeServerPlatform(profile?.platform);
   const platformDefaults = serverPlatformDefaults[platform] || serverPlatformDefaults.linux;
   const normalizedAgentId = agents.some((agent) => agent.id === profile?.agentId) ? profile.agentId : defaultProfile.agentId;
-  const defaultUseWorkbenchAgent = platform === "windows" ? false : defaultProfile.useWorkbenchAgent;
+  const defaultUseWorkbenchAgent = defaultProfile.useWorkbenchAgent;
   const normalized = {
     ...defaultProfile,
     ...platformDefaults,
     ...(profile ?? {}),
     platform,
+    wslDistro: String(profile?.wslDistro || "").trim(),
     port: Number(profile?.port ?? defaultProfile.port) || defaultProfile.port,
     mainAIEnabled: profile?.mainAIEnabled === undefined ? defaultProfile.mainAIEnabled : Boolean(profile.mainAIEnabled),
     mainAIModel: String(profile?.mainAIModel || defaultProfile.mainAIModel).trim() || defaultProfile.mainAIModel,
@@ -1118,12 +1262,14 @@ export function normalizeProfile(profile) {
       profile?.playResultAudio === undefined ? defaultProfile.playResultAudio : Boolean(profile.playResultAudio),
     resultAudioMode: normalizeResultAudioMode(profile?.resultAudioMode),
     useWorkbenchAgent:
-      platform === "windows"
-        ? false
-        : profile?.useWorkbenchAgent === undefined
-          ? defaultUseWorkbenchAgent
-          : Boolean(profile.useWorkbenchAgent),
+      profile?.useWorkbenchAgent === undefined
+        ? defaultUseWorkbenchAgent
+        : Boolean(profile.useWorkbenchAgent),
     appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
+    messageFontFamily: normalizeMessageFontFamily(profile?.messageFontFamily),
+    messageFontSize: normalizeMessageFontSize(profile?.messageFontSize),
+    messageFontWeight: normalizeMessageFontWeight(profile?.messageFontWeight),
+    messageLineHeight: normalizeMessageLineHeight(profile?.messageLineHeight),
     connectTimeoutSeconds: Math.min(
       60,
       Math.max(
@@ -1188,6 +1334,10 @@ export function globalSettingsFromProfile(profile) {
     playResultAudio: normalized.playResultAudio,
     resultAudioMode: normalized.resultAudioMode,
     appearanceMode: normalized.appearanceMode,
+    messageFontFamily: normalized.messageFontFamily,
+    messageFontSize: normalized.messageFontSize,
+    messageFontWeight: normalized.messageFontWeight,
+    messageLineHeight: normalized.messageLineHeight,
   };
 }
 
@@ -1424,9 +1574,11 @@ export function createServerId() {
 }
 
 export function initialConnectionForProfile(profile) {
-  return profileReady(profile)
-    ? { state: "idle", label: "未测试", detail: `${profile.username}@${profile.host}` }
-    : { state: "idle", label: "待配置", detail: profileIssue(profile) };
+  const normalized = normalizeProfile(profile || {});
+  const mode = normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : "ssh";
+  return profileReady(normalized)
+    ? { state: "idle", label: "未测试", detail: `${normalized.username}@${normalized.host}`, mode }
+    : { state: "idle", label: "待配置", detail: profileIssue(normalized), mode };
 }
 
 export function dormantConnectionForProfile(profile, previous = {}, label = "未连接") {
@@ -1461,9 +1613,10 @@ export function connectionForAppLaunch(server) {
 
 export function readyConnectionForSession(profile, previous = {}) {
   const normalized = normalizeProfile(profile);
+  const previousMode = previous?.mode || previous?.transport || previous?.backend || "";
   return {
     ...initialConnectionForProfile(normalized),
-    mode: previous?.mode || previous?.transport || previous?.backend || "",
+    mode: normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : previousMode,
     state: "idle",
     label: "就绪",
     detail: String(normalized.workdir || "").trim() ? workdirDisplayName(normalized.workdir) : `${normalized.username}@${normalized.host}`,
@@ -1505,6 +1658,7 @@ export function createServerSession(partial = {}, index = 0) {
     messages: Array.isArray(partial.messages) ? partial.messages : [],
     task: partial.task || { state: "idle" },
     unreadResult: partial.unreadResult || null,
+    shared: partial.shared || null,
     agentHistoryCursor: String(partial.agentHistoryCursor || "").trim(),
     agentHistoryHasMore: partial.agentHistoryHasMore !== false,
   };
@@ -1516,19 +1670,26 @@ export function createServerSession(partial = {}, index = 0) {
 
 export function normalizeWorkspaceStore(value) {
   if (value?.version === 2 && Array.isArray(value.servers)) {
-    const servers = value.servers.length
-      ? value.servers.map((server, index) => {
-          const normalized = createServerSession(stripLegacyDefaultWorkdirFromPlaceholder(server, index), index);
-          return {
-            ...normalized,
-            connection: connectionForAppLaunch(normalized),
-          };
-        })
-      : [createServerSession({ profile: defaultProfile, name: "默认服务器" })];
+    const servers = value.servers.map((server, index) => {
+      const normalized = createServerSession(stripLegacyDefaultWorkdirFromPlaceholder(server, index), index);
+      return {
+        ...normalized,
+        connection: connectionForAppLaunch(normalized),
+      };
+    });
+    const onlyEmptyPlaceholder =
+      servers.length === 1 &&
+      (servers[0]?.id === "default-server" || serverDisplayName(servers[0], 0) === "默认服务器") &&
+      !String(servers[0]?.profile?.host || "").trim();
+    if (onlyEmptyPlaceholder) return { activeServerId: "", servers: [] };
     const activeServerId = servers.some((server) => server.id === value.activeServerId)
       ? value.activeServerId
-      : servers[0].id;
+      : servers[0]?.id || "";
     return { activeServerId, servers };
+  }
+
+  if (!value || !Object.keys(value).length) {
+    return { activeServerId: "", servers: [] };
   }
 
   const migrated = createServerSession({
@@ -1539,6 +1700,9 @@ export function normalizeWorkspaceStore(value) {
         ? stripLegacyDefaultWorkdirFromPlaceholder({ id: "default-server", name: "默认服务器", profile: value }, 0).profile
         : defaultProfile,
   });
+  if (!String(migrated.profile?.host || "").trim()) {
+    return { activeServerId: "", servers: [] };
+  }
   return { activeServerId: migrated.id, servers: [migrated] };
 }
 
@@ -1560,6 +1724,7 @@ export function serializeWorkspaceStore(servers, activeServerId) {
       messages: messagesForStorage(server.messages),
       task: taskForStorage(server.task),
       unreadResult: server.unreadResult || null,
+      shared: server.shared || null,
       agentHistoryCursor: String(server.agentHistoryCursor || "").trim(),
       agentHistoryHasMore: server.agentHistoryHasMore !== false,
     })),
@@ -1589,6 +1754,7 @@ export function serializeWorkspaceMigrationStore(servers, activeServerId) {
         messages: [],
         task: { state: "idle" },
         unreadResult: null,
+        shared: server.shared || null,
       };
     }),
   };
@@ -1670,6 +1836,556 @@ export function mergeImportedServers(currentServers, importedServers) {
   });
 
   return [...kept, ...mergedIncoming];
+}
+
+export function normalizeCloudSyncEndpoint(value) {
+  const text = String(value || cloudSyncDefaultEndpoint).trim() || cloudSyncDefaultEndpoint;
+  return text.replace(/\/+$/g, "");
+}
+
+export function normalizeCloudSyncAccount(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u200b-\u200d\ufeff]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+export function validateCloudSyncCredentials({ account, password } = {}) {
+  const cleanAccount = normalizeCloudSyncAccount(account);
+  const cleanPassword = String(password || "");
+  if (!cleanAccount) {
+    return {
+      ok: false,
+      field: "account",
+      message: "请填写同步账号。",
+      account: cleanAccount,
+    };
+  }
+  if (!cloudSyncAccountPattern.test(cleanAccount)) {
+    return {
+      ok: false,
+      field: "account",
+      message: "同步账号只能包含字母、数字、点、下划线、@、+ 和 -，长度 2-96。",
+      account: cleanAccount,
+    };
+  }
+  if (!cleanPassword) {
+    return { ok: false, field: "password", message: "请填写同步密码。", account: cleanAccount };
+  }
+  return { ok: true, account: cleanAccount, password: cleanPassword };
+}
+
+export function normalizeCloudSyncSettings(value = {}) {
+  return {
+    endpoint: normalizeCloudSyncEndpoint(value.endpoint),
+    account: normalizeCloudSyncAccount(value.account),
+    lastSyncedAt: String(value.lastSyncedAt || "").trim(),
+  };
+}
+
+export function loadCloudSyncSettings() {
+  if (typeof window === "undefined" || !window.localStorage) return normalizeCloudSyncSettings();
+  try {
+    const raw = window.localStorage.getItem(cloudSyncSettingsStorageKey);
+    return normalizeCloudSyncSettings(raw ? JSON.parse(raw) : {});
+  } catch {
+    return normalizeCloudSyncSettings();
+  }
+}
+
+export function saveCloudSyncSettings(settings = {}) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(cloudSyncSettingsStorageKey, JSON.stringify(normalizeCloudSyncSettings(settings)));
+  } catch {
+    // Cloud sync settings are convenience state only.
+  }
+}
+
+function normalizeCloudSyncAgentId(value) {
+  return value === "claude" ? "claude" : "codex";
+}
+
+function normalizeCloudSyncSessionIdentity(identity = {}, profile = {}) {
+  const profileValue = profile && typeof profile === "object" ? profile : {};
+  const profileField = (key) => String(profileValue?.[key] ?? "").trim();
+  const normalized = normalizeProfile(profile || {});
+  const profilePlatform = profileField("platform") ? normalizeServerPlatform(profileValue.platform) : "";
+  const platform = profilePlatform || normalizeServerPlatform(identity.platform);
+  const rawWorkdir = profileField("workdir") || String(identity.workdir || normalized.workdir || "").trim();
+  const workdir = rawWorkdir.replace(/[\\/]+$/g, "");
+  const profileAgentId = agents.some((agent) => agent.id === profileValue?.agentId) ? profileValue.agentId : "";
+  return {
+    host: (profileField("host") || String(identity.host || normalized.host || "").trim()).toLocaleLowerCase(),
+    username: profileField("username") || String(identity.username || normalized.username || "").trim(),
+    workdir: platform === "windows" ? workdir.replace(/\//g, "\\").toLocaleLowerCase() : workdir,
+    agentId: normalizeCloudSyncAgentId(profileAgentId || identity.agentId || normalized.agentId),
+  };
+}
+
+export function cloudSyncSessionIdentityFromProfile(profile) {
+  const normalized = normalizeProfile(profile || {});
+  return normalizeCloudSyncSessionIdentity({}, normalized);
+}
+
+export function cloudSyncSessionKeyFromIdentity(identity = {}) {
+  const normalized = normalizeCloudSyncSessionIdentity(identity);
+  if (!normalized.host || !normalized.username || !normalized.workdir || !normalized.agentId) return "";
+  return [normalized.host, normalized.username, normalized.workdir, normalized.agentId].join("|");
+}
+
+export function cloudSyncSessionKeyForProfile(profile) {
+  return cloudSyncSessionKeyFromIdentity(cloudSyncSessionIdentityFromProfile(profile));
+}
+
+export function cloudSyncSessionKeyForServer(server) {
+  const profileKey = cloudSyncSessionKeyForProfile(server?.profile || {});
+  if (profileKey) return profileKey;
+  const identityKey = cloudSyncSessionKeyFromIdentity(server?.syncIdentity || {});
+  if (identityKey) return identityKey;
+  return String(server?.syncKey || server?.cloudSyncKey || "").trim();
+}
+
+export function sessionShareFromServer(server) {
+  const profile = normalizeProfile(server?.profile || {});
+  const conversationId = String(server?.conversationId || "").trim() || createConversationId(profile.workdir || profile.name);
+  const syncKey = [
+    cloudSyncSessionKeyForProfile(profile),
+    conversationId,
+  ]
+    .filter(Boolean)
+    .join("|");
+  return {
+    conversationId,
+    name: serverDisplayName(server, 0),
+    syncKey,
+    profile: {
+      ...profile,
+      // SSH credentials are intentionally included in an explicit session share.
+      // API keys remain excluded because they are not needed to connect to the host.
+      password: String(profile.password || ""),
+      openAIAPIKey: "",
+      aliyunApiKey: "",
+      aliyunWorkspaceId: "",
+    },
+  };
+}
+
+export function sharedSessionKey(session = {}) {
+  const computedKey = [
+    cloudSyncSessionKeyForProfile(session.profile || {}),
+    String(session.conversationId || session.sessionId || "").trim(),
+  ]
+    .filter(Boolean)
+    .join("|");
+  return computedKey || String(session.syncKey || "").trim();
+}
+
+export function mergeCloudSharedSessions(currentServers, records = []) {
+  const current = Array.isArray(currentServers) ? currentServers : [];
+  const currentIsOnlyPlaceholder =
+    current.length === 1 &&
+    (current[0]?.id === "default-server" || serverDisplayName(current[0], 0) === "默认服务器") &&
+    !String(current[0]?.profile?.host || "").trim();
+  const kept = currentIsOnlyPlaceholder ? [] : current;
+  const existingKeys = new Set(
+    kept
+      .map((server) => sharedSessionKey({
+        ...server,
+        profile: server?.profile,
+      }))
+      .filter(Boolean),
+  );
+  const addedServers = [];
+  const skippedShares = [];
+
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const session = record?.session && typeof record.session === "object" ? record.session : record;
+    const profile = normalizeProfile({
+      ...(session?.profile || {}),
+      openAIAPIKey: "",
+      aliyunApiKey: "",
+      aliyunWorkspaceId: "",
+    });
+    const normalizedSession = {
+      ...session,
+      conversationId: String(session?.conversationId || session?.sessionId || "").trim(),
+      name: String(session?.name || "共享会话").trim() || "共享会话",
+      profile,
+    };
+    const key = sharedSessionKey(normalizedSession);
+    if (!key || !normalizedSession.conversationId || existingKeys.has(key)) {
+      skippedShares.push(record);
+      return;
+    }
+    existingKeys.add(key);
+    addedServers.push(
+      createServerSession(
+        {
+          id: createServerId(),
+          conversationId: normalizedSession.conversationId,
+          name: normalizedSession.name,
+          profile,
+          connection: initialConnectionForProfile(profile),
+          diagnostics: {},
+          discovery: null,
+          rawOutput: profile.password
+            ? "这是共享会话，SSH 登录信息已同步，可以直接连接。"
+            : "这是共享会话。首次连接前，请在会话设置中填写 SSH 密码。",
+          messages: [],
+          task: { state: "idle" },
+          shared: {
+            shareId: String(record?.id || "").trim(),
+            ownerAccount: String(record?.ownerAccount || "").trim(),
+            permission: String(record?.permission || "use").trim() || "use",
+            sharedAt: String(record?.createdAt || "").trim(),
+          },
+        },
+        kept.length + addedServers.length,
+      ),
+    );
+  });
+
+  return {
+    servers: [...kept, ...addedServers],
+    addedServers,
+    skippedShares,
+  };
+}
+
+export function buildCloudSyncPlainPayload(servers, activeServerId) {
+  const workspace = serializeWorkspaceMigrationStore(servers, activeServerId);
+  const cloudServers = workspace.servers
+    .map((server) => {
+      const syncIdentity = cloudSyncSessionIdentityFromProfile(server.profile);
+      const syncKey = cloudSyncSessionKeyFromIdentity(syncIdentity);
+      if (!syncKey) return null;
+      return {
+        ...server,
+        syncKey,
+        syncIdentity,
+        messages: [],
+        rawOutput: "",
+        task: { state: "idle" },
+        unreadResult: null,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    kind: cloudSyncPayloadKind,
+    version: cloudSyncPayloadVersion,
+    app: "AI Workbench",
+    exportedAt: new Date().toISOString(),
+    includesSecrets: true,
+    includesChatHistory: false,
+    uniqueBy: ["host", "username", "workdir", "agentId"],
+    workspace: {
+      ...workspace,
+      servers: cloudServers,
+      activeServerId: cloudServers.some((server) => server.id === workspace.activeServerId)
+        ? workspace.activeServerId
+        : cloudServers[0]?.id || "",
+    },
+    directoryPrefs: normalizeDirectoryPrefs(loadDirectoryPrefs()),
+    manualWorkdirHistory: normalizeManualWorkdirHistory(loadManualWorkdirHistory()),
+  };
+}
+
+export function normalizeCloudSyncPlainPayload(value = {}) {
+  const payload =
+    value?.kind === migrationFileKind
+      ? {
+          ...value,
+          kind: cloudSyncPayloadKind,
+          version: cloudSyncPayloadVersion,
+        }
+      : value;
+  const workspace = normalizeWorkspaceStore(payload?.workspace || { version: 2, servers: [] });
+  const servers = (workspace.servers || [])
+    .map((server) => {
+      const profile = normalizeProfile(server?.profile || {});
+      const syncIdentity = normalizeCloudSyncSessionIdentity(server?.syncIdentity || {}, profile);
+      const syncKey = cloudSyncSessionKeyFromIdentity(syncIdentity);
+      if (!syncKey) return null;
+      return {
+        ...server,
+        profile,
+        syncKey,
+        syncIdentity,
+        messages: [],
+        rawOutput: "",
+        task: { state: "idle" },
+        unreadResult: null,
+      };
+    })
+    .filter(Boolean);
+  return {
+    kind: cloudSyncPayloadKind,
+    version: cloudSyncPayloadVersion,
+    app: payload?.app || "AI Workbench",
+    exportedAt: String(payload?.exportedAt || "").trim() || new Date().toISOString(),
+    includesSecrets: true,
+    includesChatHistory: false,
+    uniqueBy: ["host", "username", "workdir", "agentId"],
+    workspace: {
+      version: 2,
+      activeServerId: servers.some((server) => server.id === workspace.activeServerId)
+        ? workspace.activeServerId
+        : servers[0]?.id || "",
+      servers,
+    },
+    directoryPrefs: payload?.directoryPrefs ? normalizeDirectoryPrefs(payload.directoryPrefs) : normalizeDirectoryPrefs(),
+    manualWorkdirHistory: payload?.manualWorkdirHistory
+      ? normalizeManualWorkdirHistory(payload.manualWorkdirHistory)
+      : normalizeManualWorkdirHistory(),
+  };
+}
+
+export function mergeCloudSyncPayloads(remotePayload, localPayload) {
+  const remote = normalizeCloudSyncPlainPayload(remotePayload || {});
+  const local = normalizeCloudSyncPlainPayload(localPayload || {});
+  const existingKeys = new Set(remote.workspace.servers.map((server) => cloudSyncSessionKeyForServer(server)));
+  const addedServers = [];
+  const skippedServers = [];
+
+  local.workspace.servers.forEach((server) => {
+    const key = cloudSyncSessionKeyForServer(server);
+    if (!key || existingKeys.has(key)) {
+      skippedServers.push(server);
+      return;
+    }
+    existingKeys.add(key);
+    addedServers.push(server);
+  });
+
+  const servers = [...remote.workspace.servers, ...addedServers];
+  return {
+    payload: {
+      ...local,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        version: 2,
+        activeServerId:
+          remote.workspace.activeServerId && servers.some((server) => server.id === remote.workspace.activeServerId)
+            ? remote.workspace.activeServerId
+            : local.workspace.activeServerId && servers.some((server) => server.id === local.workspace.activeServerId)
+              ? local.workspace.activeServerId
+              : servers[0]?.id || "",
+        servers,
+      },
+      directoryPrefs: mergeDirectoryPrefs(remote.directoryPrefs, local.directoryPrefs),
+      manualWorkdirHistory: mergeManualWorkdirHistory(remote.manualWorkdirHistory, local.manualWorkdirHistory),
+    },
+    addedServers,
+    skippedServers,
+  };
+}
+
+export function mergeCloudDownloadedServers(currentServers, cloudPayload) {
+  const current = Array.isArray(currentServers) ? currentServers : [];
+  const cloud = normalizeCloudSyncPlainPayload(cloudPayload || {});
+  const currentIsOnlyPlaceholder =
+    current.length === 1 &&
+    (current[0]?.id === "default-server" || serverDisplayName(current[0], 0) === "默认服务器") &&
+    !String(current[0]?.profile?.host || "").trim();
+  const kept = currentIsOnlyPlaceholder ? [] : current;
+  const existingKeys = new Set(kept.map((server) => cloudSyncSessionKeyForServer(server)).filter(Boolean));
+  const existingIds = new Set(kept.map((server) => server.id).filter(Boolean));
+  const addedServers = [];
+  const skippedServers = [];
+
+  cloud.workspace.servers.forEach((server) => {
+    const key = cloudSyncSessionKeyForServer(server);
+    if (!key || existingKeys.has(key)) {
+      skippedServers.push(server);
+      return;
+    }
+    existingKeys.add(key);
+    const nextId = existingIds.has(server.id) ? createServerId() : server.id || createServerId();
+    existingIds.add(nextId);
+    addedServers.push(
+      createServerSession(
+        {
+          ...server,
+          id: nextId,
+          messages: [],
+          rawOutput: "",
+          task: { state: "idle" },
+          unreadResult: null,
+          connection: initialConnectionForProfile(server.profile),
+        },
+        kept.length + addedServers.length,
+      ),
+    );
+  });
+
+  return {
+    servers: [...kept, ...addedServers],
+    addedServers,
+    skippedServers,
+    cloud,
+  };
+}
+
+function cloudSyncCrypto() {
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.subtle || !cryptoApi.getRandomValues) {
+    throw new Error("当前设备不支持安全加密，无法同步会话配置。");
+  }
+  return cryptoApi;
+}
+
+function fromBase64Bytes(base64) {
+  const binary = atob(String(base64 || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function deriveCloudSyncKey(password, saltBytes, iterations = cloudSyncKdfIterations) {
+  const cryptoApi = cloudSyncCrypto();
+  const baseKey = await cryptoApi.subtle.importKey(
+    "raw",
+    cloudSyncTextEncoder.encode(String(password || "")),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+  return cryptoApi.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: saltBytes,
+      iterations,
+      hash: "SHA-256",
+    },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+export async function encryptCloudSyncPayload(payload, password) {
+  const cleanPassword = String(password || "");
+  if (!cleanPassword) throw new Error("请填写同步密码。");
+  const cryptoApi = cloudSyncCrypto();
+  const salt = new Uint8Array(16);
+  const iv = new Uint8Array(12);
+  cryptoApi.getRandomValues(salt);
+  cryptoApi.getRandomValues(iv);
+  const key = await deriveCloudSyncKey(cleanPassword, salt);
+  const encodedPayload = cloudSyncTextEncoder.encode(JSON.stringify(payload || {}));
+  const ciphertext = await cryptoApi.subtle.encrypt({ name: "AES-GCM", iv }, key, encodedPayload);
+  return JSON.stringify({
+    kind: cloudSyncEncryptionKind,
+    version: 1,
+    algorithm: "AES-GCM",
+    kdf: "PBKDF2-SHA256",
+    iterations: cloudSyncKdfIterations,
+    salt: toBase64Bytes(salt),
+    iv: toBase64Bytes(iv),
+    ciphertext: toBase64Bytes(new Uint8Array(ciphertext)),
+  });
+}
+
+export async function decryptCloudSyncPayload(encryptedPayload, password) {
+  const envelope = JSON.parse(String(encryptedPayload || ""));
+  if (envelope?.kind !== cloudSyncEncryptionKind || envelope?.algorithm !== "AES-GCM") {
+    throw new Error("云端配置格式不支持。");
+  }
+  const salt = fromBase64Bytes(envelope.salt);
+  const iv = fromBase64Bytes(envelope.iv);
+  const ciphertext = fromBase64Bytes(envelope.ciphertext);
+  const key = await deriveCloudSyncKey(String(password || ""), salt, Number(envelope.iterations || cloudSyncKdfIterations));
+  try {
+    const decrypted = await cloudSyncCrypto().subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+    return normalizeCloudSyncPlainPayload(JSON.parse(cloudSyncTextDecoder.decode(decrypted)));
+  } catch (error) {
+    throw new Error("同步密码可以登录，但无法解密云端配置。请确认这是上传配置时使用的密码。");
+  }
+}
+
+async function cloudSyncRequest(endpoint, path, { method = "GET", token = "", body = null } = {}) {
+  const response = await fetch(`${normalizeCloudSyncEndpoint(endpoint)}${path}`, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok || data?.ok === false) {
+    throw new Error(data?.error || `配置同步请求失败：${response.status}`);
+  }
+  return data;
+}
+
+export async function loginCloudConfigSync({ endpoint, account, password, device = {} }) {
+  const validation = validateCloudSyncCredentials({ account, password });
+  if (!validation.ok) throw new Error(validation.message);
+  return cloudSyncRequest(endpoint, "/v1/auth/login", {
+    method: "POST",
+    body: {
+      account: validation.account,
+      password: validation.password,
+      ...device,
+    },
+  });
+}
+
+export async function fetchCloudConfigSync({ endpoint, token }) {
+  return cloudSyncRequest(endpoint, "/v1/config", { token });
+}
+
+export async function fetchCloudSessionShares({ endpoint, token }) {
+  return cloudSyncRequest(endpoint, "/v1/shares", { token });
+}
+
+export async function createCloudSessionShare({ endpoint, token, recipientAccount, session }) {
+  return cloudSyncRequest(endpoint, "/v1/shares", {
+    method: "POST",
+    token,
+    body: {
+      recipientAccount: normalizeCloudSyncAccount(recipientAccount),
+      session,
+    },
+  });
+}
+
+export async function deleteCloudSessionShare({ endpoint, token, shareId }) {
+  return cloudSyncRequest(endpoint, `/v1/shares/${encodeURIComponent(String(shareId || "").trim())}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function putCloudConfigSync({ endpoint, token, encryptedPayload, baseRevision, device = {} }) {
+  return cloudSyncRequest(endpoint, "/v1/config", {
+    method: "PUT",
+    token,
+    body: {
+      baseRevision,
+      encrypted: true,
+      contentType: "application/vnd.ai-workbench.cloud-config+json",
+      encoding: "json",
+      schemaVersion: cloudSyncPayloadVersion,
+      encryptedPayload,
+      ...device,
+    },
+  });
+}
+
+export async function deleteCloudConfigSync({ endpoint, token }) {
+  return cloudSyncRequest(endpoint, "/v1/config", {
+    method: "DELETE",
+    token,
+  });
 }
 
 export function migrationFileName() {
@@ -1945,6 +2661,95 @@ export function isWslProfile(profile) {
   return normalizeServerPlatform(profile?.platform) === "wsl";
 }
 
+export function wslDistroFromProfile(profile) {
+  return String(profile?.wslDistro || "").trim();
+}
+
+export function wslPowerShellHelpers() {
+  return `
+function Invoke-AiwbWslText {
+  param([string]$Arguments)
+  $AIWB_PROCESS = New-Object System.Diagnostics.Process
+  $AIWB_PROCESS.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $AIWB_PROCESS.StartInfo.FileName = "wsl.exe"
+  $AIWB_PROCESS.StartInfo.Arguments = $Arguments
+  $AIWB_PROCESS.StartInfo.UseShellExecute = $false
+  $AIWB_PROCESS.StartInfo.CreateNoWindow = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardOutput = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardError = $true
+  $AIWB_PROCESS.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+  $AIWB_PROCESS.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+  [void]$AIWB_PROCESS.Start()
+  $AIWB_STDOUT = $AIWB_PROCESS.StandardOutput.ReadToEnd()
+  $AIWB_STDERR = $AIWB_PROCESS.StandardError.ReadToEnd()
+  $AIWB_PROCESS.WaitForExit()
+  return [PSCustomObject]@{
+    ExitCode = $AIWB_PROCESS.ExitCode
+    Output = $AIWB_STDOUT
+    Error = $AIWB_STDERR
+  }
+}
+function Get-AiwbUsableWslDistros {
+  try {
+    $AIWB_LIST_RESULT = Invoke-AiwbWslText "--list --quiet"
+    if ($AIWB_LIST_RESULT.ExitCode -ne 0) { return @() }
+    return @(
+      $AIWB_LIST_RESULT.Output -split "[\\r\\n]+" |
+        ForEach-Object { ([string]$_).Trim() } |
+        Where-Object {
+          $_ -and $_ -notmatch '^(docker-desktop(?:-data)?|rancher-desktop(?:-data)?|podman-machine(?:-.+)?)$'
+        }
+    )
+  } catch { return @() }
+}
+function Invoke-AiwbWslBash {
+  param(
+    [string]$Distro,
+    [string]$ScriptBase64,
+    [string]$InputText = ""
+  )
+  $AIWB_PROCESS = New-Object System.Diagnostics.Process
+  $AIWB_PROCESS.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $AIWB_PROCESS.StartInfo.FileName = "wsl.exe"
+  $AIWB_PROCESS.StartInfo.Arguments = '-d ' + $Distro + ' -u root -- bash -lc "echo ' + $ScriptBase64 + ' | base64 -d | bash"'
+  $AIWB_PROCESS.StartInfo.UseShellExecute = $false
+  $AIWB_PROCESS.StartInfo.CreateNoWindow = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardInput = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardOutput = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardError = $true
+  $AIWB_PROCESS.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+  $AIWB_PROCESS.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+  [void]$AIWB_PROCESS.Start()
+  $AIWB_STDOUT_TASK = $AIWB_PROCESS.StandardOutput.ReadToEndAsync()
+  $AIWB_STDERR_TASK = $AIWB_PROCESS.StandardError.ReadToEndAsync()
+  if ($InputText) { $AIWB_PROCESS.StandardInput.Write($InputText) }
+  $AIWB_PROCESS.StandardInput.Close()
+  $AIWB_PROCESS.WaitForExit()
+  return [PSCustomObject]@{
+    ExitCode = $AIWB_PROCESS.ExitCode
+    Output = $AIWB_STDOUT_TASK.Result
+    Error = $AIWB_STDERR_TASK.Result
+  }
+}
+`;
+}
+
+export function wslPowerShellDistroSetup(profile) {
+  const configuredDistro = wslDistroFromProfile(profile);
+  return `
+${wslPowerShellHelpers()}
+$AIWB_DISTRO = ${psQuote(configuredDistro)}
+$AIWB_USABLE_DISTROS = @(Get-AiwbUsableWslDistros)
+if ($AIWB_DISTRO -and -not ($AIWB_USABLE_DISTROS -contains $AIWB_DISTRO)) { $AIWB_DISTRO = "" }
+if (-not $AIWB_DISTRO -and $AIWB_USABLE_DISTROS.Count -gt 0) {
+  $AIWB_DISTRO = [string]$AIWB_USABLE_DISTROS[0]
+}
+if (-not $AIWB_DISTRO) {
+  throw "没有找到可用的 WSL Linux 发行版。docker-desktop 不能作为 AI 工作环境。"
+}
+`;
+}
+
 export function dirnameRemote(path) {
   const normalized = String(path || "").replace(/\/+$/, "");
   const index = normalized.lastIndexOf("/");
@@ -1990,9 +2795,14 @@ export function powershellStdinCommand(script) {
 export function remoteBashCommand(profile, script) {
   if (!isWslProfile(profile)) return bashCommand(script);
   const encoded = toBase64Utf8(script);
-  return powershellCommand(`
-$AIWB_SCRIPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encoded)}))
-& wsl.exe bash -lc $AIWB_SCRIPT
-exit $LASTEXITCODE
+  return powershellStdinCommand(`
+${wslPowerShellDistroSetup(profile)}
+$AIWB_RUN = Invoke-AiwbWslBash -Distro $AIWB_DISTRO -ScriptBase64 ${psQuote(encoded)}
+if ($AIWB_RUN.Output) { [Console]::Out.Write($AIWB_RUN.Output) }
+if ($AIWB_RUN.ExitCode -ne 0) {
+  if ($AIWB_RUN.Error) { [Console]::Error.Write($AIWB_RUN.Error) }
+  exit $AIWB_RUN.ExitCode
+}
+exit 0
 `);
 }

@@ -1,14 +1,15 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "13";
+export const latestWorkbenchAgentVersion = "25";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
 export const workbenchAgentGithubManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/latest.json`;
+export const workbenchWindowsAgentManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${latestWorkbenchAgentVersion}/windows-manifest.json`;
 export const workbenchAgentOssBucket = "limpet-ai-workbench-47t37ccfz2";
 export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
-export const workbenchAgentManifestUrl = workbenchAgentGithubManifestUrl;
+export const workbenchAgentManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${latestWorkbenchAgentVersion}/manifest.json`;
 
 const {
   SSHWorkbench,
@@ -162,6 +163,8 @@ const {
   wakePhrasesForProfile,
   wakePhrasesFromText,
   workdirDisplayName,
+  wslDistroFromProfile,
+  wslPowerShellHelpers,
   workspaceDiagnosticSummary,
   workspaceMirrorStorageKey,
   workspaceStoreHasServers
@@ -180,6 +183,7 @@ AIWB_VERSION="${latestWorkbenchAgentVersion}"
 AIWB_DAEMON_PID="$AIWB_HOME/daemon.pid"
 AIWB_DAEMON_LOG="$AIWB_HOME/daemon.log"
 AIWB_DAEMON_HEARTBEAT="$AIWB_HOME/daemon.heartbeat"
+AIWB_DAEMON_LOCK="$AIWB_HOME/daemon.lock"
 AIWB_TICK_LOCK="$AIWB_HOME/tick.lock"
 AIWB_MAX_CONCURRENCY="4"
 mkdir -p "$AIWB_TASKS" "$AIWB_CONVERSATIONS" "$AIWB_CONVERSATION_LOCKS"
@@ -228,7 +232,7 @@ aiwb_update_conversation_from_task() {
   aiwb_write_file "$conversation_dir/status" "$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
   aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
 
-  for name in name workdir agent_id created_at started_at runner_started_at finished_at exit_code; do
+  for name in name workdir agent_id turn_id request_message_id response_message_id created_at started_at runner_started_at finished_at exit_code; do
     if [ -f "$task_dir/$name" ]; then
       cp "$task_dir/$name" "$conversation_dir/$name" 2>/dev/null || true
     fi
@@ -243,6 +247,9 @@ aiwb_update_conversation_from_task() {
       cp "$task_dir/output.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
     elif [ -s "$task_dir/bootstrap.log" ]; then
       cp "$task_dir/bootstrap.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
+    fi
+    if [ -s "$task_dir/execution-summary.txt" ]; then
+      cp "$task_dir/execution-summary.txt" "$conversation_dir/last_execution_summary.txt" 2>/dev/null || true
     fi
   fi
 }
@@ -298,6 +305,78 @@ aiwb_daemon_alive() {
   local pid
   pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+aiwb_daemon_lock_owner_alive() {
+  local pid
+  pid="$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+aiwb_release_daemon_lock() {
+  local owner
+  owner="$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")"
+  if [ "$owner" = "$$" ]; then
+    rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+    rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+  fi
+  if [ "$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")" = "$$" ]; then
+    rm -f "$AIWB_DAEMON_PID" 2>/dev/null || true
+  fi
+}
+
+aiwb_acquire_daemon_lock() {
+  if mkdir "$AIWB_DAEMON_LOCK" 2>/dev/null; then
+    aiwb_write_file "$AIWB_DAEMON_LOCK/owner.pid" "$$"
+    aiwb_write_file "$AIWB_DAEMON_LOCK/version" "$AIWB_VERSION"
+    return 0
+  fi
+
+  if aiwb_daemon_lock_owner_alive; then
+    return 1
+  fi
+
+  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+  rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+  if mkdir "$AIWB_DAEMON_LOCK" 2>/dev/null; then
+    aiwb_write_file "$AIWB_DAEMON_LOCK/owner.pid" "$$"
+    aiwb_write_file "$AIWB_DAEMON_LOCK/version" "$AIWB_VERSION"
+    return 0
+  fi
+  return 1
+}
+
+aiwb_installed_version() {
+  if [ -x "$AIWB_HOME/aiwbctl" ]; then
+    "$AIWB_HOME/aiwbctl" --version 2>/dev/null | head -n 1
+  else
+    printf "%s\\n" "$AIWB_VERSION"
+  fi
+}
+
+aiwb_stop_daemons() {
+  local pid
+  local candidates
+
+  candidates="$(pgrep -f "$AIWB_HOME/aiwbctl daemon" 2>/dev/null || printf "")"
+  for pid in $candidates; do
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$PPID" ] && continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+
+  sleep 0.2
+  for pid in $candidates; do
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$PPID" ] && continue
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+
+  rm -f "$AIWB_DAEMON_PID" "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || true
+  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+  rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
 }
 
 aiwb_task_pid_alive() {
@@ -402,6 +481,148 @@ aiwb_safe_id() {
   printf "%s\\n" "$1" | sed 's/[^A-Za-z0-9_.-]/-/g' | sed 's/--*/-/g' | cut -c 1-120
 }
 
+aiwb_git_repositories() {
+  local workdir="$1"
+  local root_repo
+  [ -d "$workdir" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+
+  root_repo="$(git -C "$workdir" rev-parse --show-toplevel 2>/dev/null || printf "")"
+  if [ -n "$root_repo" ]; then
+    printf "%s\\n" "$root_repo"
+    return 0
+  fi
+
+  find "$workdir" -mindepth 1 -maxdepth 5 -type d -name .git -prune -print0 2>/dev/null |
+    while IFS= read -r -d '' git_dir; do
+      dirname "$git_dir"
+    done |
+    sort -u
+}
+
+aiwb_capture_git_snapshot() {
+  local target="$1"
+  local workdir
+  local repo
+  local head
+  local file
+  local hash
+  local files_path
+
+  : > "$target"
+  workdir="$(cat "$AIWB_TASK_DIR/workdir" 2>/dev/null || printf "")"
+  [ -n "$workdir" ] || return 0
+  files_path="$AIWB_TASK_DIR/git-files-\$\$.bin"
+
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || printf "")"
+    printf "HEAD\\t%s\\t%s\\n" "$repo" "$head" >> "$target"
+    {
+      git -C "$repo" diff --name-only -z HEAD -- 2>/dev/null || true
+      git -C "$repo" ls-files --others --exclude-standard -z 2>/dev/null || true
+    } | sort -zu > "$files_path"
+
+    while IFS= read -r -d '' file; do
+      [ -n "$file" ] || continue
+      if [ -f "$repo/$file" ] || [ -L "$repo/$file" ]; then
+        hash="$(git -C "$repo" hash-object -- "$file" 2>/dev/null || printf unreadable)"
+      elif [ -e "$repo/$file" ]; then
+        hash="non-file"
+      else
+        hash="deleted"
+      fi
+      printf "FILE\\t%s\\t%s\\t%s\\n" "$repo" "$file" "$hash" >> "$target"
+    done < "$files_path"
+  done < <(aiwb_git_repositories "$workdir")
+
+  rm -f "$files_path"
+}
+
+aiwb_snapshot_value() {
+  local snapshot="$1"
+  local kind="$2"
+  local repo="$3"
+  local file="\${4:-}"
+  awk -F "$(printf '\\t')" -v kind="$kind" -v repo="$repo" -v file="$file" '
+    $1 == kind && $2 == repo && (kind != "FILE" || $3 == file) {
+      print (kind == "FILE" ? $4 : $3)
+      exit
+    }
+  ' "$snapshot" 2>/dev/null
+}
+
+aiwb_build_execution_summary() {
+  local exit_code="$1"
+  local before="$AIWB_TASK_DIR/git-before.tsv"
+  local after="$AIWB_TASK_DIR/git-after.tsv"
+  local summary="$AIWB_TASK_DIR/execution-summary.txt"
+  local keys="$AIWB_TASK_DIR/git-summary-keys.tsv"
+  local repo
+  local file
+  local before_value
+  local after_value
+  local before_head
+  local after_head
+  local repo_name
+  local changed_count=0
+  local commit_count=0
+
+  aiwb_capture_git_snapshot "$after"
+  {
+    printf "### Agent 执行回执\\n"
+    if [ "$exit_code" -eq 0 ] 2>/dev/null; then
+      printf -- "- 进程状态：正常结束（退出码 %s）\\n" "$exit_code"
+    else
+      printf -- "- 进程状态：执行失败（退出码 %s）\\n" "$exit_code"
+    fi
+  } > "$summary"
+
+  {
+    awk -F "$(printf '\\t')" '$1 == "HEAD" { print $2 }' "$before" "$after" 2>/dev/null
+  } | sort -u > "$keys"
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    before_head="$(aiwb_snapshot_value "$before" HEAD "$repo")"
+    after_head="$(aiwb_snapshot_value "$after" HEAD "$repo")"
+    if [ -n "$before_head" ] && [ -n "$after_head" ] && [ "$before_head" != "$after_head" ]; then
+      repo_name="$(basename "$repo")"
+      printf -- "- 新提交（%s）：\\n" "$repo_name" >> "$summary"
+      git -C "$repo" log --format='  - %h %s' "$before_head..$after_head" -n 12 2>/dev/null >> "$summary" || true
+      commit_count="$((commit_count + 1))"
+    fi
+  done < "$keys"
+
+  {
+    awk -F "$(printf '\\t')" '$1 == "FILE" { print $2 "\\t" $3 }' "$before" "$after" 2>/dev/null
+  } | sort -u > "$keys"
+  while IFS=$'\\t' read -r repo file; do
+    [ -n "$repo" ] && [ -n "$file" ] || continue
+    before_value="$(aiwb_snapshot_value "$before" FILE "$repo" "$file")"
+    after_value="$(aiwb_snapshot_value "$after" FILE "$repo" "$file")"
+    [ "$before_value" = "$after_value" ] && continue
+    if [ "$changed_count" -eq 0 ]; then
+      printf -- "- 工作区文件变化：\\n" >> "$summary"
+    fi
+    repo_name="$(basename "$repo")"
+    if [ -z "$after_value" ]; then
+      printf "  - %s/%s（已恢复为干净状态或已提交）\\n" "$repo_name" "$file" >> "$summary"
+    elif [ "$after_value" = "deleted" ]; then
+      printf "  - %s/%s（已删除）\\n" "$repo_name" "$file" >> "$summary"
+    else
+      printf "  - %s/%s\\n" "$repo_name" "$file" >> "$summary"
+    fi
+    changed_count="$((changed_count + 1))"
+    [ "$changed_count" -ge 80 ] && break
+  done < "$keys"
+
+  if [ "$changed_count" -eq 0 ] && [ "$commit_count" -eq 0 ]; then
+    printf -- "- Git 变化：本任务期间未检测到新增提交或工作区文件变化。\\n" >> "$summary"
+  fi
+  printf -- "- 说明：这是 Agent 根据任务开始与结束时的 Git 状态自动生成的执行痕迹。\\n" >> "$summary"
+  rm -f "$keys"
+}
+
 aiwb_update_conversation_from_task() {
   local conversation_id
   local conversation_dir
@@ -440,6 +661,9 @@ aiwb_update_conversation_from_task() {
     elif [ -s "$AIWB_TASK_DIR/bootstrap.log" ]; then
       cp "$AIWB_TASK_DIR/bootstrap.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
     fi
+    if [ -s "$AIWB_TASK_DIR/execution-summary.txt" ]; then
+      cp "$AIWB_TASK_DIR/execution-summary.txt" "$conversation_dir/last_execution_summary.txt" 2>/dev/null || true
+    fi
   fi
 }
 
@@ -456,16 +680,24 @@ aiwb_set_status() {
 
 aiwb_write_file "$AIWB_TASK_DIR/runner_started_at" "$(aiwb_now)"
 : > "$AIWB_TASK_DIR/output.log"
+aiwb_capture_git_snapshot "$AIWB_TASK_DIR/git-before.tsv"
 AIWB_DECODED_COMMAND="$(base64 -d < "$AIWB_TASK_DIR/command.b64" 2>"$AIWB_TASK_DIR/bootstrap.log")"
 AIWB_DECODE_STATUS=$?
 if [ "$AIWB_DECODE_STATUS" -ne 0 ] || [ -z "$AIWB_DECODED_COMMAND" ]; then
   printf "AI Workbench Agent: command payload decode failed.\\n" >> "$AIWB_TASK_DIR/bootstrap.log"
+  aiwb_build_execution_summary "$AIWB_DECODE_STATUS"
   aiwb_set_status "error" "$AIWB_DECODE_STATUS"
   exit 0
 fi
 
+AIWB_TASK_AGENT_ID="$(cat "$AIWB_TASK_DIR/agent_id" 2>/dev/null || printf "")"
+if [ "$AIWB_TASK_AGENT_ID" = "claude" ]; then
+  export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
+fi
+
 eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1
 AIWB_EXIT_CODE=$?
+aiwb_build_execution_summary "$AIWB_EXIT_CODE"
 if [ "$AIWB_EXIT_CODE" -eq 0 ]; then
   aiwb_set_status "done" "$AIWB_EXIT_CODE"
 else
@@ -552,6 +784,9 @@ aiwb_print_conversation_busy() {
   printf "__AIWB_AGENT_DAEMON_STATUS__%s\\n" "$(aiwb_daemon_status)"
   printf "__AIWB_AGENT_TASK_ID__%s\\n" "$task_id"
   printf "__AIWB_AGENT_TASK_CONVERSATION_ID__%s\\n" "$conversation_id"
+  printf "__AIWB_AGENT_TASK_TURN_ID__%s\\n" "$(cat "$AIWB_TASKS/$task_id/turn_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__%s\\n" "$(cat "$AIWB_TASKS/$task_id/request_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__%s\\n" "$(cat "$AIWB_TASKS/$task_id/response_message_id" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_STATUS__busy\\n"
   printf "__AIWB_AGENT_BLOCKED_BY_TASK_ID__%s\\n" "$task_id"
   printf "__AIWB_AGENT_BLOCKED_BY_CONVERSATION_ID__%s\\n" "$conversation_id"
@@ -607,10 +842,18 @@ aiwb_tick_tasks() {
 }
 
 aiwb_daemon_loop() {
+  if ! aiwb_acquire_daemon_lock; then
+    aiwb_append_log "daemon duplicate rejected pid=$$ version=$AIWB_VERSION"
+    return 0
+  fi
   aiwb_write_file "$AIWB_DAEMON_PID" "$$"
   aiwb_append_log "daemon started pid=$$ version=$AIWB_VERSION"
-  trap 'aiwb_append_log "daemon stopped"; rm -f "$AIWB_DAEMON_PID"; exit 0' INT TERM EXIT
+  trap 'aiwb_append_log "daemon stopped pid=$$ version=$AIWB_VERSION"; aiwb_release_daemon_lock; exit 0' INT TERM EXIT
   while true; do
+    if [ "$(aiwb_installed_version)" != "$AIWB_VERSION" ]; then
+      aiwb_append_log "daemon version superseded pid=$$ version=$AIWB_VERSION"
+      return 0
+    fi
     aiwb_write_file "$AIWB_DAEMON_HEARTBEAT" "$(aiwb_now)"
     aiwb_tick_tasks
     sleep 1
@@ -817,6 +1060,9 @@ aiwb_print_task() {
   printf "__AIWB_AGENT_DAEMON_HEARTBEAT__%s\\n" "$(cat "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_ID__%s\\n" "$task_id"
   printf "__AIWB_AGENT_TASK_CONVERSATION_ID__%s\\n" "$(cat "$task_dir/conversation_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_TURN_ID__%s\\n" "$(cat "$task_dir/turn_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__%s\\n" "$(cat "$task_dir/request_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__%s\\n" "$(cat "$task_dir/response_message_id" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_STATUS__%s\\n" "$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
   printf "__AIWB_AGENT_TASK_EXIT_CODE__%s\\n" "$(cat "$task_dir/exit_code" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_PID__%s\\n" "$(cat "$task_dir/pid" 2>/dev/null || printf "")"
@@ -838,6 +1084,11 @@ aiwb_print_task() {
     cat "$task_dir/launcher.log"
   fi
   printf "\\n__AIWB_AGENT_TASK_OUTPUT_END__\\n"
+  if [ -s "$task_dir/execution-summary.txt" ]; then
+    printf "__AIWB_AGENT_TASK_EXECUTION_SUMMARY_START__\\n"
+    cat "$task_dir/execution-summary.txt"
+    printf "\\n__AIWB_AGENT_TASK_EXECUTION_SUMMARY_END__\\n"
+  fi
 }
 
 aiwb_task_fingerprint() {
@@ -849,6 +1100,8 @@ aiwb_task_fingerprint() {
   local bootstrap_mtime
   local launcher_size
   local launcher_mtime
+  local summary_size
+  local summary_mtime
   local finished_at
   local runner_started_at
   local pid
@@ -859,17 +1112,19 @@ aiwb_task_fingerprint() {
   fi
 
   status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
-  output_size="$(wc -c < "$task_dir/output.log" 2>/dev/null | tr -d '[:space:]' || printf 0)"
+  output_size="$([ -f "$task_dir/output.log" ] && wc -c < "$task_dir/output.log" | tr -d '[:space:]' || printf 0)"
   output_mtime="$(aiwb_path_mtime_epoch "$task_dir/output.log")"
-  bootstrap_size="$(wc -c < "$task_dir/bootstrap.log" 2>/dev/null | tr -d '[:space:]' || printf 0)"
+  bootstrap_size="$([ -f "$task_dir/bootstrap.log" ] && wc -c < "$task_dir/bootstrap.log" | tr -d '[:space:]' || printf 0)"
   bootstrap_mtime="$(aiwb_path_mtime_epoch "$task_dir/bootstrap.log")"
-  launcher_size="$(wc -c < "$task_dir/launcher.log" 2>/dev/null | tr -d '[:space:]' || printf 0)"
+  launcher_size="$([ -f "$task_dir/launcher.log" ] && wc -c < "$task_dir/launcher.log" | tr -d '[:space:]' || printf 0)"
   launcher_mtime="$(aiwb_path_mtime_epoch "$task_dir/launcher.log")"
+  summary_size="$([ -f "$task_dir/execution-summary.txt" ] && wc -c < "$task_dir/execution-summary.txt" | tr -d '[:space:]' || printf 0)"
+  summary_mtime="$(aiwb_path_mtime_epoch "$task_dir/execution-summary.txt")"
   finished_at="$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
   runner_started_at="$(cat "$task_dir/runner_started_at" 2>/dev/null || printf "")"
   pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
 
-  printf "%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\\n" \\
+  printf "%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\\n" \\
     "$status" \\
     "$output_size" \\
     "$output_mtime" \\
@@ -877,6 +1132,8 @@ aiwb_task_fingerprint() {
     "$bootstrap_mtime" \\
     "$launcher_size" \\
     "$launcher_mtime" \\
+    "$summary_size" \\
+    "$summary_mtime" \\
     "$finished_at" \\
     "$runner_started_at" \\
     "$pid"
@@ -1012,6 +1269,9 @@ aiwb_print_conversation_history_item() {
   printf "__AIWB_AGENT_CONVERSATION_HISTORY_TASK_ID__%s\\n" "$task_id"
   printf "__AIWB_AGENT_CONVERSATION_HISTORY_SORT_KEY__%s:%s\\n" "$sort_key" "$task_id"
   printf "__AIWB_AGENT_CONVERSATION_HISTORY_STATUS__%s\\n" "$status"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_TURN_ID__%s\\n" "$(cat "$task_dir/turn_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_REQUEST_MESSAGE_ID__%s\\n" "$(cat "$task_dir/request_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_RESPONSE_MESSAGE_ID__%s\\n" "$(cat "$task_dir/response_message_id" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_CONVERSATION_HISTORY_AGENT_ID__%s\\n" "$(cat "$task_dir/agent_id" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_CONVERSATION_HISTORY_STARTED_AT__%s\\n" "$(cat "$task_dir/started_at" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_CONVERSATION_HISTORY_FINISHED_AT__%s\\n" "$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
@@ -1103,6 +1363,7 @@ aiwb_print_conversation_history() {
 
 aiwb_list_conversations() {
   local conversation_dir
+  aiwb_rebuild_conversations_from_tasks
   printf "__AIWB_AGENT_STATUS__ready\\n"
   printf "__AIWB_AGENT_VERSION__%s\\n" "$AIWB_VERSION"
   for conversation_dir in "$AIWB_CONVERSATIONS"/*; do
@@ -1111,11 +1372,23 @@ aiwb_list_conversations() {
   done
 }
 
+aiwb_rebuild_conversations_from_tasks() {
+  local task_dir
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    [ -f "$task_dir/conversation_id" ] || continue
+    aiwb_mark_queued_stale_if_needed "$task_dir"
+    aiwb_mark_stale_if_needed "$task_dir"
+    aiwb_update_conversation_from_task "$task_dir"
+  done
+}
+
 aiwb_print_conversation_status() {
   local conversation_id="$1"
   local history_limit="\${2:-5}"
   local history_before="\${3:-}"
   local conversation_dir
+  aiwb_rebuild_conversations_from_tasks
   conversation_dir="$(aiwb_conversation_dir "$conversation_id")"
   printf "__AIWB_AGENT_STATUS__ready\\n"
   printf "__AIWB_AGENT_VERSION__%s\\n" "$AIWB_VERSION"
@@ -1128,8 +1401,13 @@ aiwb_print_conversation_status() {
 }
 
 aiwb_install_service() {
+  if command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+    systemctl stop ai-workbench-agent.service >/dev/null 2>&1 || true
+  fi
+  aiwb_stop_daemons
   if ! command -v systemctl >/dev/null 2>&1; then
     printf "__AIWB_AGENT_SERVICE__unsupported\\n"
+    aiwb_start_daemon >/dev/null 2>&1 || true
     return 0
   fi
 
@@ -1162,12 +1440,47 @@ AIWB_SYSTEMD_UNIT
   printf "__AIWB_AGENT_SERVICE__user-fallback\\n"
 }
 
+aiwb_uninstall_service() {
+  local task_dir
+  local task_pid
+  local daemon_pid
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      systemctl disable --now ai-workbench-agent.service >/dev/null 2>&1 || true
+      rm -f /etc/systemd/system/ai-workbench-agent.service
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    else
+      systemctl --user disable --now ai-workbench-agent.service >/dev/null 2>&1 || true
+    fi
+  fi
+
+  daemon_pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
+  if [ -n "$daemon_pid" ]; then
+    kill "$daemon_pid" >/dev/null 2>&1 || true
+  fi
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    task_pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+    if [ -n "$task_pid" ]; then
+      kill "$task_pid" >/dev/null 2>&1 || true
+    fi
+  done
+
+  rm -rf "$AIWB_HOME"
+  printf "__AIWB_AGENT_STATUS__removed\\n"
+  printf "__AIWB_AGENT_SERVICE_STATUS__removed\\n"
+}
+
 AIWB_CMD="status"
 if [ "$#" -gt 0 ]; then
   AIWB_CMD="$1"
 fi
 
 case "$AIWB_CMD" in
+  --version|version)
+    printf "%s\\n" "$AIWB_VERSION"
+    ;;
   status)
     if [ "$#" -gt 1 ]; then
       aiwb_print_task "$2"
@@ -1204,6 +1517,9 @@ case "$AIWB_CMD" in
   install-service)
     aiwb_install_service
     "$AIWB_HOME/aiwbctl" status
+    ;;
+  uninstall-service)
+    aiwb_uninstall_service
     ;;
   create)
     AIWB_TASK_ID=""
@@ -1269,6 +1585,9 @@ case "$AIWB_CMD" in
     printf "__AIWB_AGENT_DAEMON_STATUS__%s\\n" "$(aiwb_daemon_status)"
     printf "__AIWB_AGENT_TASK_ID__%s\\n" "$AIWB_TASK_ID"
     printf "__AIWB_AGENT_TASK_CONVERSATION_ID__%s\\n" "$(cat "$AIWB_TASK_DIR/conversation_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_TURN_ID__%s\\n" "$(cat "$AIWB_TASK_DIR/turn_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__%s\\n" "$(cat "$AIWB_TASK_DIR/request_message_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__%s\\n" "$(cat "$AIWB_TASK_DIR/response_message_id" 2>/dev/null || printf "")"
     printf "__AIWB_AGENT_TASK_STATUS__%s\\n" "$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf queued)"
     ;;
   conversations|conversation-list)
@@ -1315,14 +1634,144 @@ esac
 `;
 }
 
+export function buildWindowsAgentControlCommand(profile, args = [], setupScript = "") {
+  const commandArgs = Array.isArray(args) ? args : [];
+  const argsLiteral = commandArgs.map((value) => psQuote(value)).join(", ");
+  const taskId = commandArgs[0] === "create" ? String(commandArgs[1] || "") : "";
+  const taskSetup = taskId
+    ? `$AIWB_TASK_DIR = Join-Path (Join-Path $AIWB_HOME "tasks") ${psQuote(taskId)}\nNew-Item -ItemType Directory -Force -Path $AIWB_TASK_DIR | Out-Null`
+    : `$AIWB_TASK_DIR = Join-Path $AIWB_HOME "tasks"`;
+  const script = `
+$AIWB_HOME = Join-Path $env:USERPROFILE ".ai-workbench\\agent"
+$AIWB_SCRIPT = Join-Path $AIWB_HOME "aiwb-agent.mjs"
+$AIWB_NODE_COMMAND = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $AIWB_NODE_COMMAND -or -not (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf)) {
+  Write-Output "__AIWB_AGENT_STATUS__missing"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent 未安装。请先在全局设置中安装 Agent。"
+  exit 0
+}
+${taskSetup}
+${setupScript}
+$AIWB_ARGS = @(${argsLiteral})
+& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT @AIWB_ARGS
+exit $LASTEXITCODE
+`;
+  return setupScript.length > 800 ? powershellStdinCommand(script) : powershellCommand(script);
+}
+
 export function buildInstallWorkbenchAgentCommand(profile) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式暂不支持 AI Workbench Agent。");
-  const script = workbenchAgentScript();
+  if (isWindowsProfile(profile)) {
+    return powershellStdinCommand(`
+$AIWB_HOME = Join-Path $env:USERPROFILE ".ai-workbench\\agent"
+$AIWB_SCRIPT = Join-Path $AIWB_HOME "aiwb-agent.mjs"
+$AIWB_MANIFEST_URL = ${psQuote(workbenchWindowsAgentManifestUrl)}
+$AIWB_REQUIRED_VERSION = ${psQuote(latestWorkbenchAgentVersion)}
+$AIWB_NODE_COMMAND = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $AIWB_NODE_COMMAND) {
+  Write-Output "__AIWB_AGENT_STATUS__missing"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent 需要 Node.js。当前机器没有找到 node.exe。"
+  exit 0
+}
+
+New-Item -ItemType Directory -Force -Path $AIWB_HOME | Out-Null
+$AIWB_MANIFEST_TMP = Join-Path $AIWB_HOME ("latest.json." + $PID + ".tmp")
+$AIWB_SCRIPT_TMP = Join-Path $AIWB_HOME ("aiwb-agent.mjs." + $PID + ".tmp")
+
+function Invoke-AiwbCloudDownload([string]$Url, [string]$Target) {
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Target -TimeoutSec 45
+    return $true
+  } catch {
+    try {
+      & curl.exe -fL --connect-timeout 8 --max-time 45 $Url -o $Target 2>$null
+      return ($LASTEXITCODE -eq 0)
+    } catch {
+      return $false
+    }
+  }
+}
+
+function Convert-AiwbVersionNumber([object]$Value) {
+  $match = [regex]::Match([string]$Value, '^\\s*(\\d+)')
+  if (-not $match.Success) { return 0 }
+  return [int]$match.Groups[1].Value
+}
+
+if (-not (Invoke-AiwbCloudDownload $AIWB_MANIFEST_URL $AIWB_MANIFEST_TMP)) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__无法读取云端 Windows Agent 清单。请检查服务器网络，或稍后重试。"
+  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  exit 3
+}
+
+try {
+  $AIWB_MANIFEST = Get-Content -LiteralPath $AIWB_MANIFEST_TMP -Raw -Encoding UTF8 | ConvertFrom-Json
+} catch {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__云端 Windows Agent 清单格式无效。"
+  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  exit 4
+}
+
+$AIWB_REMOTE_VERSION = [string]$AIWB_MANIFEST.version
+$AIWB_REMOTE_VERSION_NUM = Convert-AiwbVersionNumber $AIWB_REMOTE_VERSION
+$AIWB_REQUIRED_VERSION_NUM = Convert-AiwbVersionNumber $AIWB_REQUIRED_VERSION
+if ($AIWB_REMOTE_VERSION_NUM -lt $AIWB_REQUIRED_VERSION_NUM) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output ("__AIWB_AGENT_ERROR__云端 Windows Agent 版本过旧（当前 v{0}，需要 v{1}）。请先发布最新 Agent。" -f $AIWB_REMOTE_VERSION, $AIWB_REQUIRED_VERSION)
+  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  exit 5
+}
+
+$AIWB_INSTALLED_VERSION_NUM = 0
+if (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf) {
+  try {
+    $AIWB_INSTALLED_VERSION = (& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT --version 2>$null | Select-Object -First 1)
+    $AIWB_INSTALLED_VERSION_NUM = Convert-AiwbVersionNumber $AIWB_INSTALLED_VERSION
+  } catch {}
+}
+
+if ($AIWB_INSTALLED_VERSION_NUM -ge $AIWB_REMOTE_VERSION_NUM -and (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf)) {
+  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__cloud"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__unchanged"
+  & $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT status
+  exit $LASTEXITCODE
+}
+
+$AIWB_SCRIPT_URL = [string]$AIWB_MANIFEST.scriptUrl
+$AIWB_EXPECTED_SHA = ([string]$AIWB_MANIFEST.sha256).ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($AIWB_SCRIPT_URL) -or -not (Invoke-AiwbCloudDownload $AIWB_SCRIPT_URL $AIWB_SCRIPT_TMP)) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__云端 Windows Agent 脚本下载失败，未修改服务器上的现有 Agent。"
+  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP -Force -ErrorAction SilentlyContinue
+  exit 6
+}
+
+$AIWB_ACTUAL_SHA = ([string](Get-FileHash -LiteralPath $AIWB_SCRIPT_TMP -Algorithm SHA256).Hash).ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($AIWB_EXPECTED_SHA) -or $AIWB_ACTUAL_SHA -ne $AIWB_EXPECTED_SHA) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__云端 Windows Agent 校验失败，未替换服务器上的现有 Agent。"
+  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP -Force -ErrorAction SilentlyContinue
+  exit 7
+}
+
+Move-Item -LiteralPath $AIWB_SCRIPT_TMP -Destination $AIWB_SCRIPT -Force
+$AIWB_CTL = Join-Path $AIWB_HOME "aiwbctl.cmd"
+$AIWB_CTL_CONTENT = '@echo off' + [Environment]::NewLine + 'node ' + [char]34 + '%~dp0aiwb-agent.mjs' + [char]34 + ' %*' + [Environment]::NewLine
+[System.IO.File]::WriteAllText($AIWB_CTL, $AIWB_CTL_CONTENT, [System.Text.UTF8Encoding]::new($false))
+Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+Write-Output "__AIWB_AGENT_INSTALL_SOURCE__cloud"
+Write-Output "__AIWB_AGENT_INSTALL_RESULT__updated"
+& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service
+`);
+  }
   return remoteBashCommand(profile, `
 set -e
 AIWB_AGENT_HOME="$HOME/.ai-workbench/agent"
 AIWB_AGENT_MANIFEST_URL=${shQuote(workbenchAgentManifestUrl)}
-AIWB_AGENT_INSTALL_SOURCE="embedded"
+AIWB_AGENT_REQUIRED_VERSION="${latestWorkbenchAgentVersion}"
+AIWB_AGENT_INSTALL_SOURCE="cloud"
 AIWB_AGENT_MANIFEST_TMP="$AIWB_AGENT_HOME/latest.json.$$"
 AIWB_AGENT_DOWNLOAD_TMP="$AIWB_AGENT_HOME/aiwbctl.download.$$"
 mkdir -p "$AIWB_AGENT_HOME/tasks"
@@ -1371,44 +1820,244 @@ print(str(value))
 PY
 }
 
-if aiwb_download_url "$AIWB_AGENT_MANIFEST_URL" "$AIWB_AGENT_MANIFEST_TMP"; then
-  AIWB_AGENT_SCRIPT_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" scriptUrl 2>/dev/null || true)"
-  AIWB_AGENT_EXPECTED_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" sha256 2>/dev/null || true)"
-  if [ -n "$AIWB_AGENT_SCRIPT_URL" ] && aiwb_download_url "$AIWB_AGENT_SCRIPT_URL" "$AIWB_AGENT_DOWNLOAD_TMP"; then
-    AIWB_AGENT_SHA_OK="1"
-    if [ -n "$AIWB_AGENT_EXPECTED_SHA" ] && command -v sha256sum >/dev/null 2>&1; then
-      AIWB_AGENT_ACTUAL_SHA="$(sha256sum "$AIWB_AGENT_DOWNLOAD_TMP" | awk '{print $1}')"
-      [ "$AIWB_AGENT_ACTUAL_SHA" = "$AIWB_AGENT_EXPECTED_SHA" ] || AIWB_AGENT_SHA_OK=""
-    elif [ -n "$AIWB_AGENT_EXPECTED_SHA" ] && command -v shasum >/dev/null 2>&1; then
-      AIWB_AGENT_ACTUAL_SHA="$(shasum -a 256 "$AIWB_AGENT_DOWNLOAD_TMP" | awk '{print $1}')"
-      [ "$AIWB_AGENT_ACTUAL_SHA" = "$AIWB_AGENT_EXPECTED_SHA" ] || AIWB_AGENT_SHA_OK=""
-    fi
-    if [ -n "$AIWB_AGENT_SHA_OK" ]; then
-      cp "$AIWB_AGENT_DOWNLOAD_TMP" "$AIWB_AGENT_HOME/aiwbctl"
-      case "$AIWB_AGENT_SCRIPT_URL" in
-        *raw.githubusercontent.com*|*github.com*) AIWB_AGENT_INSTALL_SOURCE="github" ;;
-        *aliyuncs.com*) AIWB_AGENT_INSTALL_SOURCE="oss" ;;
-        *) AIWB_AGENT_INSTALL_SOURCE="remote" ;;
-      esac
-    fi
-  fi
+if ! aiwb_download_url "$AIWB_AGENT_MANIFEST_URL" "$AIWB_AGENT_MANIFEST_TMP"; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__无法读取云端 Agent 清单。请检查服务器网络，或稍后重试。\\n'
+  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  exit 3
 fi
 
-if [ "$AIWB_AGENT_INSTALL_SOURCE" = "embedded" ]; then
-  cat > "$AIWB_AGENT_HOME/aiwbctl" <<'AIWB_AGENT_SCRIPT'
-${script}
-AIWB_AGENT_SCRIPT
+AIWB_AGENT_REMOTE_VERSION="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" version 2>/dev/null || true)"
+AIWB_AGENT_REMOTE_VERSION_NUM="$(printf '%s' "$AIWB_AGENT_REMOTE_VERSION" | sed 's/[^0-9].*$//' || true)"
+AIWB_AGENT_REQUIRED_VERSION_NUM="$(printf '%s' "$AIWB_AGENT_REQUIRED_VERSION" | sed 's/[^0-9].*$//' || true)"
+AIWB_AGENT_SCRIPT_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" scriptUrl 2>/dev/null || true)"
+AIWB_AGENT_EXPECTED_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" sha256 2>/dev/null || true)"
+
+if [ -z "$AIWB_AGENT_REMOTE_VERSION_NUM" ] || [ -z "$AIWB_AGENT_REQUIRED_VERSION_NUM" ] ||
+   [ "$AIWB_AGENT_REMOTE_VERSION_NUM" -lt "$AIWB_AGENT_REQUIRED_VERSION_NUM" ] 2>/dev/null; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__云端 Agent 版本过旧（当前 v%s，需要 v%s）。请先发布最新 Agent。\\n' "\${AIWB_AGENT_REMOTE_VERSION:-未知}" "$AIWB_AGENT_REQUIRED_VERSION"
+  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  exit 4
 fi
+
+AIWB_AGENT_INSTALLED_VERSION=""
+AIWB_AGENT_INSTALLED_VERSION_NUM="0"
+if [ -x "$AIWB_AGENT_HOME/aiwbctl" ]; then
+  AIWB_AGENT_INSTALLED_VERSION="$($AIWB_AGENT_HOME/aiwbctl --version 2>/dev/null | head -n 1 || true)"
+  AIWB_AGENT_INSTALLED_VERSION_NUM="$(printf '%s' "$AIWB_AGENT_INSTALLED_VERSION" | sed 's/[^0-9].*$//' || true)"
+  [ -n "$AIWB_AGENT_INSTALLED_VERSION_NUM" ] || AIWB_AGENT_INSTALLED_VERSION_NUM="0"
+fi
+
+if [ -x "$AIWB_AGENT_HOME/aiwbctl" ] &&
+   [ "$AIWB_AGENT_INSTALLED_VERSION_NUM" -ge "$AIWB_AGENT_REMOTE_VERSION_NUM" ] 2>/dev/null; then
+  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  printf "__AIWB_AGENT_INSTALL_SOURCE__cloud\\n"
+  printf "__AIWB_AGENT_INSTALL_RESULT__unchanged\\n"
+  "$AIWB_AGENT_HOME/aiwbctl" status
+  exit $?
+fi
+
+if [ -z "$AIWB_AGENT_SCRIPT_URL" ] || ! aiwb_download_url "$AIWB_AGENT_SCRIPT_URL" "$AIWB_AGENT_DOWNLOAD_TMP"; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__云端 Agent 脚本下载失败，未修改服务器上的现有 Agent。\\n'
+  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  exit 5
+fi
+
+AIWB_AGENT_SHA_OK="1"
+if [ -n "$AIWB_AGENT_EXPECTED_SHA" ] && command -v sha256sum >/dev/null 2>&1; then
+  AIWB_AGENT_ACTUAL_SHA="$(sha256sum "$AIWB_AGENT_DOWNLOAD_TMP" | awk '{print $1}')"
+  [ "$AIWB_AGENT_ACTUAL_SHA" = "$AIWB_AGENT_EXPECTED_SHA" ] || AIWB_AGENT_SHA_OK=""
+elif [ -n "$AIWB_AGENT_EXPECTED_SHA" ] && command -v shasum >/dev/null 2>&1; then
+  AIWB_AGENT_ACTUAL_SHA="$(shasum -a 256 "$AIWB_AGENT_DOWNLOAD_TMP" | awk '{print $1}')"
+  [ "$AIWB_AGENT_ACTUAL_SHA" = "$AIWB_AGENT_EXPECTED_SHA" ] || AIWB_AGENT_SHA_OK=""
+fi
+if [ -z "$AIWB_AGENT_SHA_OK" ]; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__云端 Agent 校验失败，未替换服务器上的现有 Agent。\\n'
+  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  exit 6
+fi
+
+cp "$AIWB_AGENT_DOWNLOAD_TMP" "$AIWB_AGENT_HOME/aiwbctl"
+chmod 700 "$AIWB_AGENT_HOME/aiwbctl"
+AIWB_AGENT_INSTALL_SOURCE="cloud"
 
 rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
-chmod 700 "$AIWB_AGENT_HOME/aiwbctl"
 printf "__AIWB_AGENT_INSTALL_SOURCE__%s\\n" "$AIWB_AGENT_INSTALL_SOURCE"
-"$AIWB_AGENT_HOME/aiwbctl" install-service 2>/dev/null || "$AIWB_AGENT_HOME/aiwbctl" status
+  "$AIWB_AGENT_HOME/aiwbctl" install-service 2>/dev/null || "$AIWB_AGENT_HOME/aiwbctl" status
+`);
+}
+
+export function buildInstallCliCommand(profile, cliId = "codex") {
+  const normalizedCliId = String(cliId || "codex").toLowerCase() === "claude" ? "claude" : "codex";
+  const packageName = normalizedCliId === "claude" ? "@anthropic-ai/claude-code@latest" : "@openai/codex@latest";
+  const commandName = normalizedCliId;
+
+  if (isWindowsProfile(profile)) {
+    return powershellStdinCommand(`
+$AIWB_CLI_ID = ${psQuote(normalizedCliId)}
+$AIWB_PACKAGE = ${psQuote(packageName)}
+$AIWB_COMMAND = ${psQuote(commandName)}
+
+function Resolve-AiwbCli {
+  $AIWB_COMMAND_INFO = Get-Command $AIWB_COMMAND -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($AIWB_COMMAND_INFO) { return [string]$AIWB_COMMAND_INFO.Source }
+  try {
+    $AIWB_WHERE = (& where.exe $AIWB_COMMAND 2>$null | Select-Object -First 1)
+    if ($AIWB_WHERE) { return [string]$AIWB_WHERE }
+  } catch {}
+  $AIWB_CANDIDATES = @(
+    (Join-Path $env:APPDATA "npm\\$AIWB_COMMAND.cmd"),
+    (Join-Path $env:APPDATA "npm\\$AIWB_COMMAND"),
+    (Join-Path $env:LOCALAPPDATA "npm\\$AIWB_COMMAND.cmd")
+  )
+  foreach ($AIWB_CANDIDATE in $AIWB_CANDIDATES) {
+    if ($AIWB_CANDIDATE -and (Test-Path -LiteralPath $AIWB_CANDIDATE -PathType Leaf)) { return $AIWB_CANDIDATE }
+  }
+  return ""
+}
+
+function Test-AiwbCli {
+  param([string]$Path)
+  if (-not $Path) { return $false }
+  try {
+    $AIWB_VERSION = (& $Path --version 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) { return $false }
+    if ($AIWB_VERSION -match "(?i)ENOSPC|no space left on device|not enough space") { return $false }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+$AIWB_EXISTING = Resolve-AiwbCli
+if ($AIWB_EXISTING -and (Test-AiwbCli $AIWB_EXISTING)) {
+  Write-Output ("__AIWB_AGENT_CLI_ID__" + $AIWB_CLI_ID)
+  Write-Output "__AIWB_AGENT_CLI_STATUS__ready"
+  Write-Output ("__AIWB_AGENT_CLI_PATH__" + $AIWB_EXISTING)
+  exit 0
+}
+
+Write-Output ("__AIWB_AGENT_CLI_ID__" + $AIWB_CLI_ID)
+Write-Output "__AIWB_AGENT_CLI_STATUS__installing"
+$AIWB_NPM = Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $AIWB_NPM) {
+  Write-Output "__AIWB_AGENT_CLI_STATUS__failed"
+  Write-Output "__AIWB_AGENT_CLI_ERROR__Windows 未找到 npm.cmd，请先安装 Node.js。"
+  exit 2
+}
+
+try {
+  $AIWB_NPM_OUTPUT = (& $AIWB_NPM.Source install --global $AIWB_PACKAGE --no-fund --no-audit 2>&1 | Out-String)
+  $AIWB_EXIT_CODE = $LASTEXITCODE
+} catch {
+  $AIWB_EXIT_CODE = 1
+  $AIWB_NPM_OUTPUT = $_.Exception.Message
+}
+if ($AIWB_NPM_OUTPUT) { Write-Output $AIWB_NPM_OUTPUT.TrimEnd() }
+if ($AIWB_NPM_OUTPUT -match "(?i)ENOSPC|no space left on device|not enough space") {
+  Write-Output "__AIWB_AGENT_CLI_STATUS__failed"
+  Write-Output ("__AIWB_AGENT_CLI_ERROR__远端磁盘空间不足，" + $AIWB_CLI_ID + " 没有完成安装。请先清理 Windows 磁盘空间后再重试。")
+  exit 5
+}
+if ($AIWB_EXIT_CODE -ne 0) {
+  Write-Output "__AIWB_AGENT_CLI_STATUS__failed"
+  Write-Output ("__AIWB_AGENT_CLI_ERROR__npm 安装失败，退出码 " + $AIWB_EXIT_CODE)
+  exit $AIWB_EXIT_CODE
+}
+
+$AIWB_INSTALLED = Resolve-AiwbCli
+if (-not $AIWB_INSTALLED) {
+  Write-Output "__AIWB_AGENT_CLI_STATUS__failed"
+  Write-Output ("__AIWB_AGENT_CLI_ERROR__安装完成，但当前 SSH 会话仍未找到 " + $AIWB_CLI_ID + " 命令。请重新连接后再检测。")
+  exit 3
+}
+if (-not (Test-AiwbCli $AIWB_INSTALLED)) {
+  Write-Output "__AIWB_AGENT_CLI_STATUS__failed"
+  Write-Output ("__AIWB_AGENT_CLI_ERROR__已找到 " + $AIWB_CLI_ID + " 文件，但命令无法正常执行。请清理磁盘空间后重新安装。")
+  exit 4
+}
+Write-Output "__AIWB_AGENT_CLI_STATUS__ready"
+Write-Output ("__AIWB_AGENT_CLI_PATH__" + $AIWB_INSTALLED)
+`);
+  }
+
+  return remoteBashCommand(profile, `
+AIWB_CLI_ID=${shQuote(normalizedCliId)}
+AIWB_PACKAGE=${shQuote(packageName)}
+AIWB_COMMAND=${shQuote(commandName)}
+AIWB_EXISTING="$(command -v "$AIWB_COMMAND" 2>/dev/null || true)"
+printf '__AIWB_AGENT_CLI_ID__%s\\n' "$AIWB_CLI_ID"
+if [ -n "$AIWB_EXISTING" ]; then
+  set +e
+  AIWB_EXISTING_VERSION="$($AIWB_EXISTING --version 2>&1)"
+  AIWB_EXISTING_EXIT=$?
+  set -e
+fi
+if [ -n "$AIWB_EXISTING" ] && [ "$AIWB_EXISTING_EXIT" -eq 0 ] && ! printf '%s' "$AIWB_EXISTING_VERSION" | grep -Eiq 'ENOSPC|no space left on device|not enough space'; then
+  printf '__AIWB_AGENT_CLI_STATUS__ready\\n'
+  printf '__AIWB_AGENT_CLI_PATH__%s\\n' "$AIWB_EXISTING"
+  exit 0
+fi
+
+printf '__AIWB_AGENT_CLI_STATUS__installing\\n'
+if ! command -v npm >/dev/null 2>&1; then
+  printf '__AIWB_AGENT_CLI_STATUS__failed\\n'
+  printf '__AIWB_AGENT_CLI_ERROR__未找到 npm，请先安装 Node.js。\\n'
+  exit 2
+fi
+set +e
+AIWB_NPM_OUTPUT="$(npm install --global "$AIWB_PACKAGE" --no-fund --no-audit 2>&1)"
+AIWB_NPM_EXIT=$?
+set -e
+printf '%s\\n' "$AIWB_NPM_OUTPUT"
+if printf '%s' "$AIWB_NPM_OUTPUT" | grep -Eiq 'ENOSPC|no space left on device|not enough space'; then
+  printf '__AIWB_AGENT_CLI_STATUS__failed\\n'
+  printf '__AIWB_AGENT_CLI_ERROR__远端磁盘空间不足，%s 没有完成安装；请先清理磁盘空间后再重试。\\n' "$AIWB_CLI_ID"
+  exit 5
+fi
+if [ "$AIWB_NPM_EXIT" -ne 0 ]; then
+  printf '__AIWB_AGENT_CLI_STATUS__failed\\n'
+  printf '__AIWB_AGENT_CLI_ERROR__npm 安装 %s 失败。\\n' "$AIWB_CLI_ID"
+  exit 3
+fi
+
+AIWB_INSTALLED="$(command -v "$AIWB_COMMAND" 2>/dev/null || true)"
+if [ -z "$AIWB_INSTALLED" ]; then
+  printf '__AIWB_AGENT_CLI_STATUS__failed\\n'
+  printf '__AIWB_AGENT_CLI_ERROR__安装完成，但当前环境仍未找到 %s 命令；请重新连接后再检测。\\n' "$AIWB_CLI_ID"
+  exit 4
+fi
+set +e
+AIWB_VERSION_OUTPUT="$($AIWB_INSTALLED --version 2>&1)"
+AIWB_VERSION_EXIT=$?
+set -e
+if [ "$AIWB_VERSION_EXIT" -ne 0 ] || printf '%s' "$AIWB_VERSION_OUTPUT" | grep -Eiq 'ENOSPC|no space left on device|not enough space'; then
+  printf '__AIWB_AGENT_CLI_STATUS__failed\\n'
+  printf '__AIWB_AGENT_CLI_ERROR__已找到 %s 文件，但命令无法正常执行；请清理磁盘空间后重新安装。\\n' "$AIWB_CLI_ID"
+  exit 4
+fi
+printf '__AIWB_AGENT_CLI_STATUS__ready\\n'
+printf '__AIWB_AGENT_CLI_PATH__%s\\n' "$AIWB_INSTALLED"
+`);
+}
+
+export function buildUninstallWorkbenchAgentCommand(profile) {
+  if (isWindowsProfile(profile)) return buildWindowsAgentControlCommand(profile, ["uninstall-service"]);
+  return remoteBashCommand(profile, `
+AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
+if [ ! -x "$AIWB_AGENT_CTL" ]; then
+  printf '__AIWB_AGENT_STATUS__missing\\n'
+  exit 0
+fi
+"$AIWB_AGENT_CTL" uninstall-service
 `);
 }
 
 export function buildWorkbenchAgentStatusCommand(profile, taskId = "") {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
+  if (isWindowsProfile(profile)) return buildWindowsAgentControlCommand(profile, taskId ? ["status", taskId] : ["status"]);
   return remoteBashCommand(profile, `
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
 if [ ! -x "$AIWB_AGENT_CTL" ]; then
@@ -1420,9 +2069,11 @@ fi
 }
 
 export function buildWorkbenchAgentWaitTaskCommand(profile, taskId, fingerprint = "", options = {}) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
   const rawTimeout = Number(options?.timeoutSeconds ?? 55);
   const timeoutSeconds = Number.isFinite(rawTimeout) ? Math.max(5, Math.min(110, Math.floor(rawTimeout))) : 55;
+  if (isWindowsProfile(profile)) {
+    return buildWindowsAgentControlCommand(profile, ["wait-task", taskId, String(fingerprint || ""), String(timeoutSeconds)]);
+  }
   return remoteBashCommand(profile, `
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
 if [ ! -x "$AIWB_AGENT_CTL" ]; then
@@ -1434,7 +2085,7 @@ fi
 }
 
 export function buildWorkbenchAgentTaskListCommand(profile) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
+  if (isWindowsProfile(profile)) return buildWindowsAgentControlCommand(profile, ["task-list"]);
   return remoteBashCommand(profile, `
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
 if [ ! -x "$AIWB_AGENT_CTL" ]; then
@@ -1500,7 +2151,36 @@ printf "__AIWB_AGENT_TASK_LIST_END__\\n"
 }
 
 export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metadata = {}) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
+  if (isWindowsProfile(profile)) {
+    const conversationId = String(metadata.conversationId || "").trim();
+    const conversationName = String(metadata.name || "").trim();
+    const agentId = String(metadata.agentId || profile.agentId || "").trim();
+    const model = normalizeAgentModel(agentId, metadata.model || profile.aiModel);
+    const promptText = String(metadata.promptText || "").trim();
+    const workdir = String(metadata.workdir || profile.workdir || "").trim();
+    const turnId = String(metadata.turnId || "").trim();
+    const requestMessageId = String(metadata.requestMessageId || "").trim();
+    const responseMessageId = String(metadata.responseMessageId || "").trim();
+    const taskPayload = [
+      ["conversation_id", conversationId],
+      ["name", conversationName],
+      ["workdir", workdir],
+      ["agent_id", agentId],
+      ["model", model],
+      ["turn_id", turnId],
+      ["request_message_id", requestMessageId],
+      ["response_message_id", responseMessageId],
+      ["prompt.txt", promptText],
+      ["command.b64", typeof command === "string" ? toBase64Utf8(JSON.stringify({ kind: "powershell", script: command })) : toBase64Utf8(JSON.stringify(command || {}))],
+    ];
+    const taskWrites = taskPayload
+      .map(([name, value]) => {
+        const encoded = toBase64Utf8(String(value || ""));
+        return `[System.IO.File]::WriteAllBytes((Join-Path $AIWB_TASK_DIR ${psQuote(name)}), [System.Convert]::FromBase64String(${psQuote(encoded)}))`;
+      })
+      .join("\n");
+    return buildWindowsAgentControlCommand(profile, ["create", taskId], `${taskWrites}\n`);
+  }
   const encodedCommand = toBase64Utf8(command);
   const conversationId = String(metadata.conversationId || "").trim();
   const conversationName = String(metadata.name || "").trim();
@@ -1508,6 +2188,9 @@ export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metad
   const model = normalizeAgentModel(agentId, metadata.model || profile.aiModel);
   const promptText = String(metadata.promptText || "").trim();
   const workdir = String(metadata.workdir || profile.workdir || "").trim();
+  const turnId = String(metadata.turnId || "").trim();
+  const requestMessageId = String(metadata.requestMessageId || "").trim();
+  const responseMessageId = String(metadata.responseMessageId || "").trim();
   return remoteBashCommand(profile, `
 set -e
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
@@ -1536,6 +2219,15 @@ AIWB_CONVERSATION_AGENT
 cat > "$AIWB_TASK_DIR/model" <<'AIWB_CONVERSATION_MODEL'
 ${model}
 AIWB_CONVERSATION_MODEL
+cat > "$AIWB_TASK_DIR/turn_id" <<'AIWB_TURN_ID'
+${turnId}
+AIWB_TURN_ID
+cat > "$AIWB_TASK_DIR/request_message_id" <<'AIWB_REQUEST_MESSAGE_ID'
+${requestMessageId}
+AIWB_REQUEST_MESSAGE_ID
+cat > "$AIWB_TASK_DIR/response_message_id" <<'AIWB_RESPONSE_MESSAGE_ID'
+${responseMessageId}
+AIWB_RESPONSE_MESSAGE_ID
 cat > "$AIWB_TASK_DIR/prompt.txt" <<'AIWB_CONVERSATION_PROMPT'
 ${promptText}
 AIWB_CONVERSATION_PROMPT
@@ -1544,7 +2236,7 @@ AIWB_CONVERSATION_PROMPT
 }
 
 export function buildWorkbenchAgentConversationListCommand(profile) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
+  if (isWindowsProfile(profile)) return buildWindowsAgentControlCommand(profile, ["conversations"]);
   return remoteBashCommand(profile, `
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
 if [ ! -x "$AIWB_AGENT_CTL" ]; then
@@ -1556,10 +2248,12 @@ fi
 }
 
 export function buildWorkbenchAgentConversationStatusCommand(profile, conversationId, options = {}) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
   const rawLimit = Number(options?.limit ?? 5);
   const historyLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.min(20, Math.floor(rawLimit))) : 5;
   const historyBefore = String(options?.before || "").trim();
+  if (isWindowsProfile(profile)) {
+    return buildWindowsAgentControlCommand(profile, ["conversation-status", conversationId, String(historyLimit), historyBefore]);
+  }
   return remoteBashCommand(profile, `
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
 if [ ! -x "$AIWB_AGENT_CTL" ]; then
@@ -1571,7 +2265,7 @@ fi
 }
 
 export function buildWorkbenchAgentCancelCommand(profile, taskId) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("__AIWB_AGENT_STATUS__unsupported");
+  if (isWindowsProfile(profile)) return buildWindowsAgentControlCommand(profile, ["cancel", taskId]);
   return remoteBashCommand(profile, `
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
 if [ ! -x "$AIWB_AGENT_CTL" ]; then
@@ -1732,6 +2426,8 @@ export function buildWindowsHealthCommand(profile) {
   const codexProbe = commandName(profile.codexCommand) || "codex";
   const claudeProbe = commandName(profile.claudeCommand) || "claude";
   const workdir = String(profile.workdir || "").trim();
+  const preferredWslDistro = wslDistroFromProfile(profile);
+  const wslProbeScript = toBase64Utf8("printf AIWB_WSL_READY");
 
   return powershellStdinCommand(`
 function Resolve-AiwbCommand {
@@ -1844,25 +2540,30 @@ $AIWB_WSL_STATUS = "missing"
 $AIWB_WSL_DISTROS = @()
 $AIWB_WSL_DEFAULT_DISTRO = ""
 $AIWB_WSL_VERSION = ""
+$AIWB_WSL_PREFERRED_DISTRO = ${psQuote(preferredWslDistro)}
+${wslPowerShellHelpers()}
 try {
   $AIWB_WSL = Get-Command "wsl.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($AIWB_WSL) {
     $AIWB_WSL_STATUS = "installed_no_distro"
     try {
-      $AIWB_WSL_VERSION = [string](& wsl.exe --version 2>$null | Select-Object -First 1)
-    } catch {}
-    try {
-      $AIWB_WSL_DISTROS = @(
-        & wsl.exe --list --quiet 2>$null |
-          ForEach-Object { ([string]$_).Replace([char]0, "").Trim() } |
-          Where-Object { $_ }
+      $AIWB_WSL_VERSION_RESULT = Invoke-AiwbWslText "--version"
+      $AIWB_WSL_VERSION = [string](
+        $AIWB_WSL_VERSION_RESULT.Output -split "[\\r\\n]+" |
+          Where-Object { $_ } |
+          Select-Object -First 1
       )
     } catch {}
+    try { $AIWB_WSL_DISTROS = @(Get-AiwbUsableWslDistros) } catch {}
     if ($AIWB_WSL_DISTROS.Count -gt 0) {
-      $AIWB_WSL_DEFAULT_DISTRO = [string]$AIWB_WSL_DISTROS[0]
+      if ($AIWB_WSL_PREFERRED_DISTRO -and ($AIWB_WSL_DISTROS -contains $AIWB_WSL_PREFERRED_DISTRO)) {
+        $AIWB_WSL_DEFAULT_DISTRO = $AIWB_WSL_PREFERRED_DISTRO
+      } else {
+        $AIWB_WSL_DEFAULT_DISTRO = [string]$AIWB_WSL_DISTROS[0]
+      }
       try {
-        $AIWB_WSL_PROBE = [string](& wsl.exe -d $AIWB_WSL_DEFAULT_DISTRO -u root -- sh -lc "printf AIWB_WSL_READY" 2>$null)
-        if ($AIWB_WSL_PROBE -match "AIWB_WSL_READY") { $AIWB_WSL_STATUS = "ready" }
+        $AIWB_WSL_PROBE = Invoke-AiwbWslBash -Distro $AIWB_WSL_DEFAULT_DISTRO -ScriptBase64 ${psQuote(wslProbeScript)}
+        if ($AIWB_WSL_PROBE.ExitCode -eq 0 -and $AIWB_WSL_PROBE.Output -match "AIWB_WSL_READY") { $AIWB_WSL_STATUS = "ready" }
         else { $AIWB_WSL_STATUS = "initialization_required" }
       } catch {
         $AIWB_WSL_STATUS = "initialization_required"
@@ -1876,7 +2577,28 @@ Write-Output ("__AIWB_WSL_STATUS__" + $AIWB_WSL_STATUS)
 Write-Output ("__AIWB_WSL_DISTROS__" + ($AIWB_WSL_DISTROS -join ","))
 Write-Output ("__AIWB_WSL_DEFAULT_DISTRO__" + $AIWB_WSL_DEFAULT_DISTRO)
 Write-Output ("__AIWB_WSL_VERSION__" + $AIWB_WSL_VERSION)
-Write-Output "__AIWB_AGENT__unsupported"
+$AIWB_AGENT_HOME = Join-Path $env:USERPROFILE ".ai-workbench\\agent"
+$AIWB_AGENT_SCRIPT = Join-Path $AIWB_AGENT_HOME "aiwb-agent.mjs"
+$AIWB_AGENT_NODE = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $AIWB_AGENT_NODE -or -not (Test-Path -LiteralPath $AIWB_AGENT_SCRIPT -PathType Leaf)) {
+  Write-Output "__AIWB_AGENT__missing"
+} else {
+  try {
+    $AIWB_AGENT_OUTPUT = @(& $AIWB_AGENT_NODE.Source $AIWB_AGENT_SCRIPT status 2>&1)
+    $AIWB_AGENT_EXIT_CODE = $LASTEXITCODE
+    $AIWB_AGENT_TEXT = $AIWB_AGENT_OUTPUT -join ([Environment]::NewLine)
+    $AIWB_AGENT_OUTPUT | ForEach-Object { Write-Output ([string]$_) }
+    if ($AIWB_AGENT_EXIT_CODE -eq 0 -and $AIWB_AGENT_TEXT -match "__AIWB_AGENT_STATUS__ready") {
+      Write-Output "__AIWB_AGENT__available"
+    } else {
+      Write-Output "__AIWB_AGENT__missing"
+    }
+  } catch {
+    Write-Output "__AIWB_AGENT__missing"
+    Write-Output ("__AIWB_AGENT_ERROR__" + $_.Exception.Message)
+  }
+}
+exit 0
 `);
 }
 
@@ -1885,6 +2607,8 @@ export function buildInstallWslCommand(profile) {
     return remoteBashCommand(profile, `printf '__AIWB_WSL_INSTALL_STATUS__ready\\n'`);
   }
 
+  const preferredWslDistro = wslDistroFromProfile(profile);
+  const wslProbeScript = toBase64Utf8("printf AIWB_WSL_READY");
   return powershellStdinCommand(`
 $AIWB_PRINCIPAL = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $AIWB_IS_ADMIN = $AIWB_PRINCIPAL.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -1895,22 +2619,19 @@ if (-not $AIWB_IS_ADMIN) {
   exit 5
 }
 
-function Get-AiwbWslDistros {
-  try {
-    return @(
-      & wsl.exe --list --quiet 2>$null |
-        ForEach-Object { ([string]$_).Replace([char]0, "").Trim() } |
-        Where-Object { $_ }
-    )
-  } catch { return @() }
-}
+${wslPowerShellHelpers()}
 
-$AIWB_DISTROS = @(Get-AiwbWslDistros)
+$AIWB_DISTROS = @(Get-AiwbUsableWslDistros)
 if ($AIWB_DISTROS.Count -gt 0) {
-  $AIWB_DISTRO = [string]$AIWB_DISTROS[0]
+  $AIWB_PREFERRED_DISTRO = ${psQuote(preferredWslDistro)}
+  if ($AIWB_PREFERRED_DISTRO -and ($AIWB_DISTROS -contains $AIWB_PREFERRED_DISTRO)) {
+    $AIWB_DISTRO = $AIWB_PREFERRED_DISTRO
+  } else {
+    $AIWB_DISTRO = [string]$AIWB_DISTROS[0]
+  }
   try {
-    $AIWB_PROBE = [string](& wsl.exe -d $AIWB_DISTRO -u root -- sh -lc "printf AIWB_WSL_READY" 2>$null)
-    if ($AIWB_PROBE -match "AIWB_WSL_READY") {
+    $AIWB_PROBE = Invoke-AiwbWslBash -Distro $AIWB_DISTRO -ScriptBase64 ${psQuote(wslProbeScript)}
+    if ($AIWB_PROBE.ExitCode -eq 0 -and $AIWB_PROBE.Output -match "AIWB_WSL_READY") {
       Write-Output "__AIWB_WSL_INSTALL_STATUS__ready"
       Write-Output ("__AIWB_WSL_DEFAULT_DISTRO__" + $AIWB_DISTRO)
       exit 0
@@ -1942,12 +2663,12 @@ if ($AIWB_INSTALL_EXIT -ne 0 -and $AIWB_INSTALL_EXIT -ne 3010) {
   exit $AIWB_INSTALL_EXIT
 }
 
-$AIWB_DISTROS = @(Get-AiwbWslDistros)
+$AIWB_DISTROS = @(Get-AiwbUsableWslDistros)
 if ($AIWB_DISTROS.Count -gt 0) {
-  $AIWB_DISTRO = [string]$AIWB_DISTROS[0]
+  $AIWB_DISTRO = if ($AIWB_DISTROS -contains "Ubuntu") { "Ubuntu" } else { [string]$AIWB_DISTROS[0] }
   try {
-    $AIWB_PROBE = [string](& wsl.exe -d $AIWB_DISTRO -u root -- sh -lc "printf AIWB_WSL_READY" 2>$null)
-    if ($AIWB_PROBE -match "AIWB_WSL_READY") {
+    $AIWB_PROBE = Invoke-AiwbWslBash -Distro $AIWB_DISTRO -ScriptBase64 ${psQuote(wslProbeScript)}
+    if ($AIWB_PROBE.ExitCode -eq 0 -and $AIWB_PROBE.Output -match "AIWB_WSL_READY") {
       Write-Output "__AIWB_WSL_INSTALL_STATUS__ready"
       Write-Output ("__AIWB_WSL_DEFAULT_DISTRO__" + $AIWB_DISTRO)
       exit 0
@@ -1957,6 +2678,7 @@ if ($AIWB_DISTROS.Count -gt 0) {
 
 Write-Output "__AIWB_WSL_INSTALL_STATUS__restart_required"
 Write-Output "__AIWB_WSL_DEFAULT_DISTRO__Ubuntu"
+exit 0
 `);
 }
 
@@ -2210,6 +2932,10 @@ export function parseWorkbenchAgentOutput(output) {
     text.match(new RegExp(`^__AIWB_AGENT_${name}__([\\s\\S]*?)$`, "m"))?.[1]?.trim() || "";
   const taskOutput =
     text.match(/__AIWB_AGENT_TASK_OUTPUT_START__\r?\n([\s\S]*?)\r?\n__AIWB_AGENT_TASK_OUTPUT_END__/)?.[1] || "";
+  const executionSummary =
+    text.match(
+      /__AIWB_AGENT_TASK_EXECUTION_SUMMARY_START__\r?\n([\s\S]*?)\r?\n__AIWB_AGENT_TASK_EXECUTION_SUMMARY_END__/,
+    )?.[1] || "";
   return {
     status: marker("STATUS"),
     version: marker("VERSION"),
@@ -2232,8 +2958,24 @@ export function parseWorkbenchAgentOutput(output) {
     hostLoadAvg: marker("HOST_LOAD_AVG"),
     hostUptimeSeconds: marker("HOST_UPTIME_SECONDS"),
     hostProcessCount: marker("HOST_PROCESS_COUNT"),
+    codexAvailable: marker("CODEX_AVAILABLE"),
+    codexPath: marker("CODEX_PATH"),
+    codexExecutable: marker("CODEX_EXECUTABLE"),
+    claudeAvailable: marker("CLAUDE_AVAILABLE"),
+    claudePath: marker("CLAUDE_PATH"),
+    claudeExecutable: marker("CLAUDE_EXECUTABLE"),
+    codexCliStatus: marker("CODEX_CLI_STATUS"),
+    codexCliPath: marker("CODEX_CLI_PATH"),
+    codexCliError: marker("CODEX_CLI_ERROR"),
+    cliId: marker("CLI_ID"),
+    cliStatus: marker("CLI_STATUS"),
+    cliPath: marker("CLI_PATH"),
+    cliError: marker("CLI_ERROR"),
     taskId: marker("TASK_ID"),
     conversationId: marker("TASK_CONVERSATION_ID"),
+    turnId: marker("TASK_TURN_ID"),
+    requestMessageId: marker("TASK_REQUEST_MESSAGE_ID"),
+    responseMessageId: marker("TASK_RESPONSE_MESSAGE_ID"),
     taskStatus: marker("TASK_STATUS"),
     exitCode: marker("TASK_EXIT_CODE"),
     pid: marker("TASK_PID"),
@@ -2246,6 +2988,7 @@ export function parseWorkbenchAgentOutput(output) {
     blockedByTaskId: marker("BLOCKED_BY_TASK_ID"),
     blockedByConversationId: marker("BLOCKED_BY_CONVERSATION_ID"),
     output: taskOutput.trim(),
+    executionSummary: executionSummary.trim(),
     raw: text,
   };
 }
@@ -2317,6 +3060,9 @@ export function parseWorkbenchAgentConversations(output) {
           const sortEpoch = Number(String(sortKey).split(":")[0] || 0) || 0;
           return {
             taskId: itemMarker("TASK_ID"),
+            turnId: itemMarker("TURN_ID"),
+            requestMessageId: itemMarker("REQUEST_MESSAGE_ID"),
+            responseMessageId: itemMarker("RESPONSE_MESSAGE_ID"),
             sortKey,
             status: itemMarker("STATUS") || "unknown",
             agentId: itemMarker("AGENT_ID") === "claude" ? "claude" : "codex",
@@ -2381,7 +3127,28 @@ export function healthFromWorkbenchAgentStatus(parsed = {}) {
     agent_host_load_avg: parsed.hostLoadAvg || "",
     agent_host_uptime_seconds: parsed.hostUptimeSeconds || "",
     agent_host_process_count: parsed.hostProcessCount || "",
+    agent_codex_available: parsed.codexAvailable || "",
+    agent_codex_path: parsed.codexPath || "",
+    agent_codex_executable: parsed.codexExecutable || "",
+    agent_claude_available: parsed.claudeAvailable || "",
+    agent_claude_path: parsed.claudePath || "",
+    agent_claude_executable: parsed.claudeExecutable || "",
+    agent_codex_cli_status: parsed.codexCliStatus || "",
+    agent_codex_cli_path: parsed.codexCliPath || "",
+    agent_codex_cli_error: parsed.codexCliError || "",
   };
+  if (parsed.cliId === "codex") {
+    health.agent_codex_available = parsed.cliStatus === "ready" ? "1" : parsed.cliStatus === "failed" ? "0" : health.agent_codex_available;
+    health.agent_codex_path = parsed.cliPath || health.agent_codex_path || "";
+    health.agent_codex_cli_status = parsed.cliStatus || health.agent_codex_cli_status || "";
+    health.agent_codex_cli_error = parsed.cliError || health.agent_codex_cli_error || "";
+  }
+  if (parsed.cliId === "claude") {
+    health.agent_claude_available = parsed.cliStatus === "ready" ? "1" : parsed.cliStatus === "failed" ? "0" : health.agent_claude_available;
+    health.agent_claude_path = parsed.cliPath || health.agent_claude_path || "";
+    health.agent_claude_cli_status = parsed.cliStatus || "";
+    health.agent_claude_cli_error = parsed.cliError || "";
+  }
   return Object.fromEntries(
     Object.entries(health).filter(([, value]) => value !== "" && value !== undefined && value !== null),
   );

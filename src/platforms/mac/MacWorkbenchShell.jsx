@@ -60,6 +60,8 @@ export function MacWorkbenchShell({
   draftProfile,
   filePreview,
   remoteDownloadOpen,
+  remoteDirectoryOpen,
+  remoteDirectory,
   onSelectServer,
   onOpenChatWindow,
   onConfigureServer,
@@ -78,6 +80,9 @@ export function MacWorkbenchShell({
   onDeleteFile,
   onOpenRemoteDownload,
   onCloseRemoteDownload,
+  onOpenRemoteDirectory,
+  onNavigateRemoteDirectory,
+  onCloseRemoteDirectory,
   onInterruptAgent,
   onMarkStuck,
   onRetryMessage,
@@ -104,8 +109,11 @@ export function MacWorkbenchShell({
   onDeleteProfile,
   onDuplicateEditingServer,
   onOpenTerminal,
+  onLoginRemoteAgent,
   agentManagementTargetId,
   onInstallAgent,
+  onInstallCli,
+  onUninstallAgent,
   onRefreshAgent,
   onOpenAgentSettings,
   onInstallWsl,
@@ -114,6 +122,10 @@ export function MacWorkbenchShell({
   onExportConfig,
   onExportLogs,
   onImportConfig,
+  onCloudPullConfig,
+  onCloudPushConfig,
+  onCloudClearConfig,
+  onShareSession,
   setDraftProfile,
   setSettingsAgentTab,
   setSettingsSelectedSessions,
@@ -127,14 +139,18 @@ export function MacWorkbenchShell({
     MessageBubble,
     Composer,
     RawOutput,
-    TaskNotice,
     SettingsPanel,
     FilePreviewPanel,
+    RemoteDirectoryDialog,
     RemoteDownloadDialog,
   } = components;
   const editingServer = servers.find((server) => server.id === editingServerId) || activeServer;
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const macSessionTitle = String(activeSessionName || "当前会话")
+    .replace(/\s*[·•]\s*(codex|claude|gemini|aider|ollama)\s*$/i, "")
+    .trim();
+  const activeMachineName = String(diagnostics?.host || profile.host || "未识别服务器").trim();
 
   function handleFileDrop(event) {
     event.preventDefault();
@@ -146,10 +162,12 @@ export function MacWorkbenchShell({
   return (
     <main className={shellClassName} data-theme={resolvedTheme} data-appearance={appearanceMode} data-platform={platform}>
       <TopBar
-        sessionName={activeSessionName}
+        sessionName={macSessionTitle}
+        sessionSubtitle={`${activeMachineName} · ${activeAgent.shortName} · ${profile.workdir || "未选择工作目录"}`}
         showSessionName
         connection={connection}
         activeTaskRunning={activeTaskRunning}
+        busy={busy}
         onOpenNav={() => setMobileNavOpen(true)}
         onOpenSettings={detachedChatMode ? () => onConfigureServer?.(activeServerId) : onOpenGlobalSettings}
       />
@@ -247,6 +265,7 @@ export function MacWorkbenchShell({
                 onRetryMessage={onRetryMessage}
                 onShowDetails={onShowDetails}
                 onOpenSettings={onOpenSettingsFromMessage}
+                onEditUserMessage={(text) => setComposer(text)}
               />
             ))}
           </div>
@@ -279,6 +298,7 @@ export function MacWorkbenchShell({
               onPasteClipboard={onPasteClipboard}
               onRemoveImageAttachment={onRemoveImageAttachment}
               onOpenDownloadFile={onOpenRemoteDownload}
+              onOpenRemoteDirectory={onOpenRemoteDirectory}
               onSend={onSend}
               onVoice={onVoice}
               onWake={onWake}
@@ -302,8 +322,6 @@ export function MacWorkbenchShell({
         onInterrupt={onInterruptAgent}
         onKill={onKillAgentSession}
       />
-
-      {taskNotice ? <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} /> : null}
 
       {mobileNavOpen ? (
         <div className="mobile-drawer" role="dialog" aria-modal="true">
@@ -377,8 +395,11 @@ export function MacWorkbenchShell({
           onDelete={onDeleteProfile}
           onDuplicate={onDuplicateEditingServer}
           onOpenTerminal={onOpenTerminal}
+          onLoginRemoteAgent={onLoginRemoteAgent}
           agentManagementTargetId={agentManagementTargetId}
           onInstallAgent={onInstallAgent}
+          onInstallCli={onInstallCli}
+          onUninstallAgent={onUninstallAgent}
           onRefreshAgent={onRefreshAgent}
           onOpenAgentSettings={onOpenAgentSettings}
           onInstallWsl={onInstallWsl}
@@ -387,6 +408,10 @@ export function MacWorkbenchShell({
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
           onImportConfig={onImportConfig}
+          onCloudPullConfig={onCloudPullConfig}
+          onCloudPushConfig={onCloudPushConfig}
+          onCloudClearConfig={onCloudClearConfig}
+          onShareSession={onShareSession}
           onTest={onScanSettings}
         />
       ) : null}
@@ -407,7 +432,17 @@ export function MacWorkbenchShell({
         profile={profile}
         downloadState={fileDownload}
         onDownloadFile={onDownloadFile}
+        onOpenRemoteDirectory={onOpenRemoteDirectory}
         onClose={onCloseRemoteDownload}
+      />
+      <RemoteDirectoryDialog
+        open={remoteDirectoryOpen}
+        profile={profile}
+        directory={remoteDirectory}
+        onOpenDirectory={onNavigateRemoteDirectory}
+        onPreviewFile={onPreviewFile}
+        onDownloadFile={onDownloadFile}
+        onClose={onCloseRemoteDirectory}
       />
     </main>
   );

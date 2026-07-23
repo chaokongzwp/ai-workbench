@@ -28,6 +28,7 @@ const platformDefaults = {
 
 const defaultProfile = {
   platform: "linux",
+  wslDistro: "",
   port: 22,
   workdir: platformDefaults.linux.workdir,
   tmuxPrefix: "ai-workbench",
@@ -78,9 +79,47 @@ function remoteBashCommand(profile, script) {
   if (!isWslProfile(profile)) return bashCommand(script);
   const encoded = Buffer.from(script, "utf8").toString("base64");
   return powershellCommand(`
-$AIWB_SCRIPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encoded)}))
-& wsl.exe bash -lc $AIWB_SCRIPT
-exit $LASTEXITCODE
+$AIWB_DISTRO = ${psQuote(String(profile?.wslDistro || "").trim())}
+if (-not $AIWB_DISTRO) {
+  $AIWB_PROCESS = New-Object System.Diagnostics.Process
+  $AIWB_PROCESS.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $AIWB_PROCESS.StartInfo.FileName = "wsl.exe"
+  $AIWB_PROCESS.StartInfo.Arguments = "--list --quiet"
+  $AIWB_PROCESS.StartInfo.UseShellExecute = $false
+  $AIWB_PROCESS.StartInfo.CreateNoWindow = $true
+  $AIWB_PROCESS.StartInfo.RedirectStandardOutput = $true
+  $AIWB_PROCESS.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+  [void]$AIWB_PROCESS.Start()
+  $AIWB_OUTPUT = $AIWB_PROCESS.StandardOutput.ReadToEnd()
+  $AIWB_PROCESS.WaitForExit()
+  $AIWB_DISTRO = [string](@(
+    $AIWB_OUTPUT -split "[\\r\\n]+" |
+      ForEach-Object { ([string]$_).Trim() } |
+      Where-Object {
+        $_ -and $_ -notmatch '^(docker-desktop(?:-data)?|rancher-desktop(?:-data)?|podman-machine(?:-.+)?)$'
+      }
+  ) | Select-Object -First 1)
+}
+if (-not $AIWB_DISTRO) { throw "没有找到可用的 WSL Linux 发行版。" }
+$AIWB_RUN = New-Object System.Diagnostics.Process
+$AIWB_RUN.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+$AIWB_RUN.StartInfo.FileName = "wsl.exe"
+$AIWB_RUN.StartInfo.Arguments = '-d ' + $AIWB_DISTRO + ' -u root -- bash -lc "echo ${encoded} | base64 -d | bash"'
+$AIWB_RUN.StartInfo.UseShellExecute = $false
+$AIWB_RUN.StartInfo.CreateNoWindow = $true
+$AIWB_RUN.StartInfo.RedirectStandardOutput = $true
+$AIWB_RUN.StartInfo.RedirectStandardError = $true
+$AIWB_RUN.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+$AIWB_RUN.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+[void]$AIWB_RUN.Start()
+$AIWB_STDOUT_TASK = $AIWB_RUN.StandardOutput.ReadToEndAsync()
+$AIWB_STDERR_TASK = $AIWB_RUN.StandardError.ReadToEndAsync()
+$AIWB_RUN.WaitForExit()
+if ($AIWB_STDOUT_TASK.Result) { [Console]::Out.Write($AIWB_STDOUT_TASK.Result) }
+if ($AIWB_RUN.ExitCode -ne 0) {
+  if ($AIWB_STDERR_TASK.Result) { [Console]::Error.Write($AIWB_STDERR_TASK.Result) }
+  exit $AIWB_RUN.ExitCode
+}
 `);
 }
 
@@ -313,6 +352,7 @@ function validateProfile(input) {
     ...defaultProfile,
     ...defaults,
     platform,
+    wslDistro: String(input.wslDistro || "").trim(),
     host,
     username,
     password,

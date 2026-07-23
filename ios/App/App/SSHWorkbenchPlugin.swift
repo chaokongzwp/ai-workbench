@@ -3,6 +3,7 @@ import Security
 import AVFoundation
 import Capacitor
 import Citadel
+import NIOCore
 import UIKit
 
 private struct SSHConnectionConfig {
@@ -935,6 +936,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "clearProfile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "appendLog", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getAppInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "haptic", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportLogs", returnType: CAPPluginReturnPromise)
     ]
 
@@ -1051,6 +1053,36 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         } catch {
             call.reject("保存文件失败：\(safeErrorMessage(error))", "FILE_SAVE_FAILED", error)
+        }
+    }
+
+    @objc func haptic(_ call: CAPPluginCall) {
+        let kind = (call.getString("kind") ?? call.getString("style") ?? "light").lowercased()
+
+        DispatchQueue.main.async {
+            switch kind {
+            case "success":
+                let generator = UINotificationFeedbackGenerator()
+                generator.prepare()
+                generator.notificationOccurred(.success)
+            case "warning":
+                let generator = UINotificationFeedbackGenerator()
+                generator.prepare()
+                generator.notificationOccurred(.warning)
+            case "error":
+                let generator = UINotificationFeedbackGenerator()
+                generator.prepare()
+                generator.notificationOccurred(.error)
+            case "medium":
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.prepare()
+                generator.impactOccurred()
+            default:
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.prepare()
+                generator.impactOccurred()
+            }
+            call.resolve(["ok": true])
         }
     }
 
@@ -1359,6 +1391,15 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
         let client = try await SSHClient.connect(to: settings)
         do {
+            if config.uploadScript && !config.stdin.isEmpty {
+                let output = try await executeUploadedPowerShellScript(
+                    client: client,
+                    config: config,
+                    maxResponseSize: maxResponseSize
+                )
+                try? await client.close()
+                return output
+            }
             let executableCommand = prepareExecutableCommand(command, config: config)
             var output = try await client.executeCommand(
                 executableCommand,
@@ -1373,6 +1414,54 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             try? await client.close()
             throw error
         }
+    }
+
+    private func executeUploadedPowerShellScript(
+        client: SSHClient,
+        config: SSHConnectionConfig,
+        maxResponseSize: Int
+    ) async throws -> String {
+        var tempOutput = try await client.executeCommand(
+            "powershell -NoLogo -NoProfile -Command \"[System.IO.Path]::GetTempPath()\"",
+            maxResponseSize: 16_384,
+            mergeStreams: true,
+            inShell: false
+        )
+        let tempText = tempOutput.readString(length: tempOutput.readableBytes) ?? ""
+        let detectedTempDirectory = tempText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { $0.range(of: #"^[A-Za-z]:[\\/]"#, options: .regularExpression) != nil }
+        let tempDirectory = (detectedTempDirectory ?? "C:\\Windows\\Temp")
+            .replacingOccurrences(of: #"[\\/]+$"#, with: "", options: .regularExpression)
+        let remotePath = "\(tempDirectory)\\aiwb-\(UUID().uuidString).ps1"
+        let remoteSftpPath = remotePath.replacingOccurrences(of: "\\", with: "/")
+        let source = config.stdin.hasSuffix("\n") ? config.stdin : "\(config.stdin)\n"
+        var scriptPayload = Data([0xef, 0xbb, 0xbf])
+        scriptPayload.append(source.data(using: .utf8) ?? Data())
+        let scriptData = scriptPayload
+
+        try await client.withSFTP { sftp in
+            try await sftp.withFile(
+                filePath: remoteSftpPath,
+                flags: [.write, .create, .truncate]
+            ) { file in
+                var buffer = ByteBufferAllocator().buffer(capacity: scriptData.count)
+                buffer.writeBytes(scriptData)
+                try await file.write(buffer)
+            }
+        }
+
+        let quotedPath = powershellLiteral(remotePath)
+        let wrapper = "& \(quotedPath); $AIWB_OK=$?; $AIWB_EXIT_CODE = if ($AIWB_OK) { 0 } else { 1 }; Write-Output \"__AIWB_SCRIPT_EXIT_CODE__$AIWB_EXIT_CODE\"; Remove-Item -LiteralPath \(quotedPath) -Force -ErrorAction SilentlyContinue; exit 0"
+        let executableCommand = powershellEncodedCommand(wrapper)
+        var output = try await client.executeCommand(
+            executableCommand,
+            maxResponseSize: maxResponseSize,
+            mergeStreams: true,
+            inShell: false
+        )
+        return output.readString(length: output.readableBytes) ?? ""
     }
 
     private func prepareExecutableCommand(_ command: String, config: SSHConnectionConfig) -> String {
@@ -1395,6 +1484,10 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         let data = script.data(using: .utf16LittleEndian) ?? Data()
         let encoded = data.base64EncodedString()
         return "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand \(encoded)"
+    }
+
+    private func powershellLiteral(_ value: String) -> String {
+        return "'\(value.replacingOccurrences(of: "'", with: "''"))'"
     }
 
     private struct ZipEntry {

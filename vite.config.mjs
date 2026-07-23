@@ -6,7 +6,7 @@ const packageJson = JSON.parse(readFileSync(new URL("./package.json", import.met
 const buildStamp = new Date()
   .toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" })
   .replace(/\D/g, "")
-  .slice(0, 12);
+  .slice(0, 14);
 const appBuild =
   process.env.AIWB_APP_BUILD || process.env.AIWB_MAC_BUILD_NUMBER || process.env.CURRENT_PROJECT_VERSION || buildStamp;
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, Copy as CopyIcon, DownloadSimple, Eye, Trash } from "@phosphor-icons/react";
+import { ArrowClockwise, Copy as CopyIcon, DownloadSimple, Eye, PencilSimple, Trash } from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 import * as FilePreview from "./filePreview.jsx";
@@ -313,19 +313,19 @@ export function messageDisplayText(value) {
   return String(value || "");
 }
 
-export function RunningTaskHint({ message, agent, operationBusy, onRefreshOutput, onInterruptAgent, onMarkStuck }) {
+export function RunningTaskHint({ message, agent, operationBusy, onRefreshOutput, onInterruptAgent }) {
   const elapsedMs = useRunningElapsed(message);
   if (message.status !== "running" || elapsedMs < 120_000) return null;
 
   const longRunning = elapsedMs >= 300_000;
   const isClaude = agent.id === "claude";
   const isAgentTask = message.backend === "agent";
-  const title = longRunning ? "这个任务等待得有点久" : "任务还在等待结果";
+  const title = longRunning ? "这个任务执行得有点久" : "任务正在执行";
   const detail = isAgentTask
-    ? "正在通过 Agent 同步等待最终结果。可以刷新状态或取消任务；只有确认卡住时再释放输入。"
+    ? "可以检查一下最新状态；如果确认不想继续，就取消任务。"
     : isClaude
-    ? "Claude 当前没有中间输出，长任务会一直等到最终结果。可以继续等；只有确认卡住时再释放输入。"
-    : "远端任务可能还在运行，也可能在等待交互。可以刷新状态或中断任务。";
+    ? "Claude 长任务可能暂时没有中间输出，可以继续等，或停止当前任务。"
+    : "远端可能还在运行，也可能在等待交互。可以刷新状态或中断任务。";
 
   return (
     <div className={`running-task-hint ${longRunning ? "long" : ""}`}>
@@ -346,9 +346,6 @@ export function RunningTaskHint({ message, agent, operationBusy, onRefreshOutput
             {isAgentTask ? "取消任务" : "中断"}
           </button>
         ) : null}
-        <button type="button" onClick={() => onMarkStuck?.(message)} disabled={operationBusy}>
-          释放输入
-        </button>
       </div>
     </div>
   );
@@ -407,42 +404,21 @@ function FriendlyProgressCard({ progress, message, operationBusy, onRefreshOutpu
 
   return (
     <section className="friendly-progress-card" aria-label={progress.title}>
-      <div>
-        <strong>{progress.title}</strong>
-        {progress.meta ? <span>{progress.meta}</span> : null}
-      </div>
-      <p>{progress.body}</p>
+      <strong>{progress.title}</strong>
+      {progress.meta ? <span>{progress.meta}</span> : null}
       {canRefresh ? (
-        <button type="button" onClick={() => onRefreshOutput(message)} disabled={operationBusy}>
-          检查状态
+        <button
+          type="button"
+          onClick={() => onRefreshOutput(message)}
+          disabled={operationBusy}
+          aria-label="刷新状态"
+          title="刷新状态"
+        >
+          <ArrowClockwise size={15} weight="bold" aria-hidden="true" />
         </button>
       ) : null}
     </section>
   );
-}
-
-function taskStatusLabel(value) {
-  const status = String(value || "").toLowerCase();
-  if (status === "queued") return "排队中";
-  if (status === "preparing") return "准备中";
-  if (status === "running") return "运行中";
-  if (status === "busy") return "会话占用中";
-  if (status === "done") return "已完成";
-  if (status === "error") return "执行失败";
-  if (status === "cancelled") return "已取消";
-  if (status === "missing") return "未找到任务";
-  if (status === "ssh-waiting") return "等待 SSH 返回";
-  if (status === "sync-lost") return "同步中断";
-  return "未知";
-}
-
-function formatCheckedAt(value) {
-  const timestamp = Number(value || 0);
-  if (!timestamp) return "";
-  const diff = Math.max(0, Date.now() - timestamp);
-  if (diff < 60_000) return "刚刚检查";
-  if (diff < 60 * 60_000) return `${Math.floor(diff / 60_000)} 分钟前检查`;
-  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function waitingLikeMessage(message) {
@@ -452,8 +428,8 @@ function waitingLikeMessage(message) {
 }
 
 function messageNeedsResultSync(message) {
-  if (message?.resultMissing === true) return true;
   if (message?.backend !== "agent" || !message?.remoteTaskId || String(message?.output || "").trim()) return false;
+  if (message?.resultMissing === true) return true;
   return /没有最终内容|没有拿到.+最终回复|结果待同步|结果同步/.test(
     `${String(message?.title || "")}\n${String(message?.body || "")}`,
   );
@@ -519,95 +495,11 @@ function CopyButton({
     >
       {children || (
         <>
-          {icon ? <CopyIcon size={16} weight="regular" aria-hidden="true" /> : null}
+          {icon ? <CopyIcon size={15} weight="light" aria-hidden="true" /> : null}
           <span className="copy-message-label">{visibleLabel}</span>
         </>
       )}
     </button>
-  );
-}
-
-export function TaskStatusCard({ message, agent, operationBusy, onRefreshOutput, onInterruptAgent, onMarkStuck }) {
-  const runningElapsedMs = useRunningElapsed(message);
-  const elapsedMs = runningElapsedMs || Number(message.durationMs || 0);
-  const needsResultSync = messageNeedsResultSync(message);
-  const shouldShow =
-    message.status === "running" ||
-    needsResultSync ||
-    (message.status === "idle" && (message.remoteTaskId || message.startedAt || waitingLikeMessage(message)));
-  if (!shouldShow) return null;
-
-  const backend = message.backend === "agent" ? "agent" : message.backend === "ssh" ? "ssh" : "";
-  const isAgentTask = backend === "agent";
-  const channelLabel = isAgentTask ? "Agent 代理" : backend === "ssh" ? "SSH 直连" : "未知通道";
-  const remoteStatus = needsResultSync
-    ? "结果待同步"
-    : isAgentTask
-    ? taskStatusLabel(message.remoteTaskStatus || "unknown")
-    : message.status === "running"
-      ? taskStatusLabel(message.remoteTaskStatus || "ssh-waiting")
-      : "App 已重新打开，无法确认";
-  const checkedAt = formatCheckedAt(message.remoteTaskCheckedAt);
-  const pid = String(message.remoteTaskPid || "").trim();
-  const taskId = String(message.remoteTaskId || "").trim();
-  const syncError = String(message.remoteSyncError || "").trim();
-  const activelyRunning = message.status === "running";
-  const canCancel = activelyRunning && (isAgentTask || backend === "ssh");
-	  const detailLines = [
-	    message.id ? `消息 ID: ${message.id}` : "",
-	    `AI: ${agent.shortName}`,
-	    `通道: ${channelLabel}`,
-	    `状态: ${remoteStatus}`,
-    taskId ? `任务 ID: ${taskId}` : "",
-    pid ? `进程 PID: ${pid}` : "",
-    message.remoteTaskStartedAt ? `开始时间: ${message.remoteTaskStartedAt}` : "",
-    message.remoteTaskRunnerStartedAt ? `Runner: ${message.remoteTaskRunnerStartedAt}` : "",
-    message.remoteTaskExitCode ? `退出码: ${message.remoteTaskExitCode}` : "",
-    checkedAt ? `最近检查: ${checkedAt}` : "",
-    syncError ? `同步异常: ${syncError}` : "",
-  ].filter(Boolean);
-
-  return (
-    <section className={`task-status-card ${isAgentTask ? "agent" : "ssh"}`} aria-label="任务状态">
-      <div className="task-status-main">
-        <strong>{remoteStatus}</strong>
-        <span>
-          {channelLabel}
-          {elapsedMs ? ` · 已等待 ${formatDuration(elapsedMs)}` : ""}
-          {checkedAt ? ` · ${checkedAt}` : ""}
-        </span>
-        {needsResultSync ? (
-          <small>远端任务已成功完成，会话没有损坏。App 正在重新同步最终结果。</small>
-        ) : isAgentTask ? (
-          <small>{pid ? `远端进程还在：PID ${pid}` : "正在通过 Agent 查询远端后台任务。"}</small>
-        ) : (
-          <small>SSH 直连只能确认当前 App 是否还在等待返回；App 关闭后不能像 Agent 一样恢复进度。</small>
-        )}
-        {syncError ? <small className="task-status-error">{syncError}</small> : null}
-      </div>
-      <div className="task-status-actions">
-        <button type="button" onClick={() => onRefreshOutput?.(message)} disabled={operationBusy}>
-          {needsResultSync ? "重新同步" : "检查状态"}
-        </button>
-	        {canCancel ? (
-	          <button type="button" onClick={onInterruptAgent} disabled={operationBusy}>
-	            {isAgentTask ? "取消任务" : "中断"}
-	          </button>
-	        ) : null}
-	        {needsResultSync || syncError ? (
-	          <CopyButton text={detailLines.join("\n")} label="复制诊断" icon={false} className="task-copy-button" />
-	        ) : null}
-	        {activelyRunning ? (
-	          <button type="button" onClick={() => onMarkStuck?.(message)} disabled={operationBusy}>
-	            释放输入
-          </button>
-        ) : null}
-      </div>
-      <details className="task-status-details">
-        <summary>技术状态</summary>
-        <pre>{detailLines.join("\n")}</pre>
-      </details>
-    </section>
   );
 }
 
@@ -617,11 +509,9 @@ export function AgentFailureCard({ message, failure, operationBusy, onRetry, onS
   const hasDetail = Boolean(failure.detail || message?.technicalDetail);
 
   return (
-    <section className="agent-failure-card" aria-label="后台任务异常">
+    <section className="agent-failure-card" aria-label="执行异常">
       <div className="agent-failure-copy">
-        <strong>{failure.title || "后台任务失败"}</strong>
         <p>{failure.body || "这条任务没有返回可直接展示的结果。"}</p>
-        {failure.hint ? <span>{failure.hint}</span> : null}
       </div>
       <div className="agent-failure-actions">
         {canRetry ? (
@@ -636,7 +526,7 @@ export function AgentFailureCard({ message, failure, operationBusy, onRetry, onS
         ) : null}
         {failure.canOpenSettings ? (
           <button type="button" onClick={onOpenSettings} disabled={operationBusy}>
-            打开设置
+            设置
           </button>
         ) : null}
       </div>
@@ -665,6 +555,7 @@ export function MessageBubble({
   onRetryMessage,
   onShowDetails,
   onOpenSettings,
+  onEditUserMessage,
 }) {
   const agent = agents.find((item) => item.id === message.agentId) ?? activeAgent;
   const bodyText = messageDisplayText(message.body);
@@ -684,6 +575,21 @@ export function MessageBubble({
       : message.agentFailure;
   const agentFailure = storedAgentFailure || legacyAgentFailure;
   const rawCopyText = agentFailure ? formatAgentFailureCopy(message, agentFailure) : outputText || liveOutputText || bodyText || "";
+  const legacyMissingResult =
+    !outputText.trim() &&
+    !liveOutputText.trim() &&
+    /没有最终答案标记|远端任务已完成，但 App 暂时没有同步到最终回复|已结束，但没有最终内容/.test(
+      `${String(message.title || "")}\n${bodyText}`,
+    );
+  const hasActualResult = Boolean(outputText.trim() || liveOutputText.trim());
+  const legacyPlaceholderBodyWithResult =
+    hasActualResult &&
+    /没有最终答案标记|远端任务已完成，但 App 暂时没有同步到最终回复|已结束，但没有最终内容/.test(bodyText);
+  const assistantBodyText = legacyMissingResult
+    ? "任务已经结束，但没有收到可展示的结果。可以重新同步，或重新发送。"
+    : legacyPlaceholderBodyWithResult
+      ? ""
+      : bodyText;
   const fileReferences = useMemo(() => {
     const explicit = Array.isArray(message.attachments)
       ? message.attachments
@@ -735,6 +641,12 @@ export function MessageBubble({
   );
   const copyText = friendlyProgress ? `${friendlyProgress.title}\n${friendlyProgress.body}` : rawCopyText;
   const needsResultSync = messageNeedsResultSync(message);
+  const taskId = String(message.remoteTaskId || "").trim();
+  const taskStatusUnconfirmed =
+    message.backend === "agent" &&
+    message.status === "idle" &&
+    !taskId &&
+    waitingLikeMessage(message);
   const hasVisibleAssistantContent = Boolean(
     agentFailure ||
       bodyText ||
@@ -746,38 +658,69 @@ export function MessageBubble({
       message.status === "running" ||
       needsResultSync,
   );
-  const statusForHeader = message.status === "idle" && waitingLikeMessage(message) ? "unknown" : message.status;
-  const headerTitle = agentFailure ? agent.shortName : compactAgentMessageTitle(message, agent);
+  const statusForHeader = taskStatusUnconfirmed || legacyMissingResult
+    ? "error"
+    : needsResultSync
+      ? "unknown"
+    : message.status === "idle" && waitingLikeMessage(message)
+      ? "unknown"
+      : message.status;
+  const statusText = needsResultSync ? "待同步" : statusLabel(statusForHeader);
+  const compactTitle = compactAgentMessageTitle(message, agent);
+  const headerTitle = hasActualResult && /没有最终答案标记|没有最终内容|没有返回结果/.test(compactTitle)
+    ? `${agent.shortName} 回复`
+    : taskStatusUnconfirmed
+      ? "状态待确认"
+      : legacyMissingResult
+        ? "没有最终结果"
+        : agentFailure
+          ? agent.shortName
+          : compactTitle;
   const timestamp = messageTimestamp(message);
-  const canRefreshFailedTask = Boolean(
-    message.status === "error" &&
-      message.backend === "agent" &&
+  const canRefreshRemoteTask = Boolean(
+    message.backend === "agent" &&
       String(message.remoteTaskId || "").trim() &&
-      typeof onRefreshOutput === "function",
+      typeof onRefreshOutput === "function" &&
+      (message.status === "running" || message.status === "error" || needsResultSync),
   );
 
   if (message.role === "user") {
     return (
       <article className={`user-prompt ${fileReferences.length ? "has-files" : ""}`}>
-        <p>{bodyText}</p>
-        {fileReferences.length ? (
-          <FileReferenceList
-            files={fileReferences}
-            downloadingFilePath={downloadingFilePath}
-            deletingFilePath={deletingFilePath}
-            deletedFilePaths={deletedRemoteFilePaths}
-            downloadState={fileDownload}
-            onPreviewFile={onPreviewFile}
-            onDownloadFile={onDownloadFile}
-            onDeleteFile={onDeleteFile}
-          />
-        ) : null}
-        {timestamp.label ? (
-          <time className="user-message-time" dateTime={timestamp.dateTime} title="发送时间">
-            {timestamp.label}
-          </time>
-        ) : null}
-        <CopyButton text={copyText} label="复制" className="copy-message copy-user-message" />
+        <div className="user-message-card">
+          <p>{bodyText}</p>
+          {fileReferences.length ? (
+            <FileReferenceList
+              files={fileReferences}
+              downloadingFilePath={downloadingFilePath}
+              deletingFilePath={deletingFilePath}
+              deletedFilePaths={deletedRemoteFilePaths}
+              downloadState={fileDownload}
+              onPreviewFile={onPreviewFile}
+              onDownloadFile={onDownloadFile}
+              onDeleteFile={onDeleteFile}
+            />
+          ) : null}
+        </div>
+        <div className="user-message-meta" aria-label="消息操作">
+          {timestamp.label ? (
+            <time className="user-message-time" dateTime={timestamp.dateTime} title="发送时间">
+              {timestamp.label}
+            </time>
+          ) : null}
+          <CopyButton text={copyText} label="复制" className="copy-message copy-user-message" />
+          {typeof onEditUserMessage === "function" && bodyText ? (
+            <button
+              type="button"
+              className="edit-user-message"
+              onClick={() => onEditUserMessage(bodyText)}
+              aria-label="编辑这条消息"
+              title="编辑这条消息"
+            >
+              <PencilSimple size={18} weight="regular" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       </article>
     );
   }
@@ -785,7 +728,7 @@ export function MessageBubble({
   if (!hasVisibleAssistantContent) return null;
 
   return (
-    <article className={`agent-response ${message.status}`}>
+    <article className={`agent-response ${legacyMissingResult ? "error" : message.status}`}>
       <header className="message-header">
         <AgentLogo agentId={agent.id} compact />
         <strong>{headerTitle}</strong>
@@ -794,10 +737,10 @@ export function MessageBubble({
             {timestamp.label}
           </time>
         ) : null}
-        <span className={`streaming ${statusForHeader}`}>{statusLabel(statusForHeader)}</span>
-        <TaskTimer message={message} />
+        <span className={`streaming ${statusForHeader}`}>{statusText}</span>
+        {!taskStatusUnconfirmed && !legacyMissingResult ? <TaskTimer message={message} /> : null}
         <div className="message-header-actions">
-          {canRefreshFailedTask ? (
+          {canRefreshRemoteTask ? (
             <button
               type="button"
               className="refresh-message"
@@ -806,7 +749,7 @@ export function MessageBubble({
               aria-label="刷新状态"
               title="刷新状态"
             >
-              <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+              <ArrowClockwise size={15} weight="regular" aria-hidden="true" />
             </button>
           ) : null}
           <CopyButton text={copyText} label="复制回复" className="copy-message copy-assistant-message" />
@@ -821,8 +764,12 @@ export function MessageBubble({
           onShowDetails={onShowDetails}
           onOpenSettings={onOpenSettings}
         />
-      ) : bodyText ? (
-        <p className="assistant-copy">{bodyText}</p>
+      ) : assistantBodyText || taskStatusUnconfirmed ? (
+        <p className="assistant-copy">
+          {taskStatusUnconfirmed
+            ? "App 没有拿到这条任务的远端编号，暂时无法确认是否已经提交。请重新发送。"
+            : assistantBodyText}
+        </p>
       ) : null}
       {message.modelChoice ? (
         <div className="model-choice-actions" aria-label="选择 Codex 模型">
@@ -854,16 +801,6 @@ export function MessageBubble({
         </section>
       ) : null}
       {message.status === "running" && liveOutputText && !friendlyProgress ? <AgentLiveOutput text={liveOutputText} /> : null}
-      {!agentFailure ? (
-        <TaskStatusCard
-          message={message}
-          agent={agent}
-          operationBusy={operationBusy}
-          onRefreshOutput={onRefreshOutput}
-          onInterruptAgent={onInterruptAgent}
-          onMarkStuck={onMarkStuck}
-        />
-      ) : null}
       {fileReferences.length ? (
         <FileReferenceList
           files={fileReferences}
@@ -890,8 +827,32 @@ export function FileReferenceList({
   onDownloadFile,
   onDeleteFile,
 }) {
+  const [confirmingDeletePath, setConfirmingDeletePath] = useState("");
+  const deleteConfirmationTimerRef = useRef(null);
   const visibleDownloadState =
     downloadState?.message && files.some((file) => file.path === downloadState.path) ? downloadState : null;
+
+  useEffect(
+    () => () => {
+      if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+    },
+    [],
+  );
+
+  function requestFileDelete(file) {
+    const path = String(file?.path || "");
+    if (!path) return;
+    if (confirmingDeletePath !== path) {
+      setConfirmingDeletePath(path);
+      if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+      deleteConfirmationTimerRef.current = window.setTimeout(() => setConfirmingDeletePath(""), 5000);
+      return;
+    }
+    if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+    deleteConfirmationTimerRef.current = null;
+    setConfirmingDeletePath("");
+    onDeleteFile?.(file);
+  }
 
   return (
     <>
@@ -900,6 +861,7 @@ export function FileReferenceList({
           const downloading = downloadingFilePath === file.path;
           const deleting = deletingFilePath === file.path;
           const deleted = deletedFilePaths?.has?.(file.path);
+          const confirmingDelete = confirmingDeletePath === file.path;
           return (
             <div key={file.path} className={`file-reference ${file.kind} ${deleted ? "deleted" : ""}`}>
               <div className="file-reference-main">
@@ -925,13 +887,13 @@ export function FileReferenceList({
                 </button>
                 <button
                   type="button"
-                  className="file-delete-button"
-                  onClick={() => onDeleteFile?.(file)}
+                  className={`file-delete-button ${confirmingDelete ? "is-confirming" : ""}`}
+                  onClick={() => requestFileDelete(file)}
                   disabled={deleted || deleting || downloading}
-                  title={deleted ? "文件已删除" : "删除远程文件"}
+                  title={deleted ? "文件已删除" : confirmingDelete ? "再次点击确认删除" : "删除远程文件"}
                 >
                   <Trash size={15} weight="regular" aria-hidden="true" />
-                  <span>{deleted ? "已删除" : deleting ? "删除中" : "删除"}</span>
+                  <span>{deleted ? "已删除" : deleting ? "删除中" : confirmingDelete ? "确认删除" : "删除"}</span>
                 </button>
               </div>
             </div>
@@ -1281,7 +1243,7 @@ export function loadMermaidRenderer() {
 
 function mermaidThemeConfig(isDark) {
   const shared = {
-    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif',
     flowchart: {
       htmlLabels: true,
       useMaxWidth: false,

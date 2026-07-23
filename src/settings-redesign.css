@@ -9,7 +9,7 @@
   --settings-control: #e5e5ea;
   --settings-accent: #007aff;
   --settings-danger: #ff3b30;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-family: var(--app-font-family);
 }
 
 .app-shell[data-theme="dark"] .settings-layer {
@@ -143,6 +143,28 @@
   background: transparent;
   font-size: 0;
   box-shadow: none;
+}
+
+.app-shell .settings-font-preview {
+  margin: 0 0 22px;
+  padding: 16px 18px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 13px;
+  color: var(--settings-text);
+  background: var(--settings-group);
+}
+
+.app-shell .settings-font-preview strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--settings-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.app-shell .settings-font-preview p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .app-shell .settings-panel .settings-close-button {
@@ -551,6 +573,14 @@
   background: var(--settings-control);
 }
 
+.app-shell .settings-panel.add-session-mode > .settings-actions .session-add-button,
+.native-app-shell .settings-panel.add-session-mode > .settings-actions .session-add-button,
+.iphone-shell .settings-panel.add-session-mode > .settings-actions .session-add-button {
+  flex: 0 1 520px;
+  width: min(100%, 520px);
+  margin: 0;
+}
+
 /* Subpages use the same compact grouped-list language as the settings root. */
 .app-shell .settings-status-row,
 .app-shell .settings-machine-main {
@@ -691,6 +721,13 @@
   background: var(--settings-accent);
 }
 
+.app-shell .settings-inline-button.danger,
+.native-app-shell .settings-inline-button.danger,
+.iphone-shell .settings-inline-button.danger {
+  color: var(--settings-danger);
+  border-color: color-mix(in srgb, var(--settings-danger) 38%, var(--settings-separator));
+}
+
 .app-shell .settings-inline-button:hover {
   filter: brightness(0.96);
 }
@@ -699,6 +736,74 @@
   color: var(--settings-tertiary);
   background: color-mix(in srgb, var(--settings-control) 70%, transparent);
   opacity: 0.55;
+}
+
+.app-shell .settings-collapsible-section {
+  margin: 0 18px 18px;
+  overflow: hidden;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 13px;
+  color: var(--settings-text);
+  background: var(--settings-group);
+}
+
+.app-shell .settings-collapsible-section > summary {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.app-shell .settings-collapsible-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell .settings-collapsible-summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  color: var(--settings-muted);
+  background: var(--settings-control);
+}
+
+.app-shell .settings-collapsible-summary-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.app-shell .settings-collapsible-summary-copy strong {
+  color: var(--settings-text);
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.app-shell .settings-collapsible-summary-copy small {
+  overflow: hidden;
+  color: var(--settings-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .settings-collapsible-chevron {
+  color: var(--settings-muted);
+  transition: transform 160ms ease;
+}
+
+.app-shell .settings-collapsible-section[open] .settings-collapsible-chevron {
+  transform: rotate(90deg);
+}
+
+.app-shell .settings-collapsible-section .settings-section-group {
+  border-top: 0.5px solid var(--settings-separator);
 }
 
 .app-shell .settings-inline-notice {
@@ -1102,7 +1207,7 @@
   --settings-danger: #ff3b30;
   color: var(--settings-text);
   background: var(--settings-bg);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-family: var(--app-font-family);
 }
 
 .iphone-shell[data-theme="dark"] .settings-layer {
@@ -1680,6 +1785,11 @@
   background: var(--settings-control);
 }
 
+.iphone-shell .settings-panel.add-session-mode > .settings-actions .session-add-button {
+  flex-basis: auto;
+  width: 100%;
+}
+
 @media (max-width: 420px) {
   .iphone-shell .settings-panel .settings-menu-row {
     grid-template-columns: 30px minmax(0, 1fr) 16px;
@@ -1688,4 +1798,2535 @@
   .iphone-shell .settings-panel .settings-menu-row .settings-menu-value {
     display: none;
   }
+}
+
+/* iPad add-session uses a tablet sheet, not the phone full-screen flow. */
+@media (min-width: 768px) {
+  .native-app-shell[data-native-form-factor="ipad"] .settings-layer:has(.settings-panel.add-session-mode) {
+    display: grid;
+    place-items: center;
+    padding: calc(28px + var(--safe-top)) max(34px, var(--safe-right)) calc(28px + var(--safe-bottom))
+      max(34px, var(--safe-left));
+    background: color-mix(in srgb, #000 24%, transparent);
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode {
+    position: relative;
+    inset: auto;
+    display: flex;
+    flex-direction: column;
+    width: min(720px, 100%);
+    max-width: 720px;
+    height: min(820px, calc(var(--app-viewport-height, 100dvh) - 56px - var(--safe-top) - var(--safe-bottom)));
+    max-height: calc(var(--app-viewport-height, 100dvh) - 56px - var(--safe-top) - var(--safe-bottom));
+    overflow: hidden;
+    border: 0.5px solid rgba(60, 60, 67, 0.18);
+    border-radius: 28px;
+    background: #f2f2f7;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.18);
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > header {
+    flex: 0 0 auto;
+    min-height: 86px;
+    padding: 22px 28px 16px;
+    border-bottom: 0.5px solid rgba(60, 60, 67, 0.16);
+    background: color-mix(in srgb, #f2f2f7 94%, white);
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > header strong {
+    font-size: 30px;
+    line-height: 1.08;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > header span {
+    margin-top: 4px;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-close-button {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    border-radius: 50%;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-scroll-body {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 22px 28px calc(22px + var(--safe-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-add-connection {
+    width: 100%;
+    margin: 0 0 18px;
+    padding: 0;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-section {
+    margin: 0 0 18px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-section-title {
+    margin: 0 16px 8px;
+    font-size: 13px;
+    font-weight: 560;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-section-group {
+    overflow: hidden;
+    border: 0.5px solid rgba(60, 60, 67, 0.16);
+    border-radius: 16px;
+    background: #ffffff;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"]
+    .settings-panel.add-session-mode
+    .settings-section-group
+    > .config-field {
+    grid-template-columns: 152px minmax(0, 1fr);
+    min-height: 58px;
+    gap: 16px;
+    padding: 0 16px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .config-field > span {
+    font-size: 15px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .config-field :is(input, select) {
+    height: 42px;
+    font-size: 16px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    min-height: 360px;
+    max-height: min(520px, 54vh);
+    margin: 0;
+    overflow: hidden;
+    border: 0.5px solid rgba(60, 60, 67, 0.16);
+    border-radius: 22px;
+    background: #ffffff;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-head {
+    align-items: center;
+    min-height: 82px;
+    padding: 18px 20px 14px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-head strong {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-head span {
+    margin-top: 4px;
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-head .ghost-button {
+    min-width: 96px;
+    height: 42px;
+    border-radius: 14px;
+    font-size: 15px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-tabs {
+    gap: 10px;
+    padding: 14px 20px 12px;
+    overflow-x: hidden;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-tabs button {
+    min-width: 128px;
+    height: 42px;
+    padding: 0 16px;
+    border-radius: 15px;
+    font-size: 16px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-tools {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 0 20px 12px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-search,
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-filter-pill {
+    min-height: 42px;
+    border-radius: 14px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory {
+    grid-template-columns: minmax(0, 1fr) 86px;
+    gap: 12px;
+    padding: 0 20px 14px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory label,
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory button {
+    min-height: 44px;
+    border-radius: 14px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-pick-list {
+    flex: 1 1 auto;
+    min-height: 160px;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-pick-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    min-height: 82px;
+    gap: 12px;
+    padding: 14px 18px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-row-title {
+    gap: 8px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-pick-row strong {
+    font-size: 16px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-pick-row span {
+    font-size: 14px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-pick-row small {
+    font-size: 13px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-row-actions {
+    grid-column: auto;
+    align-self: center;
+    justify-content: flex-end;
+    margin-top: 0;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-icon-button,
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-hide-button {
+    min-height: 34px;
+    border-radius: 12px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-icon-button {
+    width: 34px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-add-button {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 48px;
+    margin: 14px 20px 18px;
+    border-radius: 16px;
+    font-size: 16px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > .settings-actions {
+    display: flex;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > .settings-actions .session-add-button {
+    width: min(100%, 520px);
+    margin: 0;
+  }
+
+  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] .settings-layer:has(.settings-panel.add-session-mode) {
+    background: color-mix(in srgb, #000 42%, transparent);
+  }
+
+  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] .settings-panel.add-session-mode {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: #17181d;
+    box-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+  }
+
+  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] .settings-panel.add-session-mode > header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    background: #17181d;
+  }
+
+  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"]
+    .settings-panel.add-session-mode
+    .settings-section-group,
+  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import {
+    border-color: rgba(255, 255, 255, 0.09);
+    background: #1f2026;
+  }
+}
+
+/* Production polish: keep settings calm, compact, and readable on every shell. */
+.app-shell .settings-layer,
+.native-app-shell .settings-layer,
+.iphone-shell .settings-layer {
+  --settings-control: rgba(118, 118, 128, 0.12);
+  --settings-separator: rgba(60, 60, 67, 0.14);
+}
+
+.app-shell[data-theme="dark"] .settings-layer,
+.native-app-shell[data-theme="dark"] .settings-layer,
+.iphone-shell[data-theme="dark"] .settings-layer {
+  --settings-bg: #101116;
+  --settings-group: #1a1c22;
+  --settings-text: #f5f6fa;
+  --settings-secondary: #aeb3bd;
+  --settings-tertiary: #777e8a;
+  --settings-control: rgba(255, 255, 255, 0.08);
+  --settings-separator: rgba(255, 255, 255, 0.1);
+  --settings-accent: #2997ff;
+  --settings-danger: #ff6961;
+}
+
+.app-shell .settings-panel,
+.native-app-shell .settings-panel,
+.iphone-shell .settings-panel {
+  color: var(--settings-text);
+  background: var(--settings-bg);
+}
+
+.app-shell .settings-panel .settings-navigation,
+.native-app-shell .settings-panel .settings-navigation,
+.iphone-shell .settings-panel .settings-navigation {
+  min-height: 62px;
+  border-bottom-color: var(--settings-separator);
+  background: var(--settings-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-shell .settings-panel .settings-title-block strong,
+.native-app-shell .settings-panel .settings-title-block strong,
+.iphone-shell .settings-panel .settings-title-block strong {
+  color: var(--settings-text);
+}
+
+.app-shell .settings-panel .settings-title-block span,
+.native-app-shell .settings-panel .settings-title-block span,
+.iphone-shell .settings-panel .settings-title-block span {
+  color: var(--settings-secondary);
+}
+
+.app-shell .settings-section-group,
+.native-app-shell .settings-section-group,
+.iphone-shell .settings-section-group,
+.app-shell .settings-panel .advanced-settings,
+.native-app-shell .settings-panel .advanced-settings,
+.iphone-shell .settings-panel .advanced-settings {
+  border-color: var(--settings-separator);
+  background: var(--settings-group);
+  box-shadow: none;
+}
+
+.app-shell .settings-menu-row,
+.app-shell .settings-action-row,
+.native-app-shell .settings-menu-row,
+.native-app-shell .settings-action-row,
+.iphone-shell .settings-menu-row,
+.iphone-shell .settings-action-row {
+  min-height: 56px;
+  border-bottom-color: var(--settings-separator);
+}
+
+.app-shell .settings-menu-row:hover,
+.app-shell .settings-action-row:hover,
+.native-app-shell .settings-menu-row:hover,
+.native-app-shell .settings-action-row:hover,
+.iphone-shell .settings-menu-row:hover,
+.iphone-shell .settings-action-row:hover {
+  background: color-mix(in srgb, var(--settings-control) 74%, transparent);
+}
+
+.app-shell .settings-inline-button,
+.native-app-shell .settings-inline-button,
+.iphone-shell .settings-inline-button {
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 9px;
+  color: var(--settings-accent);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.app-shell .settings-inline-button.primary,
+.native-app-shell .settings-inline-button.primary,
+.iphone-shell .settings-inline-button.primary {
+  border-color: var(--settings-accent);
+  color: #ffffff;
+  background: var(--settings-accent);
+}
+
+.app-shell .settings-button-row,
+.native-app-shell .settings-button-row,
+.iphone-shell .settings-button-row {
+  min-height: 48px;
+  padding: 7px 13px;
+  border-top-color: var(--settings-separator);
+}
+
+.app-shell .settings-panel > .settings-actions,
+.native-app-shell .settings-panel > .settings-actions,
+.iphone-shell .settings-panel > .settings-actions {
+  min-height: 62px;
+  padding-top: 9px;
+  border-top-color: var(--settings-separator);
+  background: var(--settings-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-shell .settings-panel > .settings-actions .send-button,
+.native-app-shell .settings-panel > .settings-actions .send-button,
+.iphone-shell .settings-panel > .settings-actions .send-button {
+  min-width: 108px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--settings-accent);
+  font-size: 14px;
+  box-shadow: none;
+}
+
+.app-shell .settings-panel .config-copy-button,
+.native-app-shell .settings-panel .config-copy-button,
+.iphone-shell .settings-panel .config-copy-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--settings-accent);
+  background: transparent;
+}
+
+.app-shell .settings-panel .config-copy-button:hover,
+.native-app-shell .settings-panel .config-copy-button:hover,
+.iphone-shell .settings-panel .config-copy-button:hover {
+  background: color-mix(in srgb, var(--settings-accent) 12%, transparent);
+}
+
+/* Phone settings are a true full-screen page with a readable large title. */
+.iphone-shell .settings-panel:not(.settings-subpage-mode) > header.settings-navigation {
+  grid-template-columns: 0 minmax(0, 1fr) 36px;
+  padding-left: max(18px, var(--safe-left));
+  padding-right: max(14px, var(--safe-right));
+}
+
+.iphone-shell .settings-panel:not(.settings-subpage-mode) .settings-title-block {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.iphone-shell .settings-panel:not(.settings-subpage-mode) .settings-title-block strong {
+  font-size: 28px;
+  line-height: 1.12;
+}
+
+.iphone-shell .settings-panel:not(.settings-subpage-mode) .settings-title-block span {
+  margin-top: 3px;
+  font-size: 13px;
+}
+
+.iphone-shell .settings-panel .settings-scroll-body {
+  background: var(--settings-bg);
+}
+
+.iphone-shell .settings-panel .settings-root-page,
+.iphone-shell .settings-panel .settings-page-content {
+  padding-top: 18px;
+  padding-bottom: calc(28px + var(--safe-bottom));
+}
+
+/* The compact controls mirror the production button specimen: no heavy pills. */
+.composer .input-actions,
+.conversation .composer .input-actions {
+  gap: 6px;
+}
+
+.composer .input-actions .composer-icon-button,
+.conversation .input-actions .composer-icon-button,
+.mac-shell .composer .input-actions .composer-icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #6e7784;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-theme="dark"] .composer .input-actions .composer-icon-button,
+.native-app-shell[data-theme="dark"] .composer .input-actions .composer-icon-button,
+.iphone-shell[data-theme="dark"] .composer .input-actions .composer-icon-button {
+  color: #aeb3bd;
+  background: transparent;
+}
+
+.composer .input-actions .composer-icon-button:hover,
+.composer .input-actions .composer-icon-button:focus-visible,
+.conversation .input-actions .composer-icon-button:hover,
+.conversation .input-actions .composer-icon-button:focus-visible {
+  border-color: rgba(60, 60, 67, 0.14);
+  color: #1c1c1e;
+  background: rgba(118, 118, 128, 0.12);
+  outline: none;
+}
+
+.app-shell[data-theme="dark"] .composer .input-actions .composer-icon-button:hover,
+.app-shell[data-theme="dark"] .composer .input-actions .composer-icon-button:focus-visible,
+.native-app-shell[data-theme="dark"] .composer .input-actions .composer-icon-button:hover,
+.native-app-shell[data-theme="dark"] .composer .input-actions .composer-icon-button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f6fa;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.composer .input-actions .directory-button.composer-icon-button:not(:disabled),
+.composer .input-actions .image-button.composer-icon-button:not(:disabled),
+.composer .input-actions .download-button.composer-icon-button:not(:disabled) {
+  color: #007aff;
+  background: transparent !important;
+}
+
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .directory-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .image-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .download-button.composer-icon-button:not(:disabled) {
+  color: #70b4ff;
+  background: transparent !important;
+}
+
+.composer .input-actions .wake-button.composer-icon-button.listening,
+.conversation .input-actions .wake-button.composer-icon-button.listening {
+  color: #007aff;
+  background: rgba(0, 122, 255, 0.12);
+}
+
+.composer .input-actions .voice-button.composer-icon-button.listening {
+  color: #ff3b30;
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.composer .input-actions .send-button.composer-icon-button,
+.conversation .input-actions .send-button.composer-icon-button {
+  border-color: #007aff;
+  color: #ffffff;
+  background: #007aff;
+}
+
+.app-shell[data-theme="dark"] .composer .input-actions .send-button.composer-icon-button,
+.native-app-shell[data-theme="dark"] .composer .input-actions .send-button.composer-icon-button {
+  border-color: #2997ff;
+  color: #ffffff;
+  background: #2997ff;
+}
+
+.composer .input-actions .send-button.composer-icon-button:disabled,
+.conversation .input-actions .send-button.composer-icon-button:disabled {
+  border: 1px solid transparent !important;
+  border-color: transparent;
+  color: rgba(60, 60, 67, 0.34);
+  background: rgba(118, 118, 128, 0.12) !important;
+}
+
+.iphone-composer-actions {
+  gap: 5px;
+}
+
+.iphone-icon-button,
+.iphone-send-button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.iphone-icon-button:not(:disabled) {
+  color: var(--iphone-muted);
+}
+
+.iphone-icon-button.remote-directory-button:not(:disabled),
+.iphone-icon-button.attachment-button:not(:disabled) {
+  color: var(--iphone-accent);
+  background: transparent;
+}
+
+.iphone-icon-button:hover,
+.iphone-icon-button:focus-visible {
+  border-color: var(--iphone-line);
+  background: var(--iphone-soft);
+  outline: none;
+}
+
+.iphone-icon-button.active {
+  color: #ffffff;
+  background: var(--iphone-accent);
+}
+
+.iphone-send-button {
+  color: #ffffff;
+  background: var(--iphone-accent);
+}
+
+.iphone-send-button.stop {
+  background: #ff453a;
+}
+
+/* Mac production canvas: the live app uses the same quiet hierarchy as the
+   button design draft instead of the older oversized card treatment. */
+.mac-shell {
+  --mac-design-bg: #f3f4f6;
+  --mac-design-surface: #ffffff;
+  --mac-design-raised: #fafbfc;
+  --mac-design-soft: #eef0f3;
+  --mac-design-line: rgba(18, 24, 32, 0.1);
+  --mac-design-line-strong: rgba(18, 24, 32, 0.16);
+  --mac-design-text: #17202c;
+  --mac-design-muted: #6e7784;
+  --mac-design-subtle: #9aa2ad;
+  --mac-design-accent: #1677e8;
+  --mac-design-accent-strong: #1677e8;
+  --mac-design-success: #16875a;
+  background: var(--mac-design-bg) !important;
+  color: var(--mac-design-text);
+}
+
+.app-shell[data-theme="dark"].mac-shell {
+  --mac-design-bg: #0f1115;
+  --mac-design-surface: #171a20;
+  --mac-design-raised: #1d2128;
+  --mac-design-soft: #232831;
+  --mac-design-line: rgba(255, 255, 255, 0.1);
+  --mac-design-line-strong: rgba(255, 255, 255, 0.16);
+  --mac-design-text: #f2f4f8;
+  --mac-design-muted: #8e96a4;
+  --mac-design-subtle: #69717e;
+  --mac-design-accent: #70b4ff;
+  --mac-design-accent-strong: #1677e8;
+  --mac-design-success: #65c892;
+  background: var(--mac-design-bg) !important;
+}
+
+.mac-shell .topbar {
+  min-height: 56px;
+  padding: 0 16px 0 78px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom: 1px solid var(--mac-design-line);
+  background: var(--mac-design-bg) !important;
+  box-shadow: none !important;
+}
+
+.mac-shell .topbar-session {
+  display: flex;
+  grid-column: 1;
+  justify-self: start;
+  min-width: 0;
+  gap: 2px 8px;
+}
+
+.app-shell:not(.sidebar-collapsed).mac-shell .topbar-session.visible,
+.mac-shell.sidebar-collapsed .topbar-session.visible,
+.mac-shell.detached-chat-window .topbar-session.visible {
+  display: flex;
+  grid-column: 1;
+  justify-self: start;
+  max-width: min(720px, 100%);
+  padding: 0;
+  text-align: left;
+}
+
+.mac-shell .topbar-session strong {
+  color: var(--mac-design-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mac-shell .topbar-session-detail {
+  overflow: hidden;
+  color: var(--mac-design-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-shell .topbar-session-status,
+.mac-shell .topbar-more {
+  color: var(--mac-design-muted);
+}
+
+.mac-shell .topbar-session-status {
+  font-size: 11px;
+}
+
+.mac-shell .topbar-actions {
+  grid-column: 2;
+}
+
+.mac-shell .topbar-more {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.mac-shell .topbar-more:hover {
+  border-color: var(--mac-design-line-strong);
+  background: var(--mac-design-soft);
+}
+
+.mac-shell .workspace {
+  grid-template-columns: 244px minmax(0, 1fr) !important;
+  background: var(--mac-design-bg);
+}
+
+.mac-shell .desktop-sidebar {
+  padding: 18px 12px 14px;
+  border-right: 1px solid var(--mac-design-line);
+  background: var(--mac-design-bg) !important;
+}
+
+.mac-shell .sidebar-toolbar {
+  min-height: 32px;
+  margin: 0 4px 12px;
+}
+
+.mac-shell .sidebar-toolbar .section-header {
+  color: var(--mac-design-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mac-shell :is(.sidebar-add, .sidebar-collapse) {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--mac-design-muted);
+  background: transparent;
+}
+
+.mac-shell :is(.sidebar-add, .sidebar-collapse):hover {
+  border-color: var(--mac-design-line-strong);
+  color: var(--mac-design-text);
+  background: var(--mac-design-soft);
+}
+
+.mac-shell .server-list {
+  gap: 3px;
+}
+
+.mac-shell .mac-session-row {
+  grid-template-columns: 25px minmax(0, 1fr) 32px;
+  min-height: 64px;
+  gap: 8px;
+  padding: 9px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--mac-design-text);
+  background: transparent;
+}
+
+.mac-shell .mac-session-row:hover {
+  background: var(--mac-design-raised);
+}
+
+.mac-shell .mac-session-row.active {
+  border-color: var(--mac-design-line-strong);
+  background: var(--mac-design-surface);
+  box-shadow: none;
+}
+
+.mac-shell .mac-session-index {
+  color: var(--mac-design-subtle);
+  font-size: 11px;
+}
+
+.mac-shell .mac-session-copy {
+  gap: 4px;
+}
+
+.mac-shell .mac-session-copy > strong {
+  color: var(--mac-design-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mac-shell .mac-session-subline {
+  min-height: 16px;
+}
+
+.mac-shell .mac-session-state,
+.mac-shell .mac-session-copy .connection-mode-badge.compact,
+.mac-shell .mac-session-meta,
+.mac-shell .mac-session-channel {
+  color: var(--mac-design-muted);
+  font-size: 10px;
+}
+
+.mac-shell .mac-session-state {
+  gap: 5px;
+  font-weight: 650;
+}
+
+.mac-shell .mac-session-state.running,
+.mac-shell .mac-session-state.connected,
+.mac-shell .mac-session-state.done {
+  color: var(--mac-design-success);
+}
+
+.mac-shell .mac-session-state.error {
+  color: #d64d45;
+}
+
+.mac-shell .mac-session-more {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--mac-design-muted);
+  background: transparent;
+}
+
+.mac-shell .mac-session-more:hover {
+  border-color: var(--mac-design-line-strong);
+  color: var(--mac-design-text);
+  background: var(--mac-design-soft);
+}
+
+.mac-shell .sidebar-actions {
+  gap: 6px;
+  padding-top: 12px;
+}
+
+.mac-shell .sidebar-action {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--mac-design-muted);
+  background: transparent;
+}
+
+.mac-shell .sidebar-action:hover {
+  border-color: var(--mac-design-line-strong);
+  color: var(--mac-design-text);
+  background: var(--mac-design-soft);
+}
+
+.mac-shell .sidebar-version-label {
+  color: var(--mac-design-subtle);
+  font-size: 10px;
+}
+
+.mac-shell .conversation .composer.compact {
+  width: min(780px, calc(100% - 96px));
+  margin: 0 auto 20px;
+  padding: 10px 12px 9px;
+  border: 1px solid var(--mac-design-line-strong);
+  border-radius: 22px;
+  background: var(--mac-design-raised) !important;
+  box-shadow: none !important;
+}
+
+.mac-shell .conversation .composer.compact:focus-within {
+  border-color: var(--mac-design-line-strong);
+  background: var(--mac-design-raised) !important;
+  box-shadow: none !important;
+}
+
+.composer-topline {
+  display: none;
+}
+
+.composer-editor {
+  display: block;
+}
+
+.mac-shell .composer.compact .input-row {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.mac-shell .composer.compact .input-row textarea {
+  min-height: 48px;
+  padding: 5px 6px 2px;
+  color: var(--mac-design-text);
+  background: transparent;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.mac-shell .composer.compact .input-row textarea::placeholder {
+  color: var(--mac-design-subtle);
+}
+
+.mac-shell .composer.compact .composer-bottom-row {
+  grid-column: 1 / -1;
+  min-height: 32px;
+  padding: 0;
+}
+
+.mac-shell .composer.compact .composer-bottom-row .voice-hint.inline {
+  display: none;
+}
+
+.mac-shell .composer.compact .input-actions {
+  gap: 4px;
+}
+
+.mac-shell .composer.compact .input-actions .composer-icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--mac-design-muted);
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.mac-shell .composer.compact .input-actions .composer-icon-button:not(:disabled) {
+  color: var(--mac-design-accent);
+  cursor: pointer;
+  opacity: 1;
+}
+
+.mac-shell .composer.compact .input-actions .composer-icon-button:hover {
+  border-color: var(--mac-design-line-strong);
+  color: var(--mac-design-text);
+  background: var(--mac-design-soft) !important;
+}
+
+.mac-shell .composer.compact .input-actions .send-button {
+  border-color: var(--mac-design-accent);
+  color: #fff;
+  background: var(--mac-design-accent) !important;
+}
+
+.mac-shell .composer.compact .input-actions .send-button:disabled {
+  border-color: transparent;
+  color: var(--mac-design-subtle);
+  background: var(--mac-design-soft) !important;
+}
+
+@media (max-width: 860px) {
+  .mac-shell .workspace {
+    grid-template-columns: 216px minmax(0, 1fr) !important;
+  }
+
+  .mac-shell .conversation .composer.compact {
+    width: calc(100% - 20px);
+  }
+}
+
+/* Restore the original Mac transcript geometry after the later theme rules. */
+.mac-shell .conversation-scroll,
+.app-shell[data-theme="dark"].mac-shell .conversation-scroll {
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 38px clamp(18px, 5vw, 72px) 170px;
+  overflow-x: hidden;
+}
+
+.mac-shell .conversation .agent-response,
+.app-shell[data-theme="dark"].mac-shell .conversation .agent-response,
+.mac-shell .conversation .user-prompt,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt {
+  align-self: center;
+  width: min(760px, 100%);
+  max-width: min(760px, 100%);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.mac-shell .conversation .agent-response,
+.app-shell[data-theme="dark"].mac-shell .conversation .agent-response {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mac-shell .conversation .user-prompt,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mac-shell .conversation .user-prompt p,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt p {
+  display: block;
+  flex: 0 1 auto;
+  box-sizing: border-box;
+  width: fit-content !important;
+  min-width: 0;
+  max-width: min(560px, calc(100% - 40px));
+  align-self: flex-end;
+  margin: 0 0 0 auto;
+  padding: 10px 16px;
+  border: 1px solid var(--mac-design-line-strong);
+  border-radius: 18px;
+  color: var(--mac-design-text);
+  background: var(--mac-design-soft);
+  overflow-wrap: anywhere;
+}
+
+.mac-shell .conversation .message-header,
+.app-shell[data-theme="dark"].mac-shell .conversation .message-header {
+  min-width: 0;
+  margin-bottom: 9px;
+}
+
+.mac-shell .conversation .assistant-copy,
+.mac-shell .conversation .assistant-answer,
+.mac-shell .conversation .rich-message,
+.app-shell[data-theme="dark"].mac-shell .conversation .assistant-copy,
+.app-shell[data-theme="dark"].mac-shell .conversation .assistant-answer,
+.app-shell[data-theme="dark"].mac-shell .conversation .rich-message {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.mac-shell .conversation .assistant-copy,
+.app-shell[data-theme="dark"].mac-shell .conversation .assistant-copy {
+  margin: 0 0 8px 34px;
+  width: calc(100% - 34px);
+  color: var(--mac-design-muted);
+  font-size: 15px;
+  line-height: 1.68;
+}
+
+.mac-shell .conversation .assistant-answer,
+.app-shell[data-theme="dark"].mac-shell .conversation .assistant-answer {
+  width: calc(100% - 34px);
+  margin: 4px 0 0 34px;
+}
+
+.mac-shell .conversation .rich-message,
+.app-shell[data-theme="dark"].mac-shell .conversation .rich-message {
+  width: 100%;
+  color: var(--mac-design-text);
+  font-size: 15px;
+  line-height: 1.68;
+}
+
+.mac-shell .conversation .task-status-card,
+.app-shell[data-theme="dark"].mac-shell .conversation .task-status-card {
+  box-sizing: border-box;
+  max-width: calc(100% - 34px);
+  margin-left: 34px;
+}
+
+/* Production composer: the same 32px tool language as the button specimen. */
+.mac-shell .conversation .composer.compact,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
+  box-sizing: border-box;
+  width: min(780px, calc(100% - 56px));
+  max-width: 100%;
+  margin: 0 auto 22px;
+  padding: 10px 12px;
+  border: 1px solid var(--mac-design-line-strong) !important;
+  border-radius: 24px;
+  background: var(--mac-design-raised) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22) !important;
+}
+
+.mac-shell .conversation .composer.compact:focus-within,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact:focus-within {
+  border-color: var(--mac-design-line-strong) !important;
+  background: var(--mac-design-raised) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.26) !important;
+}
+
+.mac-shell .conversation .composer.compact .input-row,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.mac-shell .conversation .composer.compact .input-row textarea,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-row textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 54px;
+  max-height: 170px;
+  resize: none;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 16px;
+  outline: none;
+  color: var(--mac-design-text) !important;
+  background: transparent !important;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.mac-shell .conversation .composer.compact .input-row textarea::placeholder,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-row textarea::placeholder {
+  color: var(--mac-design-subtle) !important;
+}
+
+.mac-shell .conversation .composer.compact .composer-bottom-row,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .composer-bottom-row {
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  gap: 10px;
+  padding: 0 0 2px 4px;
+}
+
+.mac-shell .conversation .composer.compact .composer-bottom-row .voice-hint.inline,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .composer-bottom-row .voice-hint.inline {
+  display: none;
+}
+
+.mac-shell .conversation .composer.compact .input-actions,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  margin-left: 0;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .composer-icon-button,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .composer-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  padding: 0;
+  border: 1px solid transparent !important;
+  border-radius: 9px !important;
+  color: #aeb7c5 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  opacity: 1;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .composer-icon-button:hover,
+.mac-shell .conversation .composer.compact .input-actions .composer-icon-button:focus-visible,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .composer-icon-button:hover,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .composer-icon-button:focus-visible {
+  border-color: var(--mac-design-line-strong) !important;
+  color: var(--mac-design-text) !important;
+  background: var(--mac-design-soft) !important;
+  outline: none;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .composer-icon-button:disabled,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .composer-icon-button:disabled {
+  cursor: default;
+  color: var(--mac-design-subtle) !important;
+  background: transparent !important;
+  opacity: 0.34;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .wake-button.listening,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .wake-button.listening {
+  border-color: transparent !important;
+  color: var(--mac-design-accent) !important;
+  background: var(--mac-design-accent-soft) !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .voice-button.listening,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .voice-button.listening {
+  border-color: transparent !important;
+  color: #ffffff !important;
+  background: #e05252 !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .send-button {
+  border-color: var(--mac-design-accent-strong) !important;
+  color: #ffffff !important;
+  background: var(--mac-design-accent-strong) !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button:hover,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .send-button:hover {
+  border-color: var(--mac-design-accent) !important;
+  color: #ffffff !important;
+  background: var(--mac-design-accent-strong) !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button:disabled,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .send-button:disabled {
+  border-color: transparent !important;
+  color: var(--mac-design-subtle) !important;
+  background: var(--mac-design-soft) !important;
+  opacity: 1;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .stop-icon-button,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .stop-icon-button {
+  border-color: #c94a4a !important;
+  color: #ffffff !important;
+  background: #c94a4a !important;
+}
+
+/* Add Work Session: guided one-screen flow, with connection fields kept visible. */
+.app-shell .settings-panel.add-session-mode .settings-add-connection {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 0 18px;
+  margin: 0 0 14px;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section {
+  margin: 0;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-title,
+.app-shell .settings-panel.add-session-mode .session-import-head strong {
+  color: var(--settings-text);
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-group {
+  border-radius: 16px;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-footer {
+  margin-top: 8px;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-block {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0 18px 16px;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-label {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-label strong {
+  color: var(--settings-text);
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.22;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-label span {
+  color: var(--settings-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 18px;
+  background: var(--settings-group);
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-head {
+  padding: 16px 18px 14px;
+  border-bottom: 0.5px solid var(--settings-separator);
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-head strong {
+  font-size: 20px;
+  font-weight: 760;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-head span {
+  margin-top: 3px;
+  color: var(--settings-secondary);
+  font-size: 13px;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-add-methods {
+  padding: 0;
+  border-bottom: 0.5px solid var(--settings-separator);
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+  padding: 15px 18px;
+  border: 0;
+  background: transparent;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-card + .directory-method-card {
+  border-top: 0.5px solid var(--settings-separator);
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: 14px;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-card.manual .directory-method-main {
+  grid-template-columns: minmax(100px, 0.26fr) minmax(0, 1fr);
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-title {
+  overflow: hidden;
+  color: var(--settings-text);
+  font-size: 16px;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-note {
+  margin: 0;
+  color: var(--settings-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-action,
+.app-shell .settings-panel.add-session-mode .manual-directory button {
+  height: 40px;
+  min-width: 82px;
+  border: 0;
+  border-radius: 13px;
+  color: var(--settings-accent);
+  background: var(--settings-control);
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-action {
+  gap: 6px;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+  padding: 0 !important;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory label {
+  height: 40px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--settings-control) 62%, transparent);
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory span {
+  color: var(--settings-secondary);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory input {
+  color: var(--settings-text);
+  font-size: 15px;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory button:disabled,
+.app-shell .settings-panel.add-session-mode .directory-method-action:disabled {
+  color: var(--settings-tertiary);
+  background: color-mix(in srgb, var(--settings-control) 72%, transparent);
+  opacity: 0.58;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-tools {
+  padding: 12px 18px;
+  border-bottom: 0.5px solid var(--settings-separator);
+}
+
+.app-shell .settings-panel.add-session-mode .session-pick-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-top: 0;
+}
+
+.app-shell .settings-panel.add-session-mode .session-empty {
+  color: var(--settings-secondary);
+}
+
+@media (max-width: 700px) {
+  .app-shell .settings-panel.add-session-mode .settings-add-connection {
+    padding: 0 14px;
+    margin-bottom: 12px;
+  }
+
+  .app-shell .settings-panel.add-session-mode .session-import-block {
+    margin: 0 14px 12px;
+  }
+
+  .app-shell .settings-panel.add-session-mode .directory-method-main,
+  .app-shell .settings-panel.add-session-mode .directory-method-card.manual .directory-method-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .settings-panel.add-session-mode .directory-method-action {
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .app-shell .settings-panel.add-session-mode .manual-directory {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .settings-add-connection {
+  padding: 14px max(16px, var(--safe-right)) 12px max(16px, var(--safe-left));
+  margin: 0;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .session-import-block {
+  margin: 0 max(16px, var(--safe-right)) 14px max(16px, var(--safe-left));
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .session-import {
+  margin: 0;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .directory-method-card {
+  padding: 14px 16px;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"])
+  .settings-panel.add-session-mode
+  .directory-method-main {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"])
+  .settings-panel.add-session-mode
+  .directory-method-card.manual
+  .directory-method-main {
+  grid-template-columns: minmax(84px, 0.26fr) minmax(0, 1fr);
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .directory-method-title {
+  font-size: 15px;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .directory-method-note {
+  font-size: 12px;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .manual-directory {
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 8px;
+}
+
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .manual-directory label,
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .manual-directory button,
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .directory-method-action {
+  height: 38px;
+  min-height: 38px;
+  border-radius: 13px;
+  font-size: 14px;
+}
+
+@media (max-width: 380px) {
+  .native-app-shell:is([data-platform="ios"], [data-platform="android"])
+    .settings-panel.add-session-mode
+    .directory-method-card.manual
+    .directory-method-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode .manual-directory {
+    grid-template-columns: minmax(0, 1fr) 58px;
+  }
+}
+
+@media (min-width: 760px) {
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-add-connection {
+    padding: 0;
+    margin: 0 0 18px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-block {
+    min-height: 360px;
+    max-height: min(560px, 58vh);
+    margin: 0;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-label {
+    padding: 0 16px 10px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-method-card {
+    padding: 17px 20px;
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"]
+    .settings-panel.add-session-mode
+    .directory-method-card.manual
+    .directory-method-main {
+    grid-template-columns: minmax(130px, 0.22fr) minmax(0, 1fr);
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory {
+    grid-template-columns: minmax(0, 1fr) 86px;
+    padding: 0 !important;
+  }
+}
+
+/* Add-session compact pass: keep this flow closer to native Settings density. */
+.app-shell .settings-panel.add-session-mode > header.settings-navigation,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > header.settings-navigation,
+.iphone-shell .settings-panel.add-session-mode > header.settings-navigation {
+  min-height: 74px;
+  padding: 16px 24px 12px;
+}
+
+.app-shell .settings-panel.add-session-mode > header .settings-title-block strong,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > header .settings-title-block strong,
+.iphone-shell .settings-panel.add-session-mode > header .settings-title-block strong {
+  font-size: 24px;
+  font-weight: 760;
+  line-height: 1.12;
+}
+
+.app-shell .settings-panel.add-session-mode > header .settings-title-block span,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > header .settings-title-block span,
+.iphone-shell .settings-panel.add-session-mode > header .settings-title-block span {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.32;
+}
+
+.app-shell .settings-panel.add-session-mode .settings-close-button,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-close-button,
+.iphone-shell .settings-panel.add-session-mode .settings-close-button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+}
+
+.app-shell .settings-panel.add-session-mode .settings-section-title,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .settings-section-title,
+.iphone-shell .settings-panel.add-session-mode .settings-section-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-group > .config-field,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .connection-settings-section
+  .settings-section-group
+  > .config-field,
+.iphone-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-group > .config-field {
+  grid-template-columns: minmax(100px, 0.32fr) minmax(0, 1fr);
+  min-height: 48px;
+  gap: 12px;
+  padding: 0 14px;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .config-field > span,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .connection-settings-section .config-field > span,
+.iphone-shell .settings-panel.add-session-mode .connection-settings-section .config-field > span {
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .config-field :is(input, select),
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .connection-settings-section
+  .config-field
+  :is(input, select),
+.iphone-shell .settings-panel.add-session-mode .connection-settings-section .config-field :is(input, select) {
+  height: 36px;
+  font-size: 14px;
+}
+
+.app-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-footer,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .connection-settings-section
+  .settings-section-footer,
+.iphone-shell .settings-panel.add-session-mode .connection-settings-section .settings-section-footer {
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-label,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-label,
+.iphone-shell .settings-panel.add-session-mode .session-import-label {
+  gap: 2px;
+  padding: 0 8px 7px;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-label strong,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-label strong,
+.iphone-shell .settings-panel.add-session-mode .session-import-label strong {
+  font-size: 17px;
+  font-weight: 720;
+  line-height: 1.2;
+}
+
+.app-shell .settings-panel.add-session-mode .session-import-label span,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .session-import-label span,
+.iphone-shell .settings-panel.add-session-mode .session-import-label span {
+  font-size: 12.5px;
+  line-height: 1.38;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-card,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-method-card,
+.iphone-shell .settings-panel.add-session-mode .directory-method-card {
+  gap: 7px;
+  padding: 12px 16px;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-card.manual .directory-method-main,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .directory-method-card.manual
+  .directory-method-main,
+.iphone-shell .settings-panel.add-session-mode .directory-method-card.manual .directory-method-main {
+  grid-template-columns: minmax(92px, 0.18fr) minmax(0, 1fr);
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-title,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-method-title,
+.iphone-shell .settings-panel.add-session-mode .directory-method-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-note,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-method-note,
+.iphone-shell .settings-panel.add-session-mode .directory-method-note {
+  font-size: 12px;
+  line-height: 1.38;
+}
+
+.app-shell .settings-panel.add-session-mode .directory-method-action,
+.app-shell .settings-panel.add-session-mode .manual-directory button,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .directory-method-action,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory button,
+.iphone-shell .settings-panel.add-session-mode .directory-method-action,
+.iphone-shell .settings-panel.add-session-mode .manual-directory button {
+  height: 36px;
+  min-height: 36px;
+  min-width: 72px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory,
+.iphone-shell .settings-panel.add-session-mode .manual-directory {
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory label,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory label,
+.iphone-shell .settings-panel.add-session-mode .manual-directory label {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+}
+
+.app-shell .settings-panel.add-session-mode .manual-directory input,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .manual-directory input,
+.iphone-shell .settings-panel.add-session-mode .manual-directory input {
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+@media (max-width: 700px) {
+  .app-shell .settings-panel.add-session-mode > header.settings-navigation,
+  .native-app-shell:is([data-platform="ios"], [data-platform="android"]) .settings-panel.add-session-mode > header.settings-navigation,
+  .iphone-shell .settings-panel.add-session-mode > header.settings-navigation {
+    min-height: 66px;
+    padding: 12px 16px 10px;
+  }
+
+  .app-shell .settings-panel.add-session-mode > header .settings-title-block strong,
+  .native-app-shell:is([data-platform="ios"], [data-platform="android"])
+    .settings-panel.add-session-mode
+    > header
+    .settings-title-block
+    strong,
+  .iphone-shell .settings-panel.add-session-mode > header .settings-title-block strong {
+    font-size: 22px;
+  }
+
+  .app-shell .settings-panel.add-session-mode .directory-method-card.manual .directory-method-main,
+  .native-app-shell:is([data-platform="ios"], [data-platform="android"])
+    .settings-panel.add-session-mode
+    .directory-method-card.manual
+    .directory-method-main,
+  .iphone-shell .settings-panel.add-session-mode .directory-method-card.manual .directory-method-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Composer tools: keep download, folder, and attachment icons on the same color ramp. */
+.mac-shell .conversation .composer.compact .input-actions .download-button.composer-icon-button:not(:disabled),
+.mac-shell .conversation .composer.compact .input-actions .directory-button.composer-icon-button:not(:disabled),
+.mac-shell .conversation .composer.compact .input-actions .image-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .download-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .directory-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .image-button.composer-icon-button:not(:disabled) {
+  color: #aeb7c5 !important;
+  background: transparent !important;
+  opacity: 1;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .download-button.composer-icon-button:not(:disabled):hover,
+.mac-shell .conversation .composer.compact .input-actions .directory-button.composer-icon-button:not(:disabled):hover,
+.mac-shell .conversation .composer.compact .input-actions .image-button.composer-icon-button:not(:disabled):hover,
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .download-button.composer-icon-button:not(:disabled):hover,
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .directory-button.composer-icon-button:not(:disabled):hover,
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .image-button.composer-icon-button:not(:disabled):hover {
+  color: #f5f7fb !important;
+  background: var(--mac-design-soft) !important;
+}
+
+.iphone-shell .iphone-composer-actions .download-button.iphone-icon-button:not(:disabled),
+.iphone-shell .iphone-composer-actions .remote-directory-button.iphone-icon-button:not(:disabled),
+.iphone-shell .iphone-composer-actions .attachment-button.iphone-icon-button:not(:disabled) {
+  color: var(--iphone-muted);
+  background: transparent;
+}
+
+.iphone-shell[data-theme="dark"] .iphone-composer-actions .download-button.iphone-icon-button:not(:disabled),
+.iphone-shell[data-theme="dark"] .iphone-composer-actions .remote-directory-button.iphone-icon-button:not(:disabled),
+.iphone-shell[data-theme="dark"] .iphone-composer-actions .attachment-button.iphone-icon-button:not(:disabled) {
+  color: #aeb7c5;
+  background: transparent;
+}
+
+/* Add-session footer: the primary action sizes to its text, never as a full-width slab. */
+.app-shell .settings-panel.add-session-mode > .settings-actions,
+.native-app-shell .settings-panel.add-session-mode > .settings-actions {
+  justify-content: flex-end;
+  min-height: 60px;
+  padding: 9px 18px calc(9px + var(--safe-bottom));
+}
+
+.app-shell .settings-panel.add-session-mode > .settings-actions .session-add-button,
+.native-app-shell .settings-panel.add-session-mode > .settings-actions .session-add-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 132px;
+  max-width: calc(100% - 8px);
+  height: 40px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 18px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.iphone-shell .settings-panel.add-session-mode > .settings-actions {
+  justify-content: center;
+  min-height: calc(60px + var(--safe-bottom));
+  padding: 8px max(14px, var(--safe-right)) calc(8px + var(--safe-bottom)) max(14px, var(--safe-left));
+}
+
+.iphone-shell .settings-panel.add-session-mode > .settings-actions .session-add-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 136px;
+  max-width: calc(100vw - max(28px, calc(var(--safe-left) + var(--safe-right) + 28px)));
+  height: 40px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 18px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Product Design typography pass: menus are for scanning, not display. */
+.app-shell,
+.native-app-shell,
+.iphone-shell {
+  --aiwb-page-title-size: 24px;
+  --aiwb-phone-page-title-size: 22px;
+  --aiwb-section-title-size: 17px;
+  --aiwb-menu-title-size: 14px;
+  --aiwb-phone-menu-title-size: 15px;
+  --aiwb-menu-detail-size: 12px;
+  --aiwb-field-label-size: 13px;
+  --aiwb-phone-field-label-size: 14px;
+  --aiwb-field-value-size: 14px;
+  --aiwb-phone-field-value-size: 15px;
+  --aiwb-button-font-size: 13px;
+}
+
+.app-shell .settings-panel .settings-title-block strong,
+.native-app-shell .settings-panel .settings-title-block strong {
+  font-size: var(--aiwb-page-title-size);
+  font-weight: 760;
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.iphone-shell .settings-panel .settings-title-block strong {
+  font-size: var(--aiwb-phone-page-title-size);
+  font-weight: 760;
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.app-shell .settings-panel .settings-title-block span,
+.native-app-shell .settings-panel .settings-title-block span,
+.iphone-shell .settings-panel .settings-title-block span {
+  font-size: 12px;
+  line-height: 1.32;
+}
+
+.app-shell .settings-section-title,
+.native-app-shell .settings-section-title,
+.iphone-shell .settings-section-title {
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.app-shell .settings-panel .settings-menu-row,
+.app-shell .settings-panel .settings-action-row,
+.app-shell .settings-panel .settings-status-row,
+.native-app-shell .settings-panel .settings-menu-row,
+.native-app-shell .settings-panel .settings-action-row,
+.native-app-shell .settings-panel .settings-status-row {
+  min-height: 54px;
+}
+
+.iphone-shell .settings-panel .settings-menu-row,
+.iphone-shell .settings-panel .settings-action-row,
+.iphone-shell .settings-panel .settings-status-row {
+  min-height: 56px;
+}
+
+.app-shell .settings-menu-copy strong,
+.app-shell .settings-action-row strong,
+.app-shell .settings-status-copy strong,
+.native-app-shell .settings-menu-copy strong,
+.native-app-shell .settings-action-row strong,
+.native-app-shell .settings-status-copy strong {
+  font-size: var(--aiwb-menu-title-size);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.iphone-shell .settings-panel .settings-menu-copy strong,
+.iphone-shell .settings-panel .settings-action-row strong,
+.iphone-shell .settings-panel .settings-status-copy strong {
+  font-size: var(--aiwb-phone-menu-title-size);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.app-shell .settings-menu-copy small,
+.app-shell .settings-action-row small,
+.app-shell .settings-status-copy small,
+.native-app-shell .settings-menu-copy small,
+.native-app-shell .settings-action-row small,
+.native-app-shell .settings-status-copy small,
+.iphone-shell .settings-panel .settings-menu-copy small,
+.iphone-shell .settings-panel .settings-action-row small,
+.iphone-shell .settings-panel .settings-status-copy small {
+  font-size: var(--aiwb-menu-detail-size);
+  font-weight: 400;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.app-shell .settings-menu-value,
+.native-app-shell .settings-menu-value,
+.iphone-shell .settings-panel .settings-menu-value,
+.app-shell .settings-status-value,
+.native-app-shell .settings-status-value,
+.iphone-shell .settings-panel .settings-status-value {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.app-shell .settings-panel .config-field > span,
+.native-app-shell .settings-panel .config-field > span {
+  font-size: var(--aiwb-field-label-size);
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.iphone-shell .settings-panel .config-field > span {
+  font-size: var(--aiwb-phone-field-label-size);
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.app-shell .settings-panel .config-field :is(input, select),
+.native-app-shell .settings-panel .config-field :is(input, select) {
+  font-size: var(--aiwb-field-value-size);
+  line-height: 1.25;
+}
+
+.iphone-shell .settings-panel .config-field :is(input, select) {
+  font-size: var(--aiwb-phone-field-value-size);
+  line-height: 1.25;
+}
+
+.app-shell :is(.settings-inline-button, .settings-panel > .settings-actions .send-button),
+.native-app-shell :is(.settings-inline-button, .settings-panel > .settings-actions .send-button),
+.iphone-shell :is(.settings-inline-button, .settings-panel > .settings-actions .send-button) {
+  font-size: var(--aiwb-button-font-size);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.mac-shell .sidebar-toolbar .section-header {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.mac-shell .mac-session-copy > strong {
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.mac-shell :is(.mac-session-state, .mac-session-channel, .mac-session-copy .connection-mode-badge.compact, .mac-session-meta, .session-id-tail) {
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.mac-shell .sidebar-action {
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .sidebar-toolbar .section-header {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-copy strong {
+  font-size: 15px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-copy span,
+.native-app-shell[data-native-form-factor="ipad"] :is(.ipad-session-connect, .ipad-session-settings, .native-ipad-sidebar .sidebar-action) {
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.25;
+}
+
+.iphone-session-body .nav-task-name {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.iphone-session-body :is(.nav-meta, .session-id-tail, .connection-mode-badge.compact) {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+.iphone-session-body :is(.task-settings-button, .connect-badge, .sidebar-action) {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* Add-session WSL entry: align it with the connection form grid, not an extra inset card. */
+.app-shell .settings-panel.add-session-mode .settings-add-connection .wsl-advanced-settings,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .settings-add-connection
+  .wsl-advanced-settings,
+.iphone-shell .settings-panel.add-session-mode .settings-add-connection .wsl-advanced-settings {
+  margin: 0 0 14px;
+  border-radius: 16px;
+}
+
+.app-shell .settings-panel.add-session-mode .wsl-advanced-settings > summary,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode .wsl-advanced-settings > summary,
+.iphone-shell .settings-panel.add-session-mode .wsl-advanced-settings > summary {
+  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  gap: 12px;
+  min-height: 60px;
+  padding: 10px 14px;
+}
+
+.app-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-icon,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .wsl-advanced-settings
+  .settings-collapsible-summary-icon,
+.iphone-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  justify-self: center;
+}
+
+.app-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-copy,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .wsl-advanced-settings
+  .settings-collapsible-summary-copy,
+.iphone-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-copy {
+  gap: 2px;
+  align-self: center;
+}
+
+.app-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-copy strong,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .wsl-advanced-settings
+  .settings-collapsible-summary-copy
+  strong,
+.iphone-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-copy strong {
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.app-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-copy small,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .wsl-advanced-settings
+  .settings-collapsible-summary-copy
+  small,
+.iphone-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-summary-copy small {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.app-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-chevron,
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  .wsl-advanced-settings
+  .settings-collapsible-chevron,
+.iphone-shell .settings-panel.add-session-mode .wsl-advanced-settings .settings-collapsible-chevron {
+  justify-self: end;
+}
+
+/* Final composer controls: one compact hit target, no permanent tool tiles. */
+.composer .input-actions,
+.conversation .composer .input-actions,
+.iphone-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+}
+
+.composer .input-actions .composer-icon-button,
+.conversation .composer .input-actions .composer-icon-button,
+.iphone-composer-actions .iphone-icon-button,
+.iphone-composer-actions .iphone-send-button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  font-size: 0;
+  line-height: 1;
+}
+
+.composer .input-actions .composer-icon-button svg,
+.conversation .composer .input-actions .composer-icon-button svg,
+.iphone-composer-actions .iphone-icon-button svg,
+.iphone-composer-actions .iphone-send-button svg {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+.composer .input-actions .composer-icon-button:not(:disabled),
+.conversation .composer .input-actions .composer-icon-button:not(:disabled),
+.iphone-composer-actions .iphone-icon-button:not(:disabled) {
+  color: #aeb7c5 !important;
+  opacity: 1;
+}
+
+.composer .input-actions .composer-icon-button:hover:not(:disabled),
+.composer .input-actions .composer-icon-button:focus-visible:not(:disabled),
+.conversation .composer .input-actions .composer-icon-button:hover:not(:disabled),
+.conversation .composer .input-actions .composer-icon-button:focus-visible:not(:disabled),
+.iphone-composer-actions .iphone-icon-button:hover:not(:disabled),
+.iphone-composer-actions .iphone-icon-button:focus-visible:not(:disabled) {
+  border: 0 !important;
+  border-radius: 9px !important;
+  color: #f5f7fb !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  outline: none;
+}
+
+.composer .input-actions .composer-icon-button:active:not(:disabled),
+.conversation .composer .input-actions .composer-icon-button:active:not(:disabled),
+.iphone-composer-actions .iphone-icon-button:active:not(:disabled),
+.iphone-composer-actions .iphone-send-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer .input-actions .composer-icon-button:disabled,
+.conversation .composer .input-actions .composer-icon-button:disabled,
+.iphone-composer-actions .iphone-icon-button:disabled {
+  color: #707887 !important;
+  background: transparent !important;
+  opacity: 0.36;
+  cursor: default;
+}
+
+.composer .input-actions .voice-button.composer-icon-button.listening,
+.conversation .composer .input-actions .voice-button.composer-icon-button.listening,
+.iphone-composer-actions .iphone-icon-button.active.danger {
+  color: #ff6b63 !important;
+  background: transparent !important;
+}
+
+.composer .input-actions .wake-button.composer-icon-button.listening,
+.conversation .composer .input-actions .wake-button.composer-icon-button.listening,
+.iphone-composer-actions .iphone-icon-button.active:not(.danger) {
+  color: #70b4ff !important;
+  background: transparent !important;
+}
+
+.composer .input-actions .send-button.composer-icon-button,
+.conversation .composer .input-actions .send-button.composer-icon-button,
+.iphone-composer-actions .iphone-send-button {
+  margin-left: auto;
+  border: 0 !important;
+  border-radius: 50% !important;
+  color: #303238 !important;
+  background: #e7e8eb !important;
+}
+
+.composer .input-actions .send-button.composer-icon-button:hover:not(:disabled),
+.composer .input-actions .send-button.composer-icon-button:focus-visible:not(:disabled),
+.conversation .composer .input-actions .send-button.composer-icon-button:hover:not(:disabled),
+.conversation .composer .input-actions .send-button.composer-icon-button:focus-visible:not(:disabled),
+.iphone-composer-actions .iphone-send-button:hover:not(:disabled),
+.iphone-composer-actions .iphone-send-button:focus-visible:not(:disabled) {
+  border-radius: 50% !important;
+  color: #1f2024 !important;
+  background: #f2f3f5 !important;
+  outline: none;
+}
+
+.composer .input-actions .send-button.composer-icon-button:disabled,
+.conversation .composer .input-actions .send-button.composer-icon-button:disabled,
+.iphone-composer-actions .iphone-send-button:disabled {
+  border: 0 !important;
+  border-radius: 50% !important;
+  color: rgba(235, 235, 245, 0.28) !important;
+  background: rgba(118, 118, 128, 0.16) !important;
+  opacity: 1;
+}
+
+.composer .input-actions .send-button.composer-icon-button.stop-icon-button,
+.conversation .composer .input-actions .send-button.composer-icon-button.stop-icon-button,
+.iphone-composer-actions .iphone-send-button.stop {
+  margin-left: auto;
+  border: 0 !important;
+  border-radius: 50% !important;
+  color: #ffffff !important;
+  background: #ff453a !important;
+}
+
+/* Mac composer keeps tools left and the primary send/stop action at the far right. */
+.mac-shell .composer.compact .input-row,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mac-shell .composer.compact .input-row textarea,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-row textarea,
+.mac-shell .composer.compact .composer-bottom-row,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .composer-bottom-row {
+  grid-column: 1 / -1;
+}
+
+.mac-shell .composer.compact .composer-bottom-row,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .composer-bottom-row {
+  width: 100%;
+}
+
+.composer .input-actions .send-button.composer-icon-button.stop-icon-button:hover:not(:disabled),
+.composer .input-actions .send-button.composer-icon-button.stop-icon-button:focus-visible:not(:disabled),
+.conversation .composer .input-actions .send-button.composer-icon-button.stop-icon-button:hover:not(:disabled),
+.conversation .composer .input-actions .send-button.composer-icon-button.stop-icon-button:focus-visible:not(:disabled),
+.iphone-composer-actions .iphone-send-button.stop:hover:not(:disabled),
+.iphone-composer-actions .iphone-send-button.stop:focus-visible:not(:disabled) {
+  border-radius: 50% !important;
+  background: #ff6259 !important;
+  outline: none;
+}
+
+.composer .input-actions .composer-add-button,
+.conversation .composer .input-actions .composer-add-button,
+.iphone-add-session-button {
+  min-height: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+/* Keep Mac sent-message bubbles compact; the text itself must not add a second inset. */
+.mac-shell .conversation .user-prompt .user-message-card,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card {
+  padding: 8px 12px;
+}
+
+.mac-shell .conversation .user-prompt .user-message-card > p,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card > p {
+  margin: 0;
+  padding: 0 !important;
+  border: 0;
+  background: transparent;
+}
+
+/* Assistant reply actions share one quiet, background-free icon treatment. */
+.message-header-actions .refresh-message,
+.message-header-actions .copy-message.copy-assistant-message {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: #96969c;
+  background: transparent !important;
+  box-shadow: none;
+  opacity: 1;
+}
+
+.message-header-actions .refresh-message svg,
+.message-header-actions .copy-message.copy-assistant-message svg {
+  width: 15px;
+  height: 15px;
+}
+
+.message-header-actions .copy-message.copy-assistant-message .copy-message-label {
+  display: none;
+  max-width: 0;
+  opacity: 0;
+}
+
+.message-header-actions .refresh-message:hover:not(:disabled),
+.message-header-actions .refresh-message:focus-visible:not(:disabled),
+.message-header-actions .copy-message.copy-assistant-message:hover:not(:disabled),
+.message-header-actions .copy-message.copy-assistant-message:focus-visible:not(:disabled) {
+  color: #c7c7cc;
+  background: transparent !important;
+}
+
+.message-header-actions .copy-message.copy-assistant-message.copy-state-copied {
+  color: #34c759;
+  background: transparent !important;
+}
+
+.message-header-actions .copy-message.copy-assistant-message.copy-state-failed {
+  color: #ff453a;
+  background: transparent !important;
+}
+
+/* Final platform override: keep Mac composer tools left and send/stop at the far right. */
+.mac-shell .conversation .composer.compact .composer-bottom-row .input-actions,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .composer-bottom-row .input-actions {
+  flex: 1 1 auto;
+  width: 100% !important;
+  min-width: 0;
+  margin-left: 0;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button.composer-icon-button,
+.app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-actions .send-button.composer-icon-button {
+  margin-left: auto !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button.composer-icon-button:not(.stop-icon-button),
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button:not(.stop-icon-button) {
+  color: #303238 !important;
+  background: #e7e8eb !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button.composer-icon-button:not(.stop-icon-button):hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button:not(.stop-icon-button):hover:not(:disabled) {
+  color: #1f2024 !important;
+  background: #f4f4f6 !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button.composer-icon-button:disabled,
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button:disabled {
+  color: rgba(235, 235, 245, 0.28) !important;
+  background: rgba(118, 118, 128, 0.16) !important;
+}
+
+.mac-shell .conversation .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button,
+.app-shell[data-theme="dark"].mac-shell
+  .conversation
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button.stop-icon-button {
+  color: #ffffff !important;
+  background: #ff453a !important;
+}
+
+/* Mac neutral accent trial: remove blue emphasis from chat and returned content. */
+.mac-shell {
+  --blue: #545964;
+  --blue-hover: #3f444d;
+  --blue-soft: rgba(84, 89, 100, 0.1);
+  --mac-design-accent: #656b76;
+  --mac-design-accent-strong: #4b5059;
+  --mac-design-accent-soft: rgba(84, 89, 100, 0.1);
+}
+
+.app-shell[data-theme="dark"].mac-shell {
+  --blue: #c4c8d0;
+  --blue-hover: #eef0f3;
+  --blue-soft: rgba(235, 235, 245, 0.07);
+  --mac-design-accent: #b8bdc7;
+  --mac-design-accent-strong: #d5d8de;
+  --mac-design-accent-soft: rgba(235, 235, 245, 0.07);
+}
+
+.mac-shell .conversation .message-header .streaming.running,
+.mac-shell .conversation .message-header .task-timer.running,
+.app-shell[data-theme="dark"].mac-shell .conversation .message-header .streaming.running,
+.app-shell[data-theme="dark"].mac-shell .conversation .message-header .task-timer.running {
+  color: var(--mac-design-text);
+  background: var(--mac-design-soft);
+}
+
+.mac-shell .conversation .rich-message a,
+.app-shell[data-theme="dark"].mac-shell .conversation .rich-message a {
+  color: var(--mac-design-text);
+  text-decoration-color: var(--mac-design-subtle);
+  text-decoration-line: underline;
+  text-underline-offset: 3px;
+}
+
+.mac-shell .conversation .rich-message blockquote,
+.app-shell[data-theme="dark"].mac-shell .conversation .rich-message blockquote {
+  border-left-color: var(--mac-design-line-strong);
+  color: var(--mac-design-muted);
+  background: var(--mac-design-soft);
+}
+
+.mac-shell .conversation .file-reference-icon,
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-icon {
+  color: var(--mac-design-muted);
+  background: rgba(235, 235, 245, 0.06);
+}
+
+.mac-shell .conversation .file-reference-actions button,
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-actions button {
+  min-width: 62px;
+  height: 38px;
+  color: #aeb3bd;
+  background: transparent !important;
+}
+
+.mac-shell .conversation .file-reference-actions button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-actions button:hover:not(:disabled) {
+  color: #f1f2f4;
+  background: transparent !important;
+}
+
+.mac-shell .conversation .file-reference-actions button svg,
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-actions button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mac-shell .conversation .file-reference-actions .file-delete-button,
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-actions .file-delete-button {
+  color: #aeb3bd;
+}
+
+.mac-shell .conversation .file-reference-actions .file-delete-button.is-confirming,
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-actions .file-delete-button.is-confirming {
+  color: #dc7a74;
+}
+
+.file-preview-toolbar .ghost-button,
+.file-preview-toolbar .file-preview-delete-button,
+.file-preview-toolbar .file-preview-delete-button:hover,
+.file-preview-toolbar .file-preview-delete-button:focus-visible {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.file-preview-toolbar .file-preview-delete-button {
+  color: var(--muted);
+}
+
+.file-preview-toolbar .file-preview-delete-button.is-confirming {
+  color: #d66760;
+}
+
+/* Session configuration copy actions stay quiet and background-free. */
+.app-shell .settings-panel .config-copy-button,
+.native-app-shell .settings-panel .config-copy-button,
+.iphone-shell .settings-panel .config-copy-button,
+.app-shell[data-theme="dark"] .settings-panel .config-copy-button,
+.native-app-shell[data-theme="dark"] .settings-panel .config-copy-button,
+.iphone-shell[data-theme="dark"] .settings-panel .config-copy-button {
+  color: var(--settings-muted, #8e8e93) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-shell .settings-panel .config-copy-button:hover:not(:disabled),
+.native-app-shell .settings-panel .config-copy-button:hover:not(:disabled),
+.iphone-shell .settings-panel .config-copy-button:hover:not(:disabled),
+.app-shell[data-theme="dark"] .settings-panel .config-copy-button:hover:not(:disabled),
+.native-app-shell[data-theme="dark"] .settings-panel .config-copy-button:hover:not(:disabled),
+.iphone-shell[data-theme="dark"] .settings-panel .config-copy-button:hover:not(:disabled) {
+  color: var(--settings-text, #d1d1d6) !important;
+  background: transparent !important;
+}
+
+.app-shell .settings-panel .config-copy-button.copy-state-copied,
+.native-app-shell .settings-panel .config-copy-button.copy-state-copied,
+.iphone-shell .settings-panel .config-copy-button.copy-state-copied {
+  color: #34a765 !important;
+  background: transparent !important;
+}
+
+.app-shell .settings-panel .config-copy-button.copy-state-failed,
+.native-app-shell .settings-panel .config-copy-button.copy-state-failed,
+.iphone-shell .settings-panel .config-copy-button.copy-state-failed {
+  color: #d66760 !important;
+  background: transparent !important;
 }

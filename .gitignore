@@ -30,6 +30,7 @@ ios/App/App/public/
 ios/App/App/capacitor.config.json
 ios/App/App/config.xml
 ios/capacitor-cordova-ios-plugins/
+ios/build-ipad/
 
 # Logs
 *.log
@@ -39,3 +40,8 @@ yarn-error.log*
 
 # Local QA artifacts
 qa-screenshots/
+design/audits/
+
+# Runtime caches
+__pycache__/
+*.pyc

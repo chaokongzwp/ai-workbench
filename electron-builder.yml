@@ -36,6 +36,23 @@ mac:
     NSSpeechRecognitionUsageDescription: AI Workbench 使用语音识别把你的语音转成文字。
   target:
     - dir
+win:
+  icon: public/icons/workbench.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  artifactName: AI-Workbench-${version}-${os}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AI Workbench
 mas:
   type: distribution
   entitlements: electron/entitlements/mas.plist

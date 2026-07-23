@@ -1,0 +1,177 @@
+/* Shared utility icon language for Mac and iPad. Placement stays platform-specific. */
+.mac-shell,
+.native-app-shell[data-native-form-factor="ipad"] {
+  --utility-icon-color: #59616d;
+  --utility-icon-active: #202731;
+  --utility-icon-hover: rgba(118, 118, 128, 0.1);
+}
+
+.app-shell[data-theme="dark"].mac-shell,
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] {
+  --utility-icon-color: #aeb7c5;
+  --utility-icon-active: #f5f7fb;
+  --utility-icon-hover: rgba(255, 255, 255, 0.08);
+}
+
+.mac-shell .utility-icon-button,
+.native-app-shell[data-native-form-factor="ipad"] .utility-icon-button {
+  display: inline-grid !important;
+  place-items: center !important;
+  flex: 0 0 32px !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+  color: var(--utility-icon-color) !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  line-height: 1 !important;
+}
+
+.mac-shell .utility-icon-button svg,
+.native-app-shell[data-native-form-factor="ipad"] .utility-icon-button svg {
+  width: 17px !important;
+  height: 17px !important;
+  margin: 0 !important;
+}
+
+.mac-shell .utility-icon-button:hover:not(:disabled),
+.mac-shell .utility-icon-button:focus-visible:not(:disabled),
+.native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:hover:not(:disabled),
+.native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:focus-visible:not(:disabled) {
+  color: var(--utility-icon-active) !important;
+  background: var(--utility-icon-hover) !important;
+  outline: none !important;
+}
+
+.mac-shell .utility-icon-button:active:not(:disabled),
+.native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.mac-shell .utility-icon-button:disabled,
+.native-app-shell[data-native-form-factor="ipad"] .utility-icon-button:disabled {
+  color: var(--utility-icon-color) !important;
+  background: transparent !important;
+  opacity: 0.36;
+}
+
+/* Send and stop are primary actions, not utility controls. */
+.mac-shell .send-button.composer-icon-button,
+.native-app-shell[data-native-form-factor="ipad"] .send-button.composer-icon-button {
+  border-radius: 50% !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-chat-nav {
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+}
+
+/* Mac and iPad share one composer surface; docks only control placement and safe areas. */
+.mac-shell,
+.native-app-shell[data-native-form-factor="ipad"] {
+  --composer-surface-bg: #ffffff;
+  --composer-surface-line: rgba(18, 24, 32, 0.16);
+  --composer-surface-text: #17202c;
+  --composer-surface-placeholder: #929aa5;
+  --composer-surface-shadow: 0 10px 28px rgba(26, 32, 40, 0.1);
+  --composer-surface-focus-shadow: 0 12px 30px rgba(26, 32, 40, 0.14);
+}
+
+.app-shell[data-theme="dark"].mac-shell,
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] {
+  --composer-surface-bg: #1d2128;
+  --composer-surface-line: rgba(255, 255, 255, 0.16);
+  --composer-surface-text: #f2f4f8;
+  --composer-surface-placeholder: #69717e;
+  --composer-surface-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  --composer-surface-focus-shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
+}
+
+.mac-shell .workbench-composer-surface.compact,
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .workbench-composer-surface.compact {
+  box-sizing: border-box;
+  width: min(780px, 100%) !important;
+  max-width: 100%;
+  min-height: 0;
+  max-height: 220px;
+  margin-inline: auto !important;
+  padding: 10px 12px !important;
+  border: 1px solid var(--composer-surface-line) !important;
+  border-radius: 24px !important;
+  background: var(--composer-surface-bg) !important;
+  box-shadow: var(--composer-surface-shadow) !important;
+}
+
+.mac-shell .workbench-composer-surface.compact:focus-within,
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .workbench-composer-surface.compact:focus-within {
+  border-color: var(--composer-surface-line) !important;
+  background: var(--composer-surface-bg) !important;
+  box-shadow: var(--composer-surface-focus-shadow) !important;
+}
+
+.mac-shell .workbench-composer-surface.compact .composer-editor,
+.native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact .composer-editor,
+.mac-shell .workbench-composer-surface.compact .input-row,
+.native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact .input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mac-shell .workbench-composer-surface.compact textarea,
+.native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 54px;
+  max-height: 170px;
+  resize: none;
+  padding: 0 4px !important;
+  border: 0 !important;
+  border-radius: 16px;
+  outline: none;
+  color: var(--composer-surface-text) !important;
+  background: transparent !important;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.mac-shell .workbench-composer-surface.compact textarea::placeholder,
+.native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact textarea::placeholder {
+  color: var(--composer-surface-placeholder) !important;
+}
+
+.mac-shell .workbench-composer-surface.compact .composer-bottom-row,
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .workbench-composer-surface.compact
+  .composer-bottom-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px !important;
+  gap: 10px;
+  padding: 0 0 2px 4px !important;
+}
+
+.mac-shell .workbench-composer-surface.compact .input-actions,
+.native-app-shell[data-native-form-factor="ipad"] .workbench-composer-surface.compact .input-actions {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+}

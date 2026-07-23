@@ -193,6 +193,7 @@ const {
   workbenchAgentScript,
   workbenchAgentVersionNumber,
   workdirDisplayName,
+  wslDistroFromProfile,
   workspaceDiagnosticSummary,
   workspaceMirrorStorageKey,
   workspaceStoreHasServers
@@ -464,16 +465,38 @@ printf '__AIWB_UPLOAD_END__\\n'
 
   if (isWslProfile(profile)) {
     const encodedScript = toBase64Utf8(bashUploadScript);
+    const wslDistro = wslDistroFromProfile(profile);
     return {
       path: remotePath,
       name: originalName,
       mime,
       size: Number(attachment?.size || 0) || 0,
       command: powershellCommand(`
+$AIWB_DISTRO = ${psQuote(wslDistro)}
+if (-not $AIWB_DISTRO) { throw "请先重新连接并扫描 Windows 机器，确定要使用的 WSL Linux 发行版。" }
 $AIWB_BASE64 = [Console]::In.ReadToEnd()
-$AIWB_SCRIPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encodedScript)}))
-$AIWB_BASE64 | & wsl.exe bash -lc $AIWB_SCRIPT
-exit $LASTEXITCODE
+$AIWB_RUN = New-Object System.Diagnostics.Process
+$AIWB_RUN.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+$AIWB_RUN.StartInfo.FileName = "wsl.exe"
+$AIWB_RUN.StartInfo.Arguments = '-d ' + $AIWB_DISTRO + ' -u root -- bash -lc "echo ${encodedScript} | base64 -d | bash"'
+$AIWB_RUN.StartInfo.UseShellExecute = $false
+$AIWB_RUN.StartInfo.CreateNoWindow = $true
+$AIWB_RUN.StartInfo.RedirectStandardInput = $true
+$AIWB_RUN.StartInfo.RedirectStandardOutput = $true
+$AIWB_RUN.StartInfo.RedirectStandardError = $true
+$AIWB_RUN.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+$AIWB_RUN.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+[void]$AIWB_RUN.Start()
+$AIWB_STDOUT_TASK = $AIWB_RUN.StandardOutput.ReadToEndAsync()
+$AIWB_STDERR_TASK = $AIWB_RUN.StandardError.ReadToEndAsync()
+$AIWB_RUN.StandardInput.Write($AIWB_BASE64)
+$AIWB_RUN.StandardInput.Close()
+$AIWB_RUN.WaitForExit()
+if ($AIWB_STDOUT_TASK.Result) { [Console]::Out.Write($AIWB_STDOUT_TASK.Result) }
+if ($AIWB_RUN.ExitCode -ne 0) {
+  if ($AIWB_STDERR_TASK.Result) { [Console]::Error.Write($AIWB_STDERR_TASK.Result) }
+  exit $AIWB_RUN.ExitCode
+}
 `),
       stdin: base64,
     };
@@ -643,6 +666,111 @@ fi
 rm -- "$AIWB_PATH"
 printf '__AIWB_DELETE_OK__%s\\n' "$AIWB_PATH"
 `);
+}
+
+export function buildRemoteDirectoryListCommand(profile, remotePath = profile?.workdir) {
+  const path = String(remotePath || profile?.workdir || "").trim();
+  if (!path || !remoteFileIsInsideWorkdir(profile, path)) {
+    throw new Error("只能查看当前工作目录内的文件夹。");
+  }
+
+  if (isWindowsProfile(profile)) {
+    return powershellCommand(`
+$AIWB_PATH = ${psQuote(path)}
+if (-not (Test-Path -LiteralPath $AIWB_PATH -PathType Container)) { throw "文件夹不存在：$AIWB_PATH" }
+Write-Output "__AIWB_DIRECTORY_START__"
+Write-Output "__AIWB_DIRECTORY_PATH__$AIWB_PATH"
+$AIWB_ITEMS = @(Get-ChildItem -LiteralPath $AIWB_PATH -Force -ErrorAction Stop | Sort-Object @{Expression={$_.PSIsContainer};Descending=$true}, Name | Select-Object -First 300)
+foreach ($AIWB_ITEM in $AIWB_ITEMS) {
+  $AIWB_KIND = if ($AIWB_ITEM.PSIsContainer) { "directory" } else { "file" }
+  $AIWB_SIZE = if ($AIWB_ITEM.PSIsContainer) { 0 } else { [int64]$AIWB_ITEM.Length }
+  $AIWB_JSON = [ordered]@{
+    kind = $AIWB_KIND
+    name = [string]$AIWB_ITEM.Name
+    path = [string]$AIWB_ITEM.FullName
+    size = $AIWB_SIZE
+    modifiedAt = $AIWB_ITEM.LastWriteTimeUtc.ToString("o")
+  } | ConvertTo-Json -Compress
+  $AIWB_B64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($AIWB_JSON))
+  Write-Output "__AIWB_DIRECTORY_ITEM__$AIWB_B64"
+}
+Write-Output "__AIWB_DIRECTORY_END__"
+`);
+  }
+
+  return remoteBashCommand(profile, `
+AIWB_PATH=${shQuote(path)}
+if [ ! -d "$AIWB_PATH" ]; then
+  printf '文件夹不存在：%s\\n' "$AIWB_PATH" >&2
+  exit 2
+fi
+printf '__AIWB_DIRECTORY_START__\\n'
+printf '__AIWB_DIRECTORY_PATH__%s\\n' "$AIWB_PATH"
+find "$AIWB_PATH" -mindepth 1 -maxdepth 1 -print0 2>/dev/null | while IFS= read -r -d '' AIWB_ITEM; do
+  if [ -d "$AIWB_ITEM" ]; then AIWB_KIND=directory; else AIWB_KIND=file; fi
+  AIWB_NAME=$(basename "$AIWB_ITEM")
+  AIWB_NAME_B64=$(printf '%s' "$AIWB_NAME" | base64 | tr -d '\\n')
+  AIWB_PATH_B64=$(printf '%s' "$AIWB_ITEM" | base64 | tr -d '\\n')
+  printf '__AIWB_DIRECTORY_ITEM__%s\\t%s\\t%s\\n' "$AIWB_KIND" "$AIWB_NAME_B64" "$AIWB_PATH_B64"
+done | sort -t "$(printf '\\t')" -k1,1 -k2,2 | head -n 300
+printf '__AIWB_DIRECTORY_END__\\n'
+`);
+}
+
+function decodeRemoteBase64Utf8(value) {
+  if (!value || typeof window === "undefined" || !window.atob) return "";
+  try {
+    const binary = window.atob(String(value).replace(/\s+/g, ""));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+export function parseRemoteDirectoryPayload(output) {
+  // Windows OpenSSH commonly returns CRLF. Normalize before the line-based
+  // marker parser so the trailing carriage return cannot hide every entry.
+  const text = String(output || "").replace(/\r\n?/g, "\n");
+  if (!text.includes("__AIWB_DIRECTORY_START__")) {
+    throw new Error(trimVisibleText(text) || "没有读取到远程文件夹内容。");
+  }
+  const directoryPath = text.match(/__AIWB_DIRECTORY_PATH__(.*)/)?.[1]?.trim() || "";
+  const entries = [];
+  const windowsItemPattern = /^__AIWB_DIRECTORY_ITEM__([A-Za-z0-9+/=]+)$/gm;
+  let windowsMatch;
+  while ((windowsMatch = windowsItemPattern.exec(text))) {
+    const json = decodeRemoteBase64Utf8(windowsMatch[1]);
+    if (!json) continue;
+    try {
+      const item = JSON.parse(json);
+      if (item?.kind && item?.name && item?.path) {
+        entries.push({
+          kind: item.kind === "directory" ? "directory" : "file",
+          name: String(item.name),
+          path: String(item.path),
+          size: Number(item.size || 0) || 0,
+          modifiedAt: String(item.modifiedAt || ""),
+        });
+      }
+    } catch {
+      // Ignore malformed entries and keep the rest of the directory usable.
+    }
+  }
+  const itemPattern = /^__AIWB_DIRECTORY_ITEM__(directory|file)\t([^\t\r\n]*)\t([^\t\r\n]*)$/gm;
+  let match;
+  while ((match = itemPattern.exec(text))) {
+    const name = decodeRemoteBase64Utf8(match[2]);
+    const path = decodeRemoteBase64Utf8(match[3]);
+    if (!name || !path) continue;
+    entries.push({ kind: match[1], name, path });
+  }
+  entries.sort((left, right) => {
+    if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+    return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+  });
+  return { path: directoryPath, entries };
 }
 
 export function extractRemoteFileReferences(text, profile = defaultProfile) {

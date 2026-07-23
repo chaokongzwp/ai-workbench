@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Workbench - Add Session Layout Proposal</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101116;
+        --panel: #17181d;
+        --group: #1d1e24;
+        --group-2: #22242b;
+        --line: rgba(255, 255, 255, 0.1);
+        --line-strong: rgba(255, 255, 255, 0.16);
+        --text: #f5f6fa;
+        --muted: #aeb3bd;
+        --subtle: #747b88;
+        --blue: #0a84ff;
+        --blue-soft: rgba(10, 132, 255, 0.17);
+        --green: #34c759;
+        --danger: #ff453a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+        background:
+          radial-gradient(circle at 50% -12%, rgba(80, 92, 112, 0.28), transparent 34%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system,
+          BlinkMacSystemFont,
+          "SF Pro Text",
+          "Helvetica Neue",
+          Arial,
+          sans-serif;
+      }
+
+      body {
+        display: grid;
+        place-items: start center;
+        padding: 32px;
+      }
+
+      .proposal {
+        width: min(900px, 100%);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--panel);
+        box-shadow: 0 34px 120px rgba(0, 0, 0, 0.42);
+      }
+
+      .top {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 44px;
+        align-items: center;
+        gap: 14px;
+        padding: 22px 26px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .top-spacer,
+      .close {
+        width: 44px;
+        height: 44px;
+      }
+
+      .close {
+        border: 0;
+        border-radius: 999px;
+        color: rgba(245, 246, 250, 0.82);
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 30px;
+      }
+
+      .title {
+        display: grid;
+        justify-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .title p {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .content {
+        display: grid;
+        gap: 18px;
+        padding: 22px 26px 96px;
+      }
+
+      .section {
+        display: grid;
+        gap: 8px;
+      }
+
+      .section-label {
+        display: grid;
+        gap: 4px;
+        padding: 0 8px;
+      }
+
+      .section-label h2 {
+        font-size: 17px;
+        line-height: 1.22;
+      }
+
+      .section-label p {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .group {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--group);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: minmax(128px, 0.34fr) minmax(0, 1fr);
+        align-items: center;
+        min-height: 58px;
+        gap: 16px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .row:last-child {
+        border-bottom: 0;
+      }
+
+      .row label,
+      .row .label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .field {
+        display: flex;
+        justify-content: flex-end;
+        min-width: 0;
+        color: var(--text);
+        font-size: 14px;
+        text-align: right;
+      }
+
+      .field.placeholder {
+        color: var(--subtle);
+      }
+
+      .workdir-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: var(--group);
+      }
+
+      .method {
+        display: grid;
+        gap: 7px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .method-main {
+        display: grid;
+        grid-template-columns: minmax(104px, 0.34fr) minmax(0, 1fr);
+        align-items: center;
+        min-height: 48px;
+        gap: 14px;
+      }
+
+      .method-title {
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .method-note {
+        grid-column: 2;
+        margin: -5px 0 11px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 36px;
+        min-width: 72px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 12px;
+        color: #8fc7ff;
+        background: var(--blue-soft);
+        font-size: 13px;
+        font-weight: 720;
+      }
+
+      .manual-main {
+        display: grid;
+        grid-template-columns: minmax(104px, 0.34fr) minmax(0, 1fr);
+        align-items: center;
+        min-height: 48px;
+        gap: 12px;
+      }
+
+      .manual-control {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 72px;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .input {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        min-width: 0;
+        height: 36px;
+        padding: 0 12px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: var(--subtle);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+
+      .directories {
+        display: grid;
+      }
+
+      .list-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .list-head strong {
+        font-size: 15px;
+      }
+
+      .list-head span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .search {
+        display: flex;
+        align-items: center;
+        height: 36px;
+        padding: 0 12px;
+        border-radius: 12px;
+        color: var(--subtle);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 14px;
+      }
+
+      .dir-row {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 68px;
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .dir-row:last-child {
+        border-bottom: 0;
+      }
+
+      .check {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--subtle);
+        border-radius: 6px;
+      }
+
+      .check.on {
+        display: grid;
+        place-items: center;
+        border-color: var(--blue);
+        color: #fff;
+        background: var(--blue);
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .dir-copy {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+
+      .dir-copy strong,
+      .dir-copy span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .dir-copy strong {
+        font-size: 15px;
+      }
+
+      .dir-copy span {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+      }
+
+      .pill {
+        padding: 5px 9px;
+        border-radius: 999px;
+        color: #79e7a2;
+        background: rgba(52, 199, 89, 0.14);
+        font-size: 12px;
+        font-weight: 720;
+      }
+
+      .footer {
+        position: sticky;
+        bottom: 0;
+        display: flex;
+        justify-content: flex-end;
+        padding: 14px 26px 18px;
+        border-top: 1px solid var(--line);
+        background: rgba(23, 24, 29, 0.92);
+        backdrop-filter: blur(20px);
+      }
+
+      .primary {
+        min-width: 180px;
+        height: 46px;
+        border-radius: 15px;
+        color: #fff;
+        background: var(--blue);
+      }
+
+      @media (max-width: 620px) {
+        body {
+          padding: 0;
+        }
+
+        .proposal {
+          width: 100%;
+          min-height: 100vh;
+          border: 0;
+          border-radius: 0;
+        }
+
+        .top {
+          padding: 18px 16px 14px;
+        }
+
+        h1 {
+          font-size: 22px;
+        }
+
+        .content {
+          padding: 18px 16px 92px;
+        }
+
+        .row {
+          grid-template-columns: minmax(88px, 0.38fr) minmax(0, 1fr);
+          min-height: 54px;
+          padding: 0 14px;
+        }
+
+        .method-main,
+        .manual-main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .button {
+          justify-self: stretch;
+          width: 100%;
+        }
+
+        .manual-control {
+          grid-template-columns: minmax(0, 1fr) 64px;
+        }
+
+        .list-head {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .dir-row {
+          grid-template-columns: 24px minmax(0, 1fr);
+        }
+
+        .pill {
+          grid-column: 2;
+          justify-self: start;
+        }
+
+        .footer {
+          padding: 12px 16px 20px;
+        }
+
+        .primary {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="proposal">
+      <header class="top">
+        <span class="top-spacer"></span>
+        <div class="title">
+          <h1>添加工作会话</h1>
+          <p>连接机器后选择一个或多个工作目录</p>
+        </div>
+        <button class="close" type="button" aria-label="关闭">×</button>
+      </header>
+
+      <div class="content">
+        <section class="section">
+          <div class="section-label">
+            <h2>连接信息</h2>
+            <p>服务器信息直接填写在当前页面，不再收进二级目录。</p>
+          </div>
+          <div class="group">
+            <div class="row">
+              <span class="label">会话名称</span>
+              <span class="field placeholder">不填则自动命名</span>
+            </div>
+            <div class="row">
+              <span class="label">AI 类型</span>
+              <span class="field">Codex</span>
+            </div>
+            <div class="row">
+              <span class="label">服务器类型</span>
+              <span class="field">Linux</span>
+            </div>
+            <div class="row">
+              <span class="label">服务器地址</span>
+              <span class="field">47.236.117.100</span>
+            </div>
+            <div class="row">
+              <span class="label">端口</span>
+              <span class="field">22</span>
+            </div>
+            <div class="row">
+              <span class="label">用户名</span>
+              <span class="field">root</span>
+            </div>
+            <div class="row">
+              <span class="label">登录密码</span>
+              <span class="field placeholder">填写后连接扫描</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-label">
+            <h2>工作目录</h2>
+            <p>可以扫描已有 AI 会话，也可以手动输入路径。</p>
+          </div>
+
+          <div class="workdir-card">
+            <div class="method">
+              <div class="method-main">
+                <strong class="method-title">自动扫描</strong>
+                <button class="button" type="button">重新扫描</button>
+              </div>
+              <p class="method-note">读取远端 Codex、Claude 的历史和常用目录。</p>
+            </div>
+
+            <div class="method">
+              <div class="manual-main">
+                <strong class="method-title">手动添加</strong>
+                <div class="manual-control">
+                  <div class="input">例如 /opt/project/app</div>
+                  <button class="button" type="button">添加</button>
+                </div>
+              </div>
+              <p class="method-note">知道完整路径时直接输入，添加后会出现在下方列表。</p>
+            </div>
+
+            <div class="directories">
+              <div class="list-head">
+                <div>
+                  <strong>已找到 2 个常用目录</strong>
+                  <span>勾选后点击底部按钮创建会话</span>
+                </div>
+                <div class="search">搜索目录名或路径</div>
+              </div>
+
+              <div class="dir-row">
+                <span class="check on">✓</span>
+                <span class="dir-copy">
+                  <strong>x</strong>
+                  <span>/opt/beex-ai-workspace/x</span>
+                </span>
+                <span class="pill">最近使用</span>
+              </div>
+
+              <div class="dir-row">
+                <span class="check"></span>
+                <span class="dir-copy">
+                  <strong>limpet-workspace</strong>
+                  <span>/opt/limpet-workspace</span>
+                </span>
+                <span class="pill">历史会话</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="footer">
+        <button class="button primary" type="button">添加 1 个会话</button>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileZip, GearSix, SidebarSimple } from "@phosphor-icons/react";
+import { DotsThree, SidebarSimple } from "@phosphor-icons/react";
 import { dataTransferHasFiles } from "../../core/workbenchCore.js";
 
 export function NativeWorkbenchShell({
@@ -58,6 +58,8 @@ export function NativeWorkbenchShell({
   draftProfile,
   filePreview,
   remoteDownloadOpen,
+  remoteDirectoryOpen,
+  remoteDirectory,
   onSelectServer,
   onConfigureServer,
   onAddServer,
@@ -75,6 +77,9 @@ export function NativeWorkbenchShell({
   onDeleteFile,
   onOpenRemoteDownload,
   onCloseRemoteDownload,
+  onOpenRemoteDirectory,
+  onNavigateRemoteDirectory,
+  onCloseRemoteDirectory,
   onInterruptAgent,
   onMarkStuck,
   onRetryMessage,
@@ -101,8 +106,11 @@ export function NativeWorkbenchShell({
   onDeleteProfile,
   onDuplicateEditingServer,
   onOpenTerminal,
+  onLoginRemoteAgent,
   agentManagementTargetId,
   onInstallAgent,
+  onInstallCli,
+  onUninstallAgent,
   onRefreshAgent,
   onOpenAgentSettings,
   onInstallWsl,
@@ -111,6 +119,10 @@ export function NativeWorkbenchShell({
   onExportConfig,
   onExportLogs,
   onImportConfig,
+  onCloudPullConfig,
+  onCloudPushConfig,
+  onCloudClearConfig,
+  onShareSession,
   setDraftProfile,
   setSettingsAgentTab,
   setSettingsSelectedSessions,
@@ -126,6 +138,7 @@ export function NativeWorkbenchShell({
     TaskNotice,
     SettingsPanel,
     FilePreviewPanel,
+    RemoteDirectoryDialog,
     RemoteDownloadDialog,
   } = components;
   const modeText = activeConnectionMode?.label || "直接 SSH";
@@ -133,8 +146,6 @@ export function NativeWorkbenchShell({
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const isIpad = nativeFormFactor === "ipad";
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const [exportingLogs, setExportingLogs] = useState(false);
-  const [exportNotice, setExportNotice] = useState(null);
 
   function handleFileDrop(event) {
     event.preventDefault();
@@ -149,21 +160,6 @@ export function NativeWorkbenchShell({
       return;
     }
     setMobileNavOpen(true);
-  }
-
-  async function handleExportLogs() {
-    if (!onExportLogs || exportingLogs) return;
-    setExportingLogs(true);
-    setExportNotice({ tone: "loading", message: "正在打包诊断日志..." });
-    try {
-      const result = await onExportLogs();
-      setExportNotice({ tone: "done", message: result?.message || "诊断日志已导出。" });
-    } catch (error) {
-      setExportNotice({ tone: "error", message: error?.message || String(error) });
-    } finally {
-      setExportingLogs(false);
-      window.setTimeout(() => setExportNotice(null), 3200);
-    }
   }
 
   function renderNavigationPanel({ closeAfterAction = false } = {}) {
@@ -259,17 +255,21 @@ export function NativeWorkbenchShell({
         <header className="native-chat-nav">
           <button
             type="button"
-            className={`native-nav-button native-session-trigger ${isIpad ? "native-ipad-sidebar-toggle" : ""}`}
+            className={`native-nav-button native-session-trigger ${
+              isIpad ? "native-ipad-sidebar-toggle utility-icon-button" : ""
+            }`}
             onClick={handleSessionTrigger}
             aria-label={isIpad ? (sidebarCollapsed ? "展开侧边栏" : "收起侧边栏") : "打开会话列表"}
           >
-            {isIpad ? <SidebarSimple size={20} weight="bold" aria-hidden="true" /> : "会话"}
+            {isIpad ? <SidebarSimple size={16} weight="bold" aria-hidden="true" /> : "会话"}
           </button>
           <button
             type="button"
             className="native-title-button"
-            onClick={() => setMobileNavOpen(true)}
+            onClick={isIpad ? undefined : () => setMobileNavOpen(true)}
             aria-label={`当前会话：${activeSessionName}`}
+            aria-disabled={isIpad ? "true" : undefined}
+            tabIndex={isIpad ? -1 : undefined}
           >
             <strong>{activeSessionName}</strong>
             <span>{modeText}</span>
@@ -277,25 +277,16 @@ export function NativeWorkbenchShell({
           <div className="native-nav-actions">
             <button
               type="button"
-              className="native-nav-button native-log-button"
-              onClick={handleExportLogs}
-              disabled={!onExportLogs || exportingLogs}
-              aria-label={exportingLogs ? "正在导出诊断日志" : "导出诊断日志"}
-            >
-              {isIpad ? <FileZip size={20} weight="bold" aria-hidden="true" /> : "日志"}
-            </button>
-            <button
-              type="button"
-              className="native-nav-button native-settings-button"
+              className={`native-nav-button native-settings-button ${
+                isIpad ? "native-more-button utility-icon-button" : ""
+              }`}
               onClick={onOpenGlobalSettings}
               aria-label="全局设置"
             >
-              {isIpad ? <GearSix size={20} weight="bold" aria-hidden="true" /> : "设置"}
+              {isIpad ? <DotsThree size={18} weight="bold" aria-hidden="true" /> : "设置"}
             </button>
           </div>
         </header>
-
-        {exportNotice ? <div className={`native-export-notice ${exportNotice.tone || ""}`}>{exportNotice.message}</div> : null}
 
         <div className="native-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
           {showConnectionSummary ? (
@@ -337,16 +328,22 @@ export function NativeWorkbenchShell({
               onRefreshOutput={onRefreshOutput}
               onInterruptAgent={onInterruptAgent}
               onMarkStuck={onMarkStuck}
-              onRetryMessage={onRetryMessage}
-              onShowDetails={onShowDetails}
-              onOpenSettings={onOpenSettingsFromMessage}
-            />
-          ))}
+                onRetryMessage={onRetryMessage}
+                onShowDetails={onShowDetails}
+                onOpenSettings={onOpenSettingsFromMessage}
+                onEditUserMessage={(text) => setComposer(text)}
+              />
+            ))}
         </div>
 
         {showComposer ? (
           <div className="native-composer-dock">
             <Composer
+              compact={isIpad}
+              compactPlaceholder={
+                isProfileReady ? `告诉 ${activeAgent.shortName} 你想做什么` : "选择工作会话后即可开始"
+              }
+              showSetupAction={!isIpad}
               activeAgent={activeAgent}
               composer={composer}
               imageAttachments={imageAttachments}
@@ -372,6 +369,7 @@ export function NativeWorkbenchShell({
               onPasteClipboard={onPasteClipboard}
               onRemoveImageAttachment={onRemoveImageAttachment}
               onOpenDownloadFile={onOpenRemoteDownload}
+              onOpenRemoteDirectory={onOpenRemoteDirectory}
               onSend={onSend}
               onVoice={onVoice}
               onWake={onWake}
@@ -439,8 +437,11 @@ export function NativeWorkbenchShell({
           onDelete={onDeleteProfile}
           onDuplicate={onDuplicateEditingServer}
           onOpenTerminal={onOpenTerminal}
+          onLoginRemoteAgent={onLoginRemoteAgent}
           agentManagementTargetId={agentManagementTargetId}
           onInstallAgent={onInstallAgent}
+          onInstallCli={onInstallCli}
+          onUninstallAgent={onUninstallAgent}
           onRefreshAgent={onRefreshAgent}
           onOpenAgentSettings={onOpenAgentSettings}
           onInstallWsl={onInstallWsl}
@@ -449,6 +450,10 @@ export function NativeWorkbenchShell({
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
           onImportConfig={onImportConfig}
+          onCloudPullConfig={onCloudPullConfig}
+          onCloudPushConfig={onCloudPushConfig}
+          onCloudClearConfig={onCloudClearConfig}
+          onShareSession={onShareSession}
           onTest={onScanSettings}
         />
       ) : null}
@@ -469,7 +474,17 @@ export function NativeWorkbenchShell({
         profile={profile}
         downloadState={fileDownload}
         onDownloadFile={onDownloadFile}
+        onOpenRemoteDirectory={onOpenRemoteDirectory}
         onClose={onCloseRemoteDownload}
+      />
+      <RemoteDirectoryDialog
+        open={remoteDirectoryOpen}
+        profile={profile}
+        directory={remoteDirectory}
+        onOpenDirectory={onNavigateRemoteDirectory}
+        onPreviewFile={onPreviewFile}
+        onDownloadFile={onDownloadFile}
+        onClose={onCloseRemoteDirectory}
       />
     </main>
   );

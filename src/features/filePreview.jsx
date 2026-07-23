@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowClockwise, ArrowLeft, DownloadSimple, Eye, File as FileIcon, FolderSimple } from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -365,6 +366,8 @@ function ambiguousFileChoicesFromError(error, request = {}) {
 }
 
 export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDownloadFile, onDeleteFile, onClose }) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteConfirmationTimerRef = useRef(null);
   const file = preview?.file;
   const dataUrl = useMemo(() => fileDataUrl(file), [file]);
   const textContent = useMemo(() => {
@@ -383,6 +386,32 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
     () => ambiguousFileChoicesFromError(preview?.error, preview?.request),
     [preview?.error, preview?.request],
   );
+
+  useEffect(() => {
+    setConfirmingDelete(false);
+    if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+    deleteConfirmationTimerRef.current = null;
+  }, [path]);
+
+  useEffect(
+    () => () => {
+      if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+    },
+    [],
+  );
+
+  function requestFileDelete() {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+      deleteConfirmationTimerRef.current = window.setTimeout(() => setConfirmingDelete(false), 5000);
+      return;
+    }
+    if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
+    deleteConfirmationTimerRef.current = null;
+    setConfirmingDelete(false);
+    onDeleteFile?.(file);
+  }
 
   return (
     <div className="file-preview-layer" role="dialog" aria-modal="true">
@@ -434,8 +463,13 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
                 <button type="button" className="ghost-button" onClick={() => onDownloadFile?.(file, file)} disabled={downloading}>
                   {downloading ? "下载中" : "下载"}
                 </button>
-                <button type="button" className="ghost-button danger" onClick={() => onDeleteFile?.(file)} disabled={downloading || deleting}>
-                  {deleting ? "删除中" : "删除"}
+                <button
+                  type="button"
+                  className={`ghost-button file-preview-delete-button ${confirmingDelete ? "is-confirming" : ""}`}
+                  onClick={requestFileDelete}
+                  disabled={downloading || deleting}
+                >
+                  {deleting ? "删除中" : confirmingDelete ? "确认删除" : "删除"}
                 </button>
                 <button type="button" className="send-button" onClick={() => window.open(dataUrl, "_blank", "noopener")}>
                   浏览器打开
@@ -451,7 +485,7 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
   );
 }
 
-export function RemoteDownloadDialog({ open, profile, downloadState, onDownloadFile, onClose }) {
+export function RemoteDownloadDialog({ open, profile, downloadState, onDownloadFile, onOpenRemoteDirectory, onClose }) {
   const [remotePath, setRemotePath] = useState("");
   const [submittedPath, setSubmittedPath] = useState("");
   const [localError, setLocalError] = useState("");
@@ -525,6 +559,16 @@ export function RemoteDownloadDialog({ open, profile, downloadState, onDownloadF
         {visibleDownloadState ? <p className={`file-download-status ${downloadState?.state || ""}`}>{visibleDownloadState.message}</p> : null}
 
         <div className="remote-download-actions">
+          <button
+            type="button"
+            className="ghost-button remote-download-browse-button"
+            onClick={() => {
+              onClose?.();
+              onOpenRemoteDirectory?.();
+            }}
+          >
+            浏览远程文件
+          </button>
           <button type="button" className="ghost-button" onClick={onClose}>
             取消
           </button>
@@ -533,6 +577,120 @@ export function RemoteDownloadDialog({ open, profile, downloadState, onDownloadF
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+export function RemoteDirectoryDialog({
+  open,
+  profile,
+  directory,
+  onOpenDirectory,
+  onPreviewFile,
+  onDownloadFile,
+  onClose,
+}) {
+  if (!open) return null;
+
+  const rootPath = String(profile?.workdir || "").trim();
+  const currentPath = String(directory?.path || rootPath).trim();
+  const entries = Array.isArray(directory?.entries) ? directory.entries : [];
+  const loading = directory?.state === "loading";
+  const error = directory?.state === "error" ? String(directory.error || "读取文件夹失败。") : "";
+  const isRoot = isWindowsProfile(profile)
+    ? currentPath.toLocaleLowerCase() === rootPath.toLocaleLowerCase()
+    : currentPath === rootPath;
+  const parentPath = isWindowsProfile(profile) ? dirnameWindows(currentPath) : dirnameRemote(currentPath);
+  const handlePreviewFile = (file) => {
+    onClose?.();
+    onPreviewFile?.(file);
+  };
+
+  return (
+    <div className="remote-directory-layer" role="dialog" aria-modal="true" aria-label="远程文件">
+      <button className="file-preview-backdrop" type="button" aria-label="关闭远程文件" onClick={onClose} />
+      <section className="remote-directory-panel">
+        <header>
+          <div>
+            <strong>远程文件</strong>
+            <span>查看当前会话工作目录中的文件和文件夹</span>
+          </div>
+          <button type="button" className="settings-close-button" onClick={onClose} aria-label="关闭远程文件">
+            ×
+          </button>
+        </header>
+
+        <div className="remote-directory-toolbar">
+          <button type="button" className="ghost-button" onClick={() => onOpenDirectory?.(parentPath)} disabled={isRoot || loading}>
+            <ArrowLeft size={16} weight="bold" aria-hidden="true" />
+            <span>上一级</span>
+          </button>
+          <button type="button" className="ghost-button" onClick={() => onOpenDirectory?.(currentPath)} disabled={loading}>
+            <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
+            <span>刷新</span>
+          </button>
+        </div>
+        <p className="remote-directory-path" title={currentPath}>{currentPath || "未设置工作目录"}</p>
+
+        {loading ? (
+          <div className="file-preview-state">
+            <strong>正在读取文件夹</strong>
+            <span>正在从远程机器获取目录列表。</span>
+          </div>
+        ) : null}
+        {error ? (
+          <div className="file-preview-state error">
+            <strong>无法读取文件夹</strong>
+            <span>{error}</span>
+            <button type="button" className="ghost-button" onClick={() => onOpenDirectory?.(currentPath)}>
+              重试
+            </button>
+          </div>
+        ) : null}
+        {!loading && !error ? (
+          <div className="remote-directory-list">
+            {entries.length ? (
+              entries.map((entry) => {
+                const isDirectory = entry.kind === "directory";
+                const kind = previewKindFromExtension(remoteFileExtension(entry.name));
+                const fileRef = {
+                  path: entry.path,
+                  name: entry.name,
+                  kind,
+                  label: previewLabelFromKind(kind),
+                };
+                return (
+                  <article className={`remote-directory-entry ${isDirectory ? "directory" : "file"}`} key={entry.path}>
+                    <button
+                      type="button"
+                      className="remote-directory-entry-main"
+                      onClick={() => (isDirectory ? onOpenDirectory?.(entry.path) : handlePreviewFile(fileRef))}
+                    >
+                      {isDirectory ? <FolderSimple size={23} weight="fill" aria-hidden="true" /> : <FileIcon size={22} weight="regular" aria-hidden="true" />}
+                      <span>
+                        <strong>{entry.name}</strong>
+                        <small>{isDirectory ? "文件夹" : fileRef.label}</small>
+                      </span>
+                    </button>
+                    {!isDirectory ? (
+                      <div className="remote-directory-entry-actions">
+                        <button type="button" onClick={() => handlePreviewFile(fileRef)} aria-label={`查看 ${entry.name}`} title="查看">
+                          <Eye size={17} weight="regular" aria-hidden="true" />
+                        </button>
+                        <button type="button" onClick={() => onDownloadFile?.(fileRef)} aria-label={`下载 ${entry.name}`} title="下载">
+                          <DownloadSimple size={17} weight="regular" aria-hidden="true" />
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })
+            ) : (
+              <div className="remote-directory-empty">这个文件夹是空的。</div>
+            )}
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }

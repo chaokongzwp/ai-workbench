@@ -6,6 +6,7 @@ import {
   MessageBubble,
   NavigationPanel,
   RawOutput,
+  RemoteDirectoryDialog,
   RemoteDownloadDialog,
   SettingsPanel,
   TaskNotice,
@@ -23,5 +24,6 @@ export const shellComponents = {
   TaskNotice,
   SettingsPanel,
   FilePreviewPanel,
+  RemoteDirectoryDialog,
   RemoteDownloadDialog,
 };

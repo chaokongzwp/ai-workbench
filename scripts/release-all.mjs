@@ -167,6 +167,8 @@ async function archiveIos() {
     "-allowProvisioningUpdates",
     `DEVELOPMENT_TEAM=${teamId}`,
     "CODE_SIGN_STYLE=Automatic",
+    "ENABLE_ON_DEMAND_RESOURCES=NO",
+    "ASSETCATALOG_COMPILER_ENABLE_ON_DEMAND_RESOURCES=NO",
     `MARKETING_VERSION=${marketingVersion}`,
     `CURRENT_PROJECT_VERSION=${iosBuild}`,
     "archive",

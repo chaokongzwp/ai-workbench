@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Workbench - 回复操作图标选择</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+        background: #0e0f12;
+        color: #f2f3f5;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-width: 880px;
+        min-height: 100vh;
+        background: #0e0f12;
+      }
+
+      main {
+        width: min(1080px, calc(100% - 64px));
+        margin: 0 auto;
+        padding: 48px 0 72px;
+      }
+
+      header {
+        margin-bottom: 28px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 26px;
+        font-weight: 680;
+        letter-spacing: 0;
+      }
+
+      header p {
+        margin: 0;
+        color: #8f949e;
+        font-size: 14px;
+      }
+
+      .options {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .option {
+        padding: 18px;
+        border: 1px solid #282b31;
+        border-radius: 8px;
+        background: #15171b;
+      }
+
+      .option.recommended {
+        border-color: #454a54;
+      }
+
+      .option-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 14px;
+      }
+
+      .number {
+        display: inline-grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        color: #d8dbe1;
+        background: #292c33;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .option-title strong {
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      .tag {
+        margin-left: auto;
+        color: #9aa0aa;
+        font-size: 11px;
+      }
+
+      .message-header {
+        display: flex;
+        align-items: center;
+        min-height: 34px;
+        gap: 9px;
+      }
+
+      .agent-mark {
+        display: inline-grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border: 1px solid #353840;
+        border-radius: 7px;
+        color: #60a5fa;
+        background: #191c22;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .message-header strong {
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      .time {
+        color: #7f858f;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
+      }
+
+      .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        color: #8c929d;
+        background: transparent;
+        cursor: pointer;
+        transition: color 150ms ease, background 150ms ease, transform 120ms ease;
+      }
+
+      .icon-button:hover,
+      .icon-button.demo-hover {
+        color: #d7dae0;
+        background: rgba(255, 255, 255, 0.055);
+      }
+
+      .icon-button:active { transform: scale(0.94); }
+      .icon-button.copied { color: #57c985; }
+
+      .copy-text {
+        height: 28px;
+        padding: 0 3px;
+        border: 0;
+        color: #90959f;
+        background: transparent;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .copy-text:hover,
+      .copy-text.copied { color: #d7dae0; }
+
+      .icon-button svg {
+        display: block;
+        width: 16px;
+        height: 16px;
+      }
+
+      .option-note {
+        margin: 13px 0 0 33px;
+        color: #767c87;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .states {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        margin-top: 24px;
+        padding: 18px;
+        border-top: 1px solid #24272d;
+        color: #7f858f;
+        font-size: 12px;
+      }
+
+      .state {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>回复操作图标</h1>
+        <p>均为 App 实际尺寸。点击复制图标可以查看成功状态。</p>
+      </header>
+
+      <section class="options">
+        <article class="option recommended">
+          <div class="option-title"><span class="number">1</span><strong>Apple 双文档</strong><span class="tag">推荐</span></div>
+          <div class="message-header">
+            <span class="agent-mark">&gt;_</span><strong>Codex 回复</strong><span class="time">20:48</span>
+            <span class="actions">
+              <button class="icon-button" aria-label="刷新">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M19 8a7.5 7.5 0 1 0 .3 7.5"/><path d="M19 4v4h-4"/></svg>
+              </button>
+              <button class="icon-button copy-choice" aria-label="复制">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="11" height="13" rx="2.4"/><rect x="4" y="8" width="11" height="12" rx="2.4"/></svg>
+              </button>
+            </span>
+          </div>
+          <p class="option-note">圆角双文档，最接近 macOS 的 doc.on.doc。</p>
+        </article>
+
+        <article class="option">
+          <div class="option-title"><span class="number">2</span><strong>极简双框</strong><span class="tag">更轻</span></div>
+          <div class="message-header">
+            <span class="agent-mark">&gt;_</span><strong>Codex 回复</strong><span class="time">20:48</span>
+            <span class="actions">
+              <button class="icon-button" aria-label="刷新">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
+              </button>
+              <button class="icon-button copy-choice" aria-label="复制">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="7" width="12" height="12" rx="2"/><path d="M8 7V5.8C8 4.8 8.8 4 9.8 4H19v9.2c0 1-.8 1.8-1.8 1.8H17"/></svg>
+              </button>
+            </span>
+          </div>
+          <p class="option-note">线条最细，信息密集时最安静。</p>
+        </article>
+
+        <article class="option">
+          <div class="option-title"><span class="number">3</span><strong>叠放纸张</strong><span class="tag">识别清楚</span></div>
+          <div class="message-header">
+            <span class="agent-mark">&gt;_</span><strong>Codex 回复</strong><span class="time">20:48</span>
+            <span class="actions">
+              <button class="icon-button" aria-label="刷新">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 6.8A8 8 0 1 0 20 12"/><path d="M15.5 6.5h3.5V3"/></svg>
+              </button>
+              <button class="icon-button copy-choice" aria-label="复制">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h8.2A1.8 1.8 0 0 1 19 6.8V16"/><path d="M6.8 8h8.4A1.8 1.8 0 0 1 17 9.8v8.4a1.8 1.8 0 0 1-1.8 1.8H6.8A1.8 1.8 0 0 1 5 18.2V9.8A1.8 1.8 0 0 1 6.8 8Z"/></svg>
+              </button>
+            </span>
+          </div>
+          <p class="option-note">更像两张纸，复制含义最直观。</p>
+        </article>
+
+        <article class="option">
+          <div class="option-title"><span class="number">4</span><strong>圆形轻按钮</strong><span class="tag">更柔和</span></div>
+          <div class="message-header">
+            <span class="agent-mark">&gt;_</span><strong>Codex 回复</strong><span class="time">20:48</span>
+            <span class="actions">
+              <button class="icon-button demo-hover" aria-label="刷新">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7v4h-4"/><path d="M18.2 16.2A7.5 7.5 0 1 1 19 11"/></svg>
+              </button>
+              <button class="icon-button copy-choice demo-hover" aria-label="复制">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="5" width="11" height="13" rx="3"/><rect x="4" y="8" width="11" height="12" rx="3"/></svg>
+              </button>
+            </span>
+          </div>
+          <p class="option-note">演示淡底悬浮态，默认仍然透明。</p>
+        </article>
+
+        <article class="option">
+          <div class="option-title"><span class="number">5</span><strong>剪贴板</strong><span class="tag">传统</span></div>
+          <div class="message-header">
+            <span class="agent-mark">&gt;_</span><strong>Codex 回复</strong><span class="time">20:48</span>
+            <span class="actions">
+              <button class="icon-button" aria-label="刷新">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 11a7.5 7.5 0 1 0 2.1-5.3"/><path d="M4.8 5v6h6"/></svg>
+              </button>
+              <button class="icon-button copy-choice" aria-label="复制">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="12" height="15" rx="2.5"/><path d="M9 5.5V4.8C9 3.8 9.8 3 10.8 3h2.4c1 0 1.8.8 1.8 1.8v.7"/></svg>
+              </button>
+            </span>
+          </div>
+          <p class="option-note">熟悉，但会比双文档稍显工具化。</p>
+        </article>
+
+        <article class="option">
+          <div class="option-title"><span class="number">6</span><strong>无框文字</strong><span class="tag">最明确</span></div>
+          <div class="message-header">
+            <span class="agent-mark">&gt;_</span><strong>Codex 回复</strong><span class="time">20:48</span>
+            <span class="actions">
+              <button class="icon-button" aria-label="刷新">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M19 8a7.5 7.5 0 1 0 .3 7.5"/><path d="M19 4v4h-4"/></svg>
+              </button>
+              <button class="copy-text copy-choice" aria-label="复制">复制</button>
+            </span>
+          </div>
+          <p class="option-note">不用图标，阅读成本最低，但占用更多横向空间。</p>
+        </article>
+      </section>
+
+      <div class="states">
+        <span>状态示例</span>
+        <span class="state"><button class="icon-button" aria-label="默认"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="4" width="11" height="13" rx="2.4"/><rect x="4" y="8" width="11" height="12" rx="2.4"/></svg></button>默认</span>
+        <span class="state"><button class="icon-button demo-hover" aria-label="悬浮"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="4" width="11" height="13" rx="2.4"/><rect x="4" y="8" width="11" height="12" rx="2.4"/></svg></button>悬浮</span>
+        <span class="state"><button class="icon-button copied" aria-label="已复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 12 4 4 8-9"/></svg></button>已复制</span>
+      </div>
+    </main>
+
+    <script>
+      document.querySelectorAll(".copy-choice").forEach((button) => {
+        button.addEventListener("click", () => {
+          const original = button.innerHTML;
+          button.classList.add("copied");
+          button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 12 4 4 8-9"/></svg>';
+          window.setTimeout(() => {
+            button.classList.remove("copied");
+            button.innerHTML = original;
+          }, 1400);
+        });
+      });
+    </script>
+  </body>
+</html>

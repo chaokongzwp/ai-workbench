@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, ArrowSquareOut, CopySimple, DotsThree, GearSix, Plus, SidebarSimple } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowSquareOut, CopySimple, DotsThree, Plus, SidebarSimple } from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -289,10 +289,13 @@ const {
 
 export function TopBar({
   sessionName: currentSessionName,
+  sessionSubtitle = "",
   showSessionName,
   connection,
   activeTaskRunning,
+  busy,
   onOpenNav,
+  onRefreshOutput,
   onOpenSettings,
 }) {
   const status = activeTaskRunning
@@ -305,18 +308,37 @@ export function TopBar({
 
   return (
     <header className="topbar">
-      <button className="nav-trigger" type="button" aria-label="打开菜单" onClick={onOpenNav}>
+      <button className="nav-trigger utility-icon-button" type="button" aria-label="打开菜单" onClick={onOpenNav}>
         <span>≡</span>
       </button>
       <div className={`topbar-session ${showSessionName ? "visible" : ""}`} aria-hidden={!showSessionName}>
         <strong>{currentSessionName}</strong>
+        {sessionSubtitle ? <span className="topbar-session-detail">{sessionSubtitle}</span> : null}
         <span className="topbar-session-status">
           <StatusDot status={status.tone} />
           {status.label}
         </span>
       </div>
       <div className="topbar-actions">
-        <button type="button" className="topbar-logo-button" aria-label="服务器设置" title="服务器设置" onClick={onOpenSettings}>
+        {onRefreshOutput ? (
+          <button
+            type="button"
+            className="topbar-refresh-button"
+            aria-label="同步当前会话状态"
+            title="同步当前会话状态"
+            onClick={() => onRefreshOutput()}
+            disabled={busy}
+          >
+            <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="topbar-logo-button utility-icon-button"
+          aria-label="服务器设置"
+          title="服务器设置"
+          onClick={onOpenSettings}
+        >
           <DotsThree className="topbar-more" size={18} weight="bold" aria-hidden="true" />
         </button>
       </div>
@@ -338,12 +360,13 @@ export function NavigationPanel({
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
-  onOpenSettings,
   onTestConnection,
   onDisconnectServer,
-  onRefreshOutput,
   busy,
   variant = "default",
+  emptyState = null,
+  hideAddWhenEmpty = false,
+  hideDuplicate = false,
 }) {
   const macVariant = variant === "mac";
   const ipadVariant = variant === "ipad";
@@ -361,9 +384,9 @@ export function NavigationPanel({
     <>
       <div className="sidebar-toolbar">
         <SectionHeader title={macVariant || ipadVariant ? "工作会话" : "服务器"} />
-        {onAddServer ? (
+        {onAddServer && !(hideAddWhenEmpty && servers.length === 0) ? (
           <button
-            className="sidebar-add"
+            className="sidebar-add utility-icon-button"
             type="button"
             aria-label="添加服务器"
             title="添加服务器"
@@ -373,9 +396,9 @@ export function NavigationPanel({
             {macVariant || ipadVariant ? <Plus size={16} weight="bold" aria-hidden="true" /> : "+"}
           </button>
         ) : null}
-        {onDuplicateServer && !macVariant ? (
+        {onDuplicateServer && !macVariant && !hideDuplicate ? (
           <button
-            className="sidebar-duplicate"
+            className="sidebar-duplicate utility-icon-button"
             type="button"
             aria-label="复制当前服务器"
             title="复制当前服务器"
@@ -387,7 +410,7 @@ export function NavigationPanel({
         ) : null}
         {onToggleCollapse ? (
           <button
-            className="sidebar-collapse"
+            className="sidebar-collapse utility-icon-button"
             type="button"
             aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
             title={collapsed ? "展开侧边栏" : "收起侧边栏"}
@@ -403,7 +426,8 @@ export function NavigationPanel({
           </button>
         ) : null}
       </div>
-      <div className="server-list">
+      <div className={`server-list ${servers.length === 0 && emptyState ? "has-empty-state" : ""}`}>
+        {servers.length === 0 ? emptyState : null}
         {servers.map((server, index) => {
           const isActive = server.id === activeServerId;
           const serverConnection = isActive ? connection : server.connection;
@@ -657,29 +681,7 @@ export function NavigationPanel({
         })}
       </div>
 
-      <div className="sidebar-actions">
-        {macVariant ? <span className="sidebar-version-label">{appDisplayVersion}</span> : null}
-        <button className="sidebar-action" type="button" onClick={onRefreshOutput} disabled={busy}>
-          {macVariant ? (
-            <>
-              <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
-              <span>刷新状态</span>
-            </>
-          ) : (
-            "刷新"
-          )}
-        </button>
-        <button className="sidebar-action" type="button" onClick={onOpenSettings}>
-          {macVariant ? (
-            <>
-              <GearSix size={17} weight="bold" aria-hidden="true" />
-              <span>全局设置</span>
-            </>
-          ) : (
-            "设置"
-          )}
-        </button>
-      </div>
+      {macVariant ? <div className="sidebar-version-label">{appDisplayVersion}</div> : null}
     </>
   );
 }

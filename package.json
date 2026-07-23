@@ -1,6 +1,6 @@
 {
   "name": "ecs-ai-workbench",
-  "version": "1.0.0",
+  "version": "1.0.42",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",
@@ -10,11 +10,13 @@
     "build": "vite build",
     "build:web": "vite build",
     "build:mac": "npm run build:web",
+    "build:win": "npm run build:web",
     "build:ios": "npm run build:web && cap sync ios && npm run ios:register-plugin",
     "build:android": "npm run build:web && cap sync android",
     "preview": "vite preview --host 127.0.0.1",
     "mac:dev": "node scripts/mac-dev.mjs",
     "mac:preview": "npm run build:mac && AIWB_ELECTRON_MODE=preview electron .",
+    "mac:preview:detached": "npm run build:mac && node scripts/start-mac-preview-detached.mjs",
     "mac:pack": "AIWB_APP_BUILD=${AIWB_APP_BUILD:-$(TZ=Asia/Shanghai date +%Y%m%d%H%M)}; export AIWB_APP_BUILD; npm run build:mac && CSC_IDENTITY_AUTO_DISCOVERY=false ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron-builder/cli.js --mac --config.buildVersion=$AIWB_APP_BUILD && npm run mac:install",
     "mac:mas": "npm run build:mac && node scripts/build-mas.mjs mas",
     "mac:mas:dev": "npm run build:mac && node scripts/build-mas.mjs mas-dev",
@@ -24,6 +26,8 @@
     "mac:mas:upload:xcode": "node scripts/upload-mas-xcode.mjs",
     "mac:mas:publish": "npm run mac:mas && npm run mac:mas:upload:xcode",
     "mac:install": "node scripts/install-mac-app.mjs",
+    "win:pack": "npm run build:win && electron-builder --win --x64 --config.directories.output=build/win",
+    "win:pack:portable": "npm run build:win && electron-builder --win portable --x64 --config.directories.output=build/win",
     "release:check": "node scripts/release-all.mjs --check --target all",
     "release": "node scripts/release-all.mjs --target all --upload",
     "release:ios": "node scripts/release-all.mjs --target ios --upload",
@@ -41,7 +45,9 @@
     "assistant:prompt": "node scripts/aiwb-assistant-cli.mjs prompt --format json",
     "assistant:intent": "node scripts/aiwb-assistant-cli.mjs intent",
     "agent:export:github": "node scripts/export-agent-github.mjs",
-    "agent:publish:oss": "node scripts/publish-agent-oss.mjs"
+    "agent:publish": "node scripts/release-agent.mjs",
+    "agent:publish:oss": "node scripts/publish-agent-oss.mjs",
+    "test:lifecycle": "node scripts/test-message-lifecycle.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

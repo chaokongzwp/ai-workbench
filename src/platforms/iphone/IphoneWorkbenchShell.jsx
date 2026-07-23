@@ -1,16 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowUp,
+  ArrowClockwise,
   DotsThree,
+  DownloadSimple,
   File as FileIcon,
   FileZip,
+  FolderOpen,
   GearSix,
   List,
+  Lightning,
   MagnifyingGlass,
+  Microphone,
   Paperclip,
   Plus,
+  Stop,
   X,
 } from "@phosphor-icons/react";
-import { AgentLogo, ArrowUpIcon, BoltIcon, DownloadIcon, ImagePlusIcon, MicIcon, StatusDot, StopIcon } from "../../features/primitives.jsx";
+import { AgentLogo, StatusDot } from "../../features/primitives.jsx";
 import {
   agentById,
   connectionIsLive,
@@ -25,6 +32,114 @@ import {
   shortError,
   workdirDisplayName,
 } from "../../core/workbenchCore.js";
+
+function numericCssPixel(value) {
+  const parsed = Number.parseFloat(String(value || ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function useAutoGrowingTextarea(value, fallbackMaxHeight = 136) {
+  const ref = useRef(null);
+  const resize = useCallback(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    const style = window.getComputedStyle(textarea);
+    const minHeight = numericCssPixel(style.minHeight);
+    const maxHeight = numericCssPixel(style.maxHeight) || fallbackMaxHeight;
+    textarea.style.height = "auto";
+    const nextHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight + 1 ? "auto" : "hidden";
+  }, [fallbackMaxHeight]);
+
+  useLayoutEffect(() => {
+    resize();
+  }, [resize, value]);
+
+  useEffect(() => {
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
+    };
+  }, [resize]);
+
+  return ref;
+}
+
+function applyIphoneKeyboardViewport() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const root = document.documentElement;
+  const viewport = window.visualViewport;
+  const layoutHeight = Math.round(window.innerHeight || viewport?.height || 0);
+  const visualHeight = Math.round(viewport?.height || layoutHeight);
+  const width = Math.round(window.innerWidth || viewport?.width || 0);
+  const keyboardFocused = root.classList.contains("aiwb-keyboard-focus");
+  const height = keyboardFocused ? Math.min(layoutHeight, visualHeight) : layoutHeight;
+
+  if (height > 0) root.style.setProperty("--app-viewport-height", `${height}px`);
+  if (width > 0) root.style.setProperty("--app-viewport-width", `${width}px`);
+  if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+}
+
+function useIphoneKeyboardFocusGuard(textareaRef) {
+  const timersRef = useRef([]);
+
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach((timer) => window.clearTimeout(timer));
+    timersRef.current = [];
+  }, []);
+
+  const keepComposerVisible = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || document.activeElement !== textarea) return;
+    applyIphoneKeyboardViewport();
+
+    const composerWrap = textarea.closest(".iphone-composer-wrap");
+    const chatScroll = textarea.closest(".iphone-chat")?.querySelector(".iphone-chat-scroll");
+    const viewport = window.visualViewport;
+    const viewportBottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight || 0);
+
+    if (chatScroll) {
+      chatScroll.scrollTop = chatScroll.scrollHeight;
+    }
+
+    if (composerWrap) {
+      const rect = composerWrap.getBoundingClientRect();
+      const overlap = rect.bottom - viewportBottom + 8;
+      if (overlap > 0 && chatScroll) chatScroll.scrollTop += overlap;
+      composerWrap.scrollIntoView({ block: "end", inline: "nearest", behavior: "auto" });
+    }
+
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+  }, [textareaRef]);
+
+  const scheduleFocusRepair = useCallback(() => {
+    clearTimers();
+    keepComposerVisible();
+    timersRef.current = [60, 140, 260, 420, 620].map((delay) =>
+      window.setTimeout(keepComposerVisible, delay),
+    );
+  }, [clearTimers, keepComposerVisible]);
+
+  useEffect(() => {
+    const handleViewportChange = () => {
+      if (document.activeElement === textareaRef.current) scheduleFocusRepair();
+    };
+    window.visualViewport?.addEventListener("resize", handleViewportChange);
+    window.visualViewport?.addEventListener("scroll", handleViewportChange);
+    window.addEventListener("orientationchange", handleViewportChange);
+    return () => {
+      clearTimers();
+      window.visualViewport?.removeEventListener("resize", handleViewportChange);
+      window.visualViewport?.removeEventListener("scroll", handleViewportChange);
+      window.removeEventListener("orientationchange", handleViewportChange);
+    };
+  }, [clearTimers, scheduleFocusRepair, textareaRef]);
+
+  return scheduleFocusRepair;
+}
 
 function IphoneComposer({
   activeAgent,
@@ -50,17 +165,20 @@ function IphoneComposer({
   onPasteClipboard,
   onRemoveImageAttachment,
   onOpenDownloadFile,
+  onOpenRemoteDirectory,
   onSend,
   onVoice,
   onWake,
-  onReleaseRunningTask,
   onCancelRunningTask,
 }) {
   const fileInputRef = useRef(null);
-  const disabled = busy || pendingAction || !profileReady;
+  const textareaRef = useAutoGrowingTextarea(composer);
+  const repairKeyboardFocus = useIphoneKeyboardFocusGuard(textareaRef);
+  const taskLocked = Boolean(runningTask);
+  const disabled = busy || pendingAction || !profileReady || taskLocked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
-  const stopMode = Boolean(runningTask);
-  const stopDisabled = operationBusy || !profileReady;
+  const stopMode = taskLocked;
+  const stopDisabled = !profileReady;
   const sendDisabled = disabled || !hasPayload;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const wakeActive =
@@ -70,10 +188,18 @@ function IphoneComposer({
     wakeState === "speaking" ||
     wakeState === "stopping";
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
-  const voiceDisabled = !profileReady || (operationBusy && !voiceActive);
-  const wakeDisabled = !profileReady || (operationBusy && !wakeActive);
+  const voiceDisabled = !profileReady || taskLocked || (operationBusy && !voiceActive);
+  const wakeDisabled = !profileReady || taskLocked || (operationBusy && !wakeActive);
+  const runningRemoteStatus = String(runningTask?.remoteTaskStatus || "").trim();
+  const runningTaskText = runningTask
+    ? runningRemoteStatus === "sync-lost"
+      ? "正在恢复同步。"
+      : !String(runningTask?.remoteTaskId || "").trim()
+        ? "正在确认状态。"
+        : "执行中，完成后可继续输入。"
+    : "";
   const statusText = runningTask
-    ? "任务正在同步等待最终结果。"
+    ? runningTaskText
     : !voiceInputEnabled
       ? ""
       : wakeState === "listening"
@@ -98,6 +224,7 @@ function IphoneComposer({
     if (typeof document === "undefined") return;
     document.documentElement.classList.toggle("aiwb-keyboard-focus", focused);
     document.body?.classList.toggle("aiwb-keyboard-focus", focused);
+    applyIphoneKeyboardViewport();
   }
 
   function handleVoiceClick() {
@@ -151,11 +278,18 @@ function IphoneComposer({
         ) : null}
 
         <textarea
+          ref={textareaRef}
           value={composer}
-          disabled={!profileReady}
-          onFocus={() => setKeyboardFocus(true)}
+          disabled={disabled}
+          onFocus={() => {
+            setKeyboardFocus(true);
+            repairKeyboardFocus();
+          }}
           onBlur={() => {
-            window.setTimeout(() => setKeyboardFocus(false), 120);
+            window.setTimeout(() => {
+              setKeyboardFocus(false);
+              applyIphoneKeyboardViewport();
+            }, 120);
           }}
           onChange={(event) => setComposer(event.target.value)}
           onPaste={(event) => {
@@ -182,6 +316,8 @@ function IphoneComposer({
           placeholder={
             pendingAction
               ? "先完成上面的操作"
+              : runningTask
+                ? "当前任务完成后继续输入"
               : voiceState === "listening"
                 ? "正在听..."
                 : profileReady
@@ -193,28 +329,33 @@ function IphoneComposer({
 
         <div className="iphone-composer-bottom">
           <p className="iphone-composer-status">{statusText}</p>
-          {runningTask ? (
-            <button
-              type="button"
-              className="iphone-release-button"
-              onClick={onReleaseRunningTask}
-              disabled={operationBusy}
-            >
-              释放输入
-            </button>
-          ) : null}
           <div className="iphone-composer-actions">
             {profileReady ? (
               <>
-                <button type="button" className="iphone-icon-button" onClick={onOpenDownloadFile} aria-label="下载远程文件">
-                  <DownloadIcon />
+                <button
+                  type="button"
+                  className="iphone-icon-button download-button"
+                  onClick={onOpenDownloadFile}
+                  aria-label="下载远程文件"
+                >
+                  <DownloadSimple size={17} weight="regular" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
-                  className="iphone-icon-button"
+                  className="iphone-icon-button remote-directory-button"
+                  onClick={onOpenRemoteDirectory}
+                  aria-label="查看远程文件夹"
+                  title="查看远程文件夹"
+                >
+                  <FolderOpen size={17} weight="regular" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="iphone-icon-button attachment-button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
                   aria-label="添加文件"
+                  title="添加文件"
                 >
                   <Paperclip size={17} weight="regular" aria-hidden="true" />
                 </button>
@@ -227,7 +368,7 @@ function IphoneComposer({
                     !voiceInputEnabled ? "语音未开启，打开语音设置" : voiceActive ? "停止语音输入" : "语音输入"
                   }
                 >
-                  <MicIcon />
+                  <Microphone size={17} weight="regular" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -238,7 +379,7 @@ function IphoneComposer({
                     !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
                   }
                 >
-                  <BoltIcon />
+                  <Lightning size={17} weight={wakeActive ? "fill" : "regular"} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -250,7 +391,7 @@ function IphoneComposer({
                   disabled={stopMode ? stopDisabled : sendDisabled}
                   aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
                 >
-                  {stopMode ? <StopIcon /> : <ArrowUpIcon />}
+                  {stopMode ? <Stop size={17} weight="fill" aria-hidden="true" /> : <ArrowUp size={17} weight="bold" aria-hidden="true" />}
                 </button>
               </>
             ) : (
@@ -326,6 +467,8 @@ export function IphoneWorkbenchShell({
   draftProfile,
   filePreview,
   remoteDownloadOpen,
+  remoteDirectoryOpen,
+  remoteDirectory,
   onSelectServer,
   onConfigureServer,
   onAddServer,
@@ -343,6 +486,9 @@ export function IphoneWorkbenchShell({
   onDeleteFile,
   onOpenRemoteDownload,
   onCloseRemoteDownload,
+  onOpenRemoteDirectory,
+  onNavigateRemoteDirectory,
+  onCloseRemoteDirectory,
   onInterruptAgent,
   onMarkStuck,
   onRetryMessage,
@@ -369,8 +515,11 @@ export function IphoneWorkbenchShell({
   onDeleteProfile,
   onDuplicateEditingServer,
   onOpenTerminal,
+  onLoginRemoteAgent,
   agentManagementTargetId,
   onInstallAgent,
+  onInstallCli,
+  onUninstallAgent,
   onRefreshAgent,
   onOpenAgentSettings,
   onInstallWsl,
@@ -379,6 +528,10 @@ export function IphoneWorkbenchShell({
   onExportConfig,
   onExportLogs,
   onImportConfig,
+  onCloudPullConfig,
+  onCloudPushConfig,
+  onCloudClearConfig,
+  onShareSession,
   setDraftProfile,
   setSettingsAgentTab,
   setSettingsSelectedSessions,
@@ -392,6 +545,7 @@ export function IphoneWorkbenchShell({
     TaskNotice,
     SettingsPanel,
     FilePreviewPanel,
+    RemoteDirectoryDialog,
     RemoteDownloadDialog,
   } = components;
   const sessionStateText = activeTaskRunning
@@ -497,6 +651,18 @@ export function IphoneWorkbenchShell({
               role="menuitem"
               onClick={() => {
                 closeMoreMenu();
+                onRefreshOutput?.();
+              }}
+              disabled={!onRefreshOutput || busy}
+            >
+              <ArrowClockwise size={18} weight="bold" aria-hidden="true" />
+              <span>同步状态</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMoreMenu();
                 onOpenGlobalSettings?.();
               }}
             >
@@ -590,6 +756,7 @@ export function IphoneWorkbenchShell({
               onRetryMessage={onRetryMessage}
               onShowDetails={onShowDetails}
               onOpenSettings={onOpenSettingsFromMessage}
+              onEditUserMessage={(text) => setComposer(text)}
             />
           ))}
         </div>
@@ -621,6 +788,7 @@ export function IphoneWorkbenchShell({
             onPasteClipboard={onPasteClipboard}
             onRemoveImageAttachment={onRemoveImageAttachment}
             onOpenDownloadFile={onOpenRemoteDownload}
+            onOpenRemoteDirectory={onOpenRemoteDirectory}
             onSend={onSend}
             onVoice={onVoice}
             onWake={onWake}
@@ -770,8 +938,11 @@ export function IphoneWorkbenchShell({
           onDelete={onDeleteProfile}
           onDuplicate={onDuplicateEditingServer}
           onOpenTerminal={onOpenTerminal}
+          onLoginRemoteAgent={onLoginRemoteAgent}
           agentManagementTargetId={agentManagementTargetId}
           onInstallAgent={onInstallAgent}
+          onInstallCli={onInstallCli}
+          onUninstallAgent={onUninstallAgent}
           onRefreshAgent={onRefreshAgent}
           onOpenAgentSettings={onOpenAgentSettings}
           onInstallWsl={onInstallWsl}
@@ -780,6 +951,10 @@ export function IphoneWorkbenchShell({
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
           onImportConfig={onImportConfig}
+          onCloudPullConfig={onCloudPullConfig}
+          onCloudPushConfig={onCloudPushConfig}
+          onCloudClearConfig={onCloudClearConfig}
+          onShareSession={onShareSession}
           onTest={onScanSettings}
         />
       ) : null}
@@ -800,7 +975,17 @@ export function IphoneWorkbenchShell({
         profile={profile}
         downloadState={fileDownload}
         onDownloadFile={onDownloadFile}
+        onOpenRemoteDirectory={onOpenRemoteDirectory}
         onClose={onCloseRemoteDownload}
+      />
+      <RemoteDirectoryDialog
+        open={remoteDirectoryOpen}
+        profile={profile}
+        directory={remoteDirectory}
+        onOpenDirectory={onNavigateRemoteDirectory}
+        onPreviewFile={onPreviewFile}
+        onDownloadFile={onDownloadFile}
+        onClose={onCloseRemoteDirectory}
       />
     </main>
   );

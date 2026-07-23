@@ -14,7 +14,9 @@ import {
   Microphone,
   Palette,
   Robot,
+  ShareNetwork,
   Terminal,
+  TextT,
   Trash,
   UploadSimple,
   WarningCircle,
@@ -51,7 +53,6 @@ const {
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildHealthCommand,
-  buildInstallWorkbenchAgentCommand,
   buildInterruptCommand,
   buildKillCommand,
   buildMainAIRouteRequest,
@@ -72,6 +73,7 @@ const {
   builtInAliyunVoiceConfig,
   chineseNumber,
   classifyAgentFailure,
+  cloudSyncDefaultEndpoint,
   claudeSetupAutomationSnippet,
   cleanAgentFailureDetail,
   cleanAgentOutput,
@@ -151,6 +153,7 @@ const {
   legacyDefaultWakeWordPhrases,
   legacyDefaultWorkdirs,
   loadBrowserDiagnosticLogs,
+  loadCloudSyncSettings,
   loadDirectoryPrefs,
   loadLocalMessageHistory,
   loadManualWorkdirHistory,
@@ -175,11 +178,16 @@ const {
   mergeLocalMessageHistory,
   mergeManualWorkdirHistory,
   messagesForStorage,
+  messageFontFamilyOptions,
+  messageFontSizeOptions,
+  messageFontWeightOptions,
+  messageLineHeightOptions,
   migrationFileKind,
   migrationFileName,
   migrationFileVersion,
   normalizeAppearanceMode,
   normalizeAgentModel,
+  normalizeCloudSyncAccount,
   normalizeDirectoryPrefs,
   normalizeDiscovery,
   normalizeMainAIRoute,
@@ -232,6 +240,7 @@ const {
   sanitizeId,
   sanitizeUploadName,
   saveDirectoryPrefs,
+  saveCloudSyncSettings,
   saveLocalMessageHistory,
   saveManualWorkdirHistory,
   saveWorkspaceMirror,
@@ -457,6 +466,60 @@ function SettingsButtonRow({ children }) {
   return <div className="settings-button-row">{children}</div>;
 }
 
+function WslAdvancedSection({
+  busy,
+  wslReady,
+  wslNeedsRestart,
+  wslStatusDetail,
+  wslStatusLabel,
+  onScan,
+  onInstallWsl,
+}) {
+  return (
+    <details className="settings-collapsible-section wsl-advanced-settings">
+      <summary>
+        <span className="settings-collapsible-summary-icon" aria-hidden="true">
+          <Terminal size={18} weight="bold" />
+        </span>
+        <span className="settings-collapsible-summary-copy">
+          <strong>高级 Windows 环境</strong>
+          <small>仅在需要把工具放进 WSL Linux 时使用</small>
+        </span>
+        <CaretRight className="settings-collapsible-chevron" size={17} weight="bold" aria-hidden="true" />
+      </summary>
+      <div className="settings-section-group">
+        <SettingsStatusRow
+          icon={Terminal}
+          title="WSL Linux"
+          detail={wslStatusDetail}
+          value={wslStatusLabel}
+          tone={wslReady ? "success" : wslNeedsRestart ? "warning" : "neutral"}
+        />
+        <SettingsButtonRow>
+          <button type="button" className="settings-inline-button" onClick={onScan} disabled={busy || !onScan}>
+            <ArrowClockwise size={17} weight="bold" />
+            检测 WSL
+          </button>
+          {!wslReady ? (
+            <button
+              type="button"
+              className="settings-inline-button"
+              onClick={onInstallWsl}
+              disabled={busy || !onInstallWsl}
+            >
+              <Wrench size={17} weight="bold" />
+              {wslNeedsRestart ? "完成安装" : "安装 WSL"}
+            </button>
+          ) : null}
+        </SettingsButtonRow>
+      </div>
+      <p className="settings-section-footer">
+        默认不需要 WSL。只有 Windows PowerShell 无法满足 Codex、Claude 或 Agent 运行要求时，再进入这里处理。
+      </p>
+    </details>
+  );
+}
+
 const fallbackAppVersion =
   typeof __AIWB_APP_VERSION__ === "string" && __AIWB_APP_VERSION__ ? __AIWB_APP_VERSION__ : "1.0.0";
 const fallbackAppBuild = typeof __AIWB_APP_BUILD__ === "string" ? __AIWB_APP_BUILD__ : "";
@@ -503,7 +566,10 @@ export function SettingsPanel({
   onDelete,
   onDuplicate,
   onOpenTerminal,
+  onLoginRemoteAgent,
   onInstallAgent,
+  onInstallCli,
+  onUninstallAgent,
   onRefreshAgent,
   onInstallWsl,
   onInstallGit,
@@ -511,11 +577,27 @@ export function SettingsPanel({
   onExportConfig,
   onExportLogs,
   onImportConfig,
+  onCloudPullConfig,
+  onCloudPushConfig,
+  onCloudClearConfig,
+  onShareSession,
   onTest,
 }) {
-  const [connectionFormExpanded, setConnectionFormExpanded] = useState(false);
   const [migrationBusy, setMigrationBusy] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState(null);
+  const [cloudSyncBusy, setCloudSyncBusy] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState(null);
+  const [cloudSyncForm, setCloudSyncForm] = useState(() => ({
+    ...loadCloudSyncSettings(),
+    password: "",
+  }));
+  const [shareForm, setShareForm] = useState(() => ({
+    ...loadCloudSyncSettings(),
+    password: "",
+    recipientAccount: "",
+  }));
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareStatus, setShareStatus] = useState(null);
   const [gitRepoUrl, setGitRepoUrl] = useState("");
   const [gitTargetDir, setGitTargetDir] = useState(() => String(draftProfile.workdir || ""));
   const [gitBranch, setGitBranch] = useState("");
@@ -566,12 +648,19 @@ export function SettingsPanel({
     setDraftProfile((current) => ({ ...current, [field]: value }));
   }
 
+  function updateSessionCreationAgent(value) {
+    const nextAgentId = value === "claude" ? "claude" : "codex";
+    if (settingsAgentTab !== nextAgentId) {
+      setSettingsSelectedSessions([]);
+    }
+    setSettingsAgentTab(nextAgentId);
+    updateField("agentId", nextAgentId);
+  }
+
   const missingPassword = !String(draftProfile.password || "").trim();
   const addingSessions = mode === "add";
   const editingSession = mode === "edit";
   const globalSettings = mode === "global";
-  const addScanDone = addingSessions && settingsDiscovery?.state === "done";
-  const compactConnection = addScanDone && !connectionFormExpanded;
   const draftConnectionKey = profileConnectionKey(draftProfile);
   const sameMachineDiagnostics = (servers || [])
     .filter((server) => profileConnectionKey(server.profile) === draftConnectionKey)
@@ -587,13 +676,21 @@ export function SettingsPanel({
   };
   const agentHealth =
     mergedHealth.agent ||
-    (isWindowsProfile(draftProfile) ? "unsupported" : "missing");
+    "missing";
   const agentVersion = mergedHealth.agent_version || "";
   const latestAgentVersion = latestWorkbenchAgentVersion || "";
   const installedAgentVersionNumber = workbenchAgentVersionNumber(agentVersion);
   const latestAgentVersionNumber = workbenchAgentVersionNumber(latestAgentVersion);
   const agentAvailable = agentHealth === "available";
-  const agentUnsupported = agentHealth === "unsupported" || isWindowsProfile(draftProfile);
+  // Windows has a native Agent runtime. Older health snapshots used the
+  // legacy "unsupported" marker even though the install path is valid, so
+  // keep the setup controls available for Windows until a real probe says it
+  // is missing or ready.
+  const agentUnsupported = agentHealth === "unsupported" && !isWindowsProfile(draftProfile);
+  // Uninstall is intentionally idempotent. A stale or missing health probe
+  // must not make the destructive action impossible to reach; the remote
+  // command reports whether there was anything to remove.
+  const canUninstallAgent = Boolean(editingServer?.id && onUninstallAgent);
   const agentNeedsUpdate =
     agentAvailable &&
     latestAgentVersionNumber > 0 &&
@@ -603,9 +700,35 @@ export function SettingsPanel({
     ? mergedHealth.agent_task_list
     : [];
   const currentMachineHostHealth = formatHostPerformanceSummary(mergedHealth, true);
+  const cliMarkerAvailable = (value) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized === "1" || (normalized && !["0", "false", "missing", "unsupported"].includes(normalized));
+  };
+  const cliTools = [
+    {
+      id: "codex",
+      name: "Codex",
+      available: cliMarkerAvailable(mergedHealth.agent_codex_available) || cliMarkerAvailable(mergedHealth.codex),
+      path: String(mergedHealth.agent_codex_path || mergedHealth.agent_codex_executable || mergedHealth.codex || "").trim(),
+      status: String(mergedHealth.agent_codex_cli_status || "").trim(),
+    },
+    {
+      id: "claude",
+      name: "Claude",
+      available: cliMarkerAvailable(mergedHealth.agent_claude_available) || cliMarkerAvailable(mergedHealth.claude),
+      path: String(mergedHealth.agent_claude_path || mergedHealth.agent_claude_executable || mergedHealth.claude || "").trim(),
+      status: String(mergedHealth.agent_claude_cli_status || "").trim(),
+    },
+  ];
   const gitPath = String(mergedHealth.git || "").trim();
   const gitVersion = String(mergedHealth.git_version || "").trim();
   const gitAvailable = Boolean(gitPath);
+  const currentServerPlatform = normalizeServerPlatform(draftProfile.platform);
+  const standardServerPlatforms = serverPlatforms.filter((option) => option.id !== "wsl");
+  const serverPlatformOptions =
+    currentServerPlatform === "wsl"
+      ? [{ id: "wsl", label: "Windows + WSL（高级）" }, ...standardServerPlatforms]
+      : standardServerPlatforms;
   const wslStatus = String(mergedHealth.wsl_status || "unknown").trim();
   const wslDistro = String(mergedHealth.wsl_default_distro || mergedHealth.wsl_distros || "Ubuntu").trim();
   const wslReady = wslStatus === "ready";
@@ -633,16 +756,22 @@ export function SettingsPanel({
 
   function handleAgentModeChange(value) {
     if (!value) {
+      if (isWindowsProfile(draftProfile)) {
+        setAgentSelectionNotice("Windows 会话默认使用 Agent；只有 Agent 不可用时才会自动回退 SSH。");
+        updateField("useWorkbenchAgent", true);
+        return;
+      }
       setAgentSelectionNotice("");
       updateField("useWorkbenchAgent", false);
       return;
     }
     if (agentUnsupported) {
-      setAgentSelectionNotice("当前服务器类型暂不支持 Agent，只能使用 SSH 直连。");
+      setAgentSelectionNotice("当前连接环境暂不支持 Agent，只能使用 SSH 直连。");
       return;
     }
     if (!agentAvailable) {
-      setAgentSelectionNotice("当前会话连接的这台机器还没有检测到 Agent。可以在本页安装或重新检测。");
+      setAgentSelectionNotice("已设为优先使用 Agent。当前机器还没检测到 Agent 时，本次会自动回退 SSH；安装或重新检测成功后，新任务会走 Agent。");
+      updateField("useWorkbenchAgent", true);
       return;
     }
     setAgentSelectionNotice("");
@@ -659,6 +788,19 @@ export function SettingsPanel({
     if (!editingServer?.id || !onInstallAgent || busy || agentUnsupported) return;
     setAgentSelectionNotice("");
     await onInstallAgent(editingServer.id);
+  }
+
+  async function handleInstallCli(cliId) {
+    if (!editingServer?.id || !onInstallCli || busy) return;
+    await onInstallCli(editingServer.id, cliId);
+  }
+
+  async function handleUninstallSessionAgent() {
+    if (!editingServer?.id || !onUninstallAgent || busy) return;
+    const confirmed = window.confirm("卸载这台机器上的 AI Workbench Agent？\n\n这会停止 Agent 后台任务并删除 Agent 文件，但不会删除工作目录、Codex 或 Claude。之后会使用 SSH 直连。 ");
+    if (!confirmed) return;
+    setAgentSelectionNotice("");
+    await onUninstallAgent(editingServer.id);
   }
 
   async function handleExportConfig() {
@@ -733,6 +875,13 @@ export function SettingsPanel({
     setGitTargetDir(String(draftProfile.workdir || ""));
     setGitStatus(null);
     setAgentSelectionNotice("");
+    setShareForm((current) => ({
+      ...current,
+      ...loadCloudSyncSettings(),
+      recipientAccount: "",
+      password: "",
+    }));
+    setShareStatus(null);
   }, [editingSession, editingServer?.id, draftProfile.workdir]);
 
   useEffect(() => {
@@ -767,7 +916,7 @@ export function SettingsPanel({
     resetHorizontalPosition();
     const frameId = window.requestAnimationFrame(resetHorizontalPosition);
     return () => window.cancelAnimationFrame(frameId);
-  }, [mode, settingsPage, connectionFormExpanded, settingsDiscovery?.state]);
+  }, [mode, settingsPage, settingsDiscovery?.state]);
 
   const pageTitles = {
     root: addingSessions ? "添加工作会话" : editingSession ? "会话设置" : "全局设置",
@@ -776,8 +925,11 @@ export function SettingsPanel({
     "session-development": "开发环境",
     "session-execution": "执行方式",
     "session-actions": "会话操作",
+    "session-share": "分享会话",
     "global-appearance": "外观",
+    "global-typography": "字体与消息",
     "global-voice": "语音与播放",
+    "global-cloud-sync": "云端配置",
     "global-migration": "配置迁移",
     "global-main-ai": "主 AI",
   };
@@ -795,12 +947,137 @@ export function SettingsPanel({
     appearanceModeOptions.find((option) => option.id === normalizeAppearanceMode(draftProfile.appearanceMode))?.label || "跟随系统";
   const currentAgent = agentById(draftProfile.agentId || defaultProfile.agentId);
   const currentModel = agentModelLabel(draftProfile.agentId || defaultProfile.agentId, draftProfile.aiModel || "") || "默认模型";
+  const selectedSessionCount = Array.isArray(settingsSelectedSessions) ? settingsSelectedSessions.length : 0;
   const settingsPageNeedsSave = [
     "session-general",
     "global-appearance",
+    "global-typography",
     "global-voice",
     "global-main-ai",
   ].includes(settingsPage);
+
+  function updateCloudSyncForm(field, value) {
+    setCloudSyncForm((current) => {
+      const next = { ...current, [field]: field === "account" ? normalizeCloudSyncAccount(value) : value };
+      if (field !== "password") saveCloudSyncSettings(next);
+      return next;
+    });
+  }
+
+  async function handleCloudPullConfig() {
+    if (!onCloudPullConfig || cloudSyncBusy) return;
+    setCloudSyncBusy(true);
+    setCloudSyncStatus({ tone: "loading", message: "正在登录并下载云端配置..." });
+    try {
+      const result = await onCloudPullConfig({
+        endpoint: cloudSyncForm.endpoint || cloudSyncDefaultEndpoint,
+        account: cloudSyncForm.account,
+        password: cloudSyncForm.password,
+      });
+      const nextSettings = {
+        endpoint: cloudSyncForm.endpoint || cloudSyncDefaultEndpoint,
+        account: cloudSyncForm.account,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      saveCloudSyncSettings(nextSettings);
+      setCloudSyncForm((current) => ({ ...current, ...nextSettings }));
+      setCloudSyncStatus({ tone: "done", message: result?.message || "云端配置已下载到本机。" });
+    } catch (error) {
+      setCloudSyncStatus({ tone: "error", message: shortError(error) });
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }
+
+  async function handleCloudPushConfig() {
+    if (!onCloudPushConfig || cloudSyncBusy) return;
+    setCloudSyncBusy(true);
+    setCloudSyncStatus({ tone: "loading", message: "正在加密并上传配置到云端..." });
+    try {
+      const result = await onCloudPushConfig({
+        endpoint: cloudSyncForm.endpoint || cloudSyncDefaultEndpoint,
+        account: cloudSyncForm.account,
+        password: cloudSyncForm.password,
+      });
+      const nextSettings = {
+        endpoint: cloudSyncForm.endpoint || cloudSyncDefaultEndpoint,
+        account: cloudSyncForm.account,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      saveCloudSyncSettings(nextSettings);
+      setCloudSyncForm((current) => ({ ...current, ...nextSettings }));
+      setCloudSyncStatus({ tone: "done", message: result?.message || "配置已上传到云端。" });
+    } catch (error) {
+      setCloudSyncStatus({ tone: "error", message: shortError(error) });
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }
+
+  async function handleCloudClearConfig() {
+    if (!onCloudClearConfig || cloudSyncBusy) return;
+    const confirmed = window.confirm("确定清空这个账号的云端配置吗？本机会话不会删除，但其他设备将无法继续下载旧配置。");
+    if (!confirmed) return;
+    setCloudSyncBusy(true);
+    setCloudSyncStatus({ tone: "loading", message: "正在登录并清空云端配置..." });
+    try {
+      const result = await onCloudClearConfig({
+        endpoint: cloudSyncForm.endpoint || cloudSyncDefaultEndpoint,
+        account: cloudSyncForm.account,
+        password: cloudSyncForm.password,
+      });
+      const nextSettings = {
+        endpoint: cloudSyncForm.endpoint || cloudSyncDefaultEndpoint,
+        account: cloudSyncForm.account,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      saveCloudSyncSettings(nextSettings);
+      setCloudSyncForm((current) => ({ ...current, ...nextSettings }));
+      setCloudSyncStatus({ tone: "done", message: result?.message || "云端配置已清空。" });
+    } catch (error) {
+      setCloudSyncStatus({ tone: "error", message: shortError(error) });
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }
+
+  async function handleShareSession() {
+    if (!onShareSession || shareBusy) return;
+    const recipientAccount = normalizeCloudSyncAccount(shareForm.recipientAccount);
+    if (!shareForm.account) {
+      setShareStatus({ tone: "error", message: "请填写你的同步账号。" });
+      return;
+    }
+    if (!recipientAccount) {
+      setShareStatus({ tone: "error", message: "请填写接收方账号。" });
+      return;
+    }
+    if (!shareForm.password) {
+      setShareStatus({ tone: "error", message: "请填写你的同步密码。" });
+      return;
+    }
+    setShareBusy(true);
+    setShareStatus({ tone: "loading", message: "正在创建共享会话..." });
+    try {
+      const result = await onShareSession({
+        serverId: editingServer?.id,
+        endpoint: shareForm.endpoint || cloudSyncDefaultEndpoint,
+        account: shareForm.account,
+        password: shareForm.password,
+        recipientAccount,
+      });
+      saveCloudSyncSettings({
+        endpoint: shareForm.endpoint || cloudSyncDefaultEndpoint,
+        account: shareForm.account,
+      });
+      setShareStatus({ tone: "done", message: result?.message || "会话已分享。" });
+      setShareForm((current) => ({ ...current, recipientAccount: "", password: "" }));
+    } catch (error) {
+      setShareStatus({ tone: "error", message: shortError(error) });
+    } finally {
+      setShareBusy(false);
+    }
+  }
 
   return (
     <div className="settings-layer" role="dialog" aria-modal="true">
@@ -845,7 +1122,7 @@ export function SettingsPanel({
                 icon={HardDrives}
                 title="连接配置"
                 detail={`${currentAgent.shortName}，${currentModel} · ${draftProfile.username || "用户"}@${draftProfile.host || "未配置"}`}
-                value={draftProfile.useWorkbenchAgent === true ? "Agent" : "SSH"}
+                value={draftProfile.useWorkbenchAgent === true || isWindowsProfile(draftProfile) ? "Agent" : "SSH"}
                 onClick={() => setSettingsPage("session-general")}
               />
               <SettingsMenuRow
@@ -863,38 +1140,13 @@ export function SettingsPanel({
                 detail="复制会话、打开终端或删除"
                 onClick={() => setSettingsPage("session-actions")}
               />
+              <SettingsMenuRow
+                icon={ShareNetwork}
+                title="分享会话"
+                detail="把当前会话分享给指定账号"
+                onClick={() => setSettingsPage("session-share")}
+              />
             </SettingsSection>
-            {isWindowsProfile(draftProfile) ? (
-              <SettingsSection
-                title="WSL Linux 环境"
-                footer="WSL 安装在 Windows 宿主机上。就绪后，SSH 仍连接 Windows，但 Codex、Claude 和 Agent 会在 WSL 内运行。"
-              >
-                <SettingsStatusRow
-                  icon={Terminal}
-                  title="Windows + WSL"
-                  detail={wslStatusDetail}
-                  value={wslStatusLabel}
-                  tone={wslReady ? "success" : wslNeedsRestart ? "warning" : "neutral"}
-                />
-                <SettingsButtonRow>
-                  <button type="button" className="settings-inline-button" onClick={onScan} disabled={busy || !onScan}>
-                    <ArrowClockwise size={17} weight="bold" />
-                    检测 WSL
-                  </button>
-                  {!wslReady ? (
-                    <button
-                      type="button"
-                      className="settings-inline-button primary"
-                      onClick={onInstallWsl}
-                      disabled={busy || !onInstallWsl}
-                    >
-                      <Wrench size={17} weight="bold" />
-                      {wslNeedsRestart ? "完成安装" : "安装 WSL"}
-                    </button>
-                  ) : null}
-                </SettingsButtonRow>
-              </SettingsSection>
-            ) : null}
           </div>
         ) : null}
 
@@ -907,6 +1159,13 @@ export function SettingsPanel({
                 detail="界面显示与系统主题"
                 value={appearanceLabel}
                 onClick={() => setSettingsPage("global-appearance")}
+              />
+              <SettingsMenuRow
+                icon={TextT}
+                title="字体与消息"
+                detail="消息字体、字号和阅读间距"
+                value={`${draftProfile.messageFontSize || defaultProfile.messageFontSize}px`}
+                onClick={() => setSettingsPage("global-typography")}
               />
               <SettingsMenuRow
                 icon={Microphone}
@@ -925,12 +1184,29 @@ export function SettingsPanel({
             </SettingsSection>
             <SettingsSection title="数据">
               <SettingsMenuRow
+                icon={HardDrives}
+                title="云端配置"
+                detail="上传配置到云端，另一台设备输入账号密码即可下载"
+                value={cloudSyncForm.account ? "已配置" : ""}
+                onClick={() => setSettingsPage("global-cloud-sync")}
+              />
+              <SettingsMenuRow
                 icon={FolderSimple}
                 title="配置迁移"
-                detail="导入、导出配置与诊断日志"
+                detail="导入或导出会话配置"
                 onClick={() => setSettingsPage("global-migration")}
               />
+              <SettingsActionRow
+                icon={FileZip}
+                title="导出诊断日志"
+                detail="打包连接、Agent 和运行日志，保存后可以直接发送"
+                onClick={handleExportLogs}
+                disabled={busy || migrationBusy || !onExportLogs}
+              />
             </SettingsSection>
+            {migrationStatus ? (
+              <p className={`settings-page-status ${migrationStatus.tone || ""}`}>{migrationStatus.message}</p>
+            ) : null}
             <SettingsSection title="关于">
               <SettingsStatusRow
                 icon={Info}
@@ -943,37 +1219,19 @@ export function SettingsPanel({
           </div>
         ) : null}
 
-        {(addingSessions || (editingSession && ["session-general", "session-connection"].includes(settingsPage))) && missingPassword ? (
-          <p className="settings-note">
-            {editingSession
-              ? "没有找到这台机器的已保存密码，修改连接信息前需要补一次。"
-              : "第一次使用填写登录密码即可，测试通过后就能开始对话。"}
-          </p>
-        ) : null}
-
-        {compactConnection ? (
-          <div className="connection-summary-card">
-            <div>
-              <strong>{draftProfile.name || draftProfile.host || "服务器"}</strong>
-              <span>
-                {draftProfile.username}@{draftProfile.host} · {serverPlatformLabel(draftProfile)}
-              </span>
-            </div>
-            <button type="button" className="ghost-button" onClick={() => setConnectionFormExpanded(true)}>
-              修改
-            </button>
-          </div>
+        {editingSession && ["session-general", "session-connection"].includes(settingsPage) && missingPassword ? (
+          <p className="settings-note">没有找到这台机器的已保存密码，修改连接信息前需要补一次。</p>
         ) : null}
 
         {editingSession && settingsPage === "session-general" ? (
           <div className="settings-page-content">
             <SettingsSection title="会话与模型" footer="名称用于会话列表和语音切换，工作目录决定 AI 可以访问的工程范围。">
               <ConfigField label="名称" value={draftProfile.name} onChange={(value) => updateField("name", value)} />
-              <ConfigSelect
-                label="AI 类型"
-                value={draftProfile.agentId || defaultProfile.agentId}
-                options={agents.map((agent) => ({ id: agent.id, label: agent.shortName }))}
-                onChange={(value) => updateField("agentId", value)}
+              <SettingsStatusRow
+                icon={Robot}
+                title="AI 类型"
+                detail="创建会话后不可修改；要换 AI 类型，请重新创建一个新会话。"
+                value={currentAgent.shortName}
               />
               <AgentModelField
                 agentId={draftProfile.agentId || defaultProfile.agentId}
@@ -986,7 +1244,7 @@ export function SettingsPanel({
               <ConfigSelect
                 label="服务器类型"
                 value={normalizeServerPlatform(draftProfile.platform)}
-                options={serverPlatforms}
+                options={serverPlatformOptions}
                 onChange={(value) => updateField("platform", value)}
               />
               <ConfigField label="服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
@@ -1011,14 +1269,41 @@ export function SettingsPanel({
               />
             </SettingsSection>
             <SettingsSection
+              title="命令行工具"
+              footer="Codex 和 Claude CLI 与 Agent 相互独立。安装或升级其中一个，不会安装、升级或卸载另一个。"
+              className="cli-management-panel"
+            >
+              {cliTools.map((tool) => (
+                <SettingsStatusRow
+                  key={tool.id}
+                  icon={Terminal}
+                  title={`${tool.name} CLI`}
+                  detail={tool.path ? `路径：${tool.path}` : `${tool.name} 尚未检测到，可单独安装`}
+                  value={tool.available ? "可用" : tool.status === "installing" ? "安装中" : "未安装"}
+                  tone={tool.available ? "success" : tool.status === "failed" ? "warning" : "neutral"}
+                  actions={
+                    <button
+                      type="button"
+                      className="settings-inline-button primary"
+                      onClick={() => handleInstallCli(tool.id)}
+                      disabled={busy || !editingServer?.id || !onInstallCli}
+                    >
+                      <Wrench size={17} weight="bold" />
+                      {tool.available ? "重新安装" : "安装"}
+                    </button>
+                  }
+                />
+              ))}
+            </SettingsSection>
+            <SettingsSection
               title="执行方式"
-              footer="Agent 安装在当前会话连接的这台机器上。同一台机器的多个会话会共享它；未安装或不支持时，会使用 SSH 直连。"
+              footer="Agent 安装在当前会话连接的这台机器上。同一台机器的多个会话会共享它；未安装或异常时，会自动使用 SSH 直连。"
               className="agent-mode-panel"
             >
               <ConfigToggle
                 label="使用 Agent"
-                checked={agentAvailable && draftProfile.useWorkbenchAgent === true}
-                disabled={agentUnsupported || busy}
+                checked={draftProfile.useWorkbenchAgent === true || isWindowsProfile(draftProfile)}
+                disabled={agentUnsupported || busy || isWindowsProfile(draftProfile)}
                 onChange={handleAgentModeChange}
               />
               <SettingsStatusRow
@@ -1028,7 +1313,7 @@ export function SettingsPanel({
                   agentAvailable
                     ? `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 已安装 v${agentVersion || "未知"}${agentNeedsUpdate ? "，建议升级" : "，运行正常"}${currentMachineHostHealth !== "未检测" ? ` · ${currentMachineHostHealth}` : ""}`
                     : agentUnsupported
-                      ? "当前服务器类型暂不支持，将使用 SSH 直连"
+                      ? "当前连接环境暂不支持，将使用 SSH 直连"
                       : `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 未检测到；SSH 可用，但无法可靠恢复长任务`
                 }
                 value={agentAvailable ? (agentNeedsUpdate ? "可升级" : "可用") : agentUnsupported ? "不支持" : "未安装"}
@@ -1053,6 +1338,15 @@ export function SettingsPanel({
                   <Wrench size={17} weight="bold" />
                   {agentNeedsUpdate ? "升级 Agent" : agentAvailable ? "重新安装" : "安装 Agent"}
                 </button>
+                <button
+                  type="button"
+                  className="settings-inline-button danger"
+                  onClick={handleUninstallSessionAgent}
+                  disabled={busy || !canUninstallAgent || !editingServer?.id || !onUninstallAgent}
+                >
+                  <Trash size={17} weight="bold" />
+                  卸载 Agent
+                </button>
               </SettingsButtonRow>
               {agentAvailable ? <AgentTaskList tasks={currentMachineTasks} /> : null}
               {agentSelectionNotice ? (
@@ -1070,17 +1364,31 @@ export function SettingsPanel({
           </div>
         ) : null}
 
-        {(addingSessions || (editingSession && settingsPage === "session-connection")) && !compactConnection ? (
+        {addingSessions || (editingSession && settingsPage === "session-connection") ? (
           <div className={editingSession ? "settings-page-content" : "settings-add-connection"}>
             <SettingsSection
               title={editingSession ? "服务器" : "连接信息"}
+              className={addingSessions ? "connection-settings-section" : ""}
               footer={editingSession ? "密码保存在当前设备，用于建立 SSH 连接。" : "连接成功后会自动扫描 Codex 和 Claude 的工作目录。"}
             >
-              <ConfigField label="名称" value={draftProfile.name} onChange={(value) => updateField("name", value)} />
+              <ConfigField
+                label="名称"
+                value={draftProfile.name}
+                placeholder={addingSessions ? "可不填，创建后自动命名" : ""}
+                onChange={(value) => updateField("name", value)}
+              />
+              {addingSessions ? (
+                <ConfigSelect
+                  label="AI 类型"
+                  value={settingsAgentTab || draftProfile.agentId || defaultProfile.agentId}
+                  options={agents.map((agent) => ({ id: agent.id, label: agent.shortName }))}
+                  onChange={updateSessionCreationAgent}
+                />
+              ) : null}
               <ConfigSelect
                 label="服务器类型"
                 value={normalizeServerPlatform(draftProfile.platform)}
-                options={serverPlatforms}
+                options={serverPlatformOptions}
                 onChange={(value) => updateField("platform", value)}
               />
               <ConfigField label="服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
@@ -1105,36 +1413,16 @@ export function SettingsPanel({
                 onChange={(value) => updateField("password", value)}
               />
             </SettingsSection>
-            {isWindowsProfile(draftProfile) ? (
-              <SettingsSection
-                title="WSL Linux 环境"
-                footer="先通过 Windows SSH 完成检测。WSL 就绪后会自动切换并扫描 Linux 内的 Codex、Claude 和工作目录。"
-              >
-                <SettingsStatusRow
-                  icon={Terminal}
-                  title="Windows + WSL"
-                  detail={wslStatusDetail}
-                  value={wslStatusLabel}
-                  tone={wslReady ? "success" : wslNeedsRestart ? "warning" : "neutral"}
-                />
-                <SettingsButtonRow>
-                  <button type="button" className="settings-inline-button" onClick={onScan} disabled={busy || !onScan}>
-                    <ArrowClockwise size={17} weight="bold" />
-                    连接检测
-                  </button>
-                  {!wslReady ? (
-                    <button
-                      type="button"
-                      className="settings-inline-button primary"
-                      onClick={onInstallWsl}
-                      disabled={busy || !onInstallWsl}
-                    >
-                      <Wrench size={17} weight="bold" />
-                      {wslNeedsRestart ? "完成安装" : "安装 WSL"}
-                    </button>
-                  ) : null}
-                </SettingsButtonRow>
-              </SettingsSection>
+            {isWindowsProfile(draftProfile) || isWslProfile(draftProfile) ? (
+              <WslAdvancedSection
+                busy={busy}
+                wslReady={wslReady}
+                wslNeedsRestart={wslNeedsRestart}
+                wslStatusDetail={wslStatusDetail}
+                wslStatusLabel={wslStatusLabel}
+                onScan={onScan}
+                onInstallWsl={onInstallWsl}
+              />
             ) : null}
           </div>
         ) : null}
@@ -1191,15 +1479,84 @@ export function SettingsPanel({
             platform={normalizeServerPlatform(draftProfile.platform)}
             selectedKeys={settingsSelectedSessions}
             busy={busy}
-            onAgentChange={setSettingsAgentTab}
             onToggle={(key) => {
               setSettingsSelectedSessions((items) =>
                 items.includes(key) ? items.filter((item) => item !== key) : [...items, key],
               );
             }}
             onScan={onScan}
-            onAddSelected={onAddSelected}
           />
+        ) : null}
+
+        {globalSettings && settingsPage === "global-cloud-sync" ? (
+          <div className="settings-page-content cloud-sync-page">
+            <SettingsSection
+              title="云端同步凭据"
+              footer="同步账号用来定位你的配置；同步密码用于登录和端侧加密，不会保存在本机。"
+            >
+              <ConfigField
+                label="同步账号"
+                value={cloudSyncForm.account}
+                autoComplete="username"
+                placeholder="邮箱或唯一昵称"
+                onChange={(value) => updateCloudSyncForm("account", value)}
+              />
+              <ConfigField
+                label="同步密码"
+                type="password"
+                value={cloudSyncForm.password}
+                autoComplete="current-password"
+                placeholder="填写你的同步密码"
+                onChange={(value) => updateCloudSyncForm("password", value)}
+              />
+            </SettingsSection>
+            <SettingsSection title="同步规则">
+              <SettingsStatusRow
+                icon={Info}
+                title="识别同一个会话"
+                detail="按 IP/域名、登录账号、会话路径判断。本机已经存在的会话会跳过，不会重复添加。"
+                value="不覆盖"
+                tone="neutral"
+              />
+              <SettingsStatusRow
+                icon={Info}
+                title="最近同步"
+                detail={cloudSyncForm.lastSyncedAt ? new Date(cloudSyncForm.lastSyncedAt).toLocaleString() : "还没有同步过"}
+                value={cloudSyncForm.account ? "就绪" : "未登录"}
+                tone={cloudSyncForm.account ? "success" : "neutral"}
+              />
+            </SettingsSection>
+            <SettingsSection
+              title="操作"
+              footer="上传和下载都不会重复添加同一个会话。云端保存的是加密后的配置，不包含聊天记录。"
+            >
+              <SettingsActionRow
+                icon={DownloadSimple}
+                title="下载云端配置"
+                detail="另一台设备输入同一个账号密码，就能把配置下载到本机"
+                onClick={handleCloudPullConfig}
+                disabled={busy || cloudSyncBusy || !onCloudPullConfig}
+              />
+              <SettingsActionRow
+                icon={UploadSimple}
+                title="上传配置到云端"
+                detail="把当前设备的会话配置加密后保存到云端"
+                onClick={handleCloudPushConfig}
+                disabled={busy || cloudSyncBusy || !onCloudPushConfig}
+              />
+              <SettingsActionRow
+                icon={Trash}
+                title="清空云端配置"
+                detail="只删除云端保存的配置，本机已有会话不会受影响"
+                destructive
+                onClick={handleCloudClearConfig}
+                disabled={busy || cloudSyncBusy || !onCloudClearConfig}
+              />
+            </SettingsSection>
+            {cloudSyncStatus ? (
+              <p className={`settings-page-status ${cloudSyncStatus.tone || ""}`}>{cloudSyncStatus.message}</p>
+            ) : null}
+          </div>
         ) : null}
 
         {globalSettings && settingsPage === "global-migration" ? (
@@ -1230,15 +1587,6 @@ export function SettingsPanel({
                 onChange={handleImportConfigFile}
               />
             </SettingsSection>
-            <SettingsSection title="诊断">
-              <SettingsActionRow
-                icon={FileZip}
-                title="导出诊断日志"
-                detail="打包连接、Agent 和运行日志，用于排查问题"
-                onClick={handleExportLogs}
-                disabled={busy || migrationBusy}
-              />
-            </SettingsSection>
             {migrationStatus ? (
               <p className={`settings-page-status ${migrationStatus.tone || ""}`}>{migrationStatus.message}</p>
             ) : null}
@@ -1255,6 +1603,54 @@ export function SettingsPanel({
                 onChange={(value) => updateField("appearanceMode", value)}
               />
             </SettingsSection>
+          </div>
+        ) : null}
+
+        {globalSettings && settingsPage === "global-typography" ? (
+          <div className="settings-page-content">
+            <SettingsSection title="消息文字" footer="发送消息和 AI 回复使用同一套正文设置。代码、表格和技术状态会保留专用的等宽字体。">
+              <ConfigSelect
+                label="字体"
+                value={draftProfile.messageFontFamily || defaultProfile.messageFontFamily}
+                options={messageFontFamilyOptions}
+                onChange={(value) => updateField("messageFontFamily", value)}
+              />
+              <ConfigSelect
+                label="字号"
+                value={String(draftProfile.messageFontSize || defaultProfile.messageFontSize)}
+                options={messageFontSizeOptions}
+                onChange={(value) => updateField("messageFontSize", value)}
+              />
+              <ConfigSelect
+                label="字重"
+                value={String(draftProfile.messageFontWeight || defaultProfile.messageFontWeight)}
+                options={messageFontWeightOptions}
+                onChange={(value) => updateField("messageFontWeight", value)}
+              />
+              <ConfigSelect
+                label="行距"
+                value={String(draftProfile.messageLineHeight || defaultProfile.messageLineHeight)}
+                options={messageLineHeightOptions}
+                onChange={(value) => updateField("messageLineHeight", value)}
+              />
+            </SettingsSection>
+            <section
+              className="settings-font-preview"
+              style={{
+                fontFamily:
+                  draftProfile.messageFontFamily === "rounded"
+                    ? 'ui-rounded, "SF Pro Rounded", -apple-system, sans-serif'
+                    : draftProfile.messageFontFamily === "serif"
+                      ? '"Songti SC", "STSong", serif'
+                      : '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif',
+                fontSize: `${draftProfile.messageFontSize || defaultProfile.messageFontSize}px`,
+                fontWeight: Number(draftProfile.messageFontWeight || defaultProfile.messageFontWeight),
+                lineHeight: draftProfile.messageLineHeight || defaultProfile.messageLineHeight,
+              }}
+            >
+              <strong>预览</strong>
+              <p>这是一条消息预览。发送内容和 AI 回复会保持一致的阅读风格。</p>
+            </section>
           </div>
         ) : null}
 
@@ -1340,6 +1736,20 @@ export function SettingsPanel({
                 disabled={busy || !onDuplicate}
               />
               <SettingsActionRow
+                icon={Robot}
+                title="登录 Codex"
+                detail="在远程机器打开 Codex 登录授权流程"
+                onClick={() => onLoginRemoteAgent?.("codex")}
+                disabled={busy || !onLoginRemoteAgent}
+              />
+              <SettingsActionRow
+                icon={Terminal}
+                title="登录 Claude"
+                detail="在远程机器打开 Claude Code 登录/授权向导"
+                onClick={() => onLoginRemoteAgent?.("claude")}
+                disabled={busy || !onLoginRemoteAgent}
+              />
+              <SettingsActionRow
                 icon={Terminal}
                 title="打开 SSH 终端"
                 detail="处理登录、授权或命令行交互"
@@ -1362,21 +1772,71 @@ export function SettingsPanel({
             </SettingsSection>
           </div>
         ) : null}
+
+        {editingSession && settingsPage === "session-share" ? (
+          <div className="settings-page-content">
+            <SettingsSection
+              title="分享给指定账号"
+              footer="会分享会话 ID、机器地址、工作目录、AI 类型和 SSH 登录密码，受信任账号导入后可以直接连接。不分享 API Key 和聊天记录。"
+            >
+              <ConfigField
+                label="接收方账号"
+                value={shareForm.recipientAccount}
+                autoComplete="off"
+                placeholder="对方的同步账号"
+                onChange={(value) => setShareForm((current) => ({ ...current, recipientAccount: normalizeCloudSyncAccount(value) }))}
+              />
+              <ConfigField
+                label="你的同步账号"
+                value={shareForm.account}
+                autoComplete="username"
+                placeholder="你的云端账号"
+                onChange={(value) => {
+                  const account = normalizeCloudSyncAccount(value);
+                  setShareForm((current) => ({ ...current, account }));
+                  saveCloudSyncSettings({ endpoint: shareForm.endpoint, account });
+                }}
+              />
+              <ConfigField
+                label="同步密码"
+                type="password"
+                value={shareForm.password}
+                autoComplete="current-password"
+                placeholder="用于验证你的账号"
+                onChange={(value) => setShareForm((current) => ({ ...current, password: value }))}
+              />
+            </SettingsSection>
+            <SettingsSection title="操作">
+              <SettingsActionRow
+                icon={ShareNetwork}
+                title="发送共享邀请"
+                detail="对方下次点击“下载云端配置”时会看到这个会话"
+                onClick={handleShareSession}
+                disabled={busy || shareBusy || !onShareSession}
+              />
+            </SettingsSection>
+            {shareStatus ? <p className={`settings-page-status ${shareStatus.tone || ""}`}>{shareStatus.message}</p> : null}
+          </div>
+        ) : null}
         </div>
 
-        {(addingSessions || settingsPageNeedsSave) ? (
-        <div className="settings-actions">
-          {!addingSessions ? (
-            <button type="button" className="send-button" onClick={() => onSave?.()} disabled={busy}>
-              保存更改
-            </button>
-          ) : null}
-          {addingSessions ? (
-            <button type="button" className="send-button" onClick={() => onTest?.()} disabled={busy}>
-              扫描
-            </button>
-          ) : null}
-        </div>
+        {addingSessions || settingsPageNeedsSave ? (
+          <div className="settings-actions">
+            {addingSessions ? (
+              <button
+                type="button"
+                className="send-button session-add-button"
+                onClick={() => onAddSelected?.()}
+                disabled={busy || !selectedSessionCount}
+              >
+                添加 {selectedSessionCount} 个会话
+              </button>
+            ) : (
+              <button type="button" className="send-button" onClick={() => onSave?.()} disabled={busy}>
+                保存更改
+              </button>
+            )}
+          </div>
         ) : null}
       </section>
     </div>
@@ -1390,10 +1850,8 @@ export function SessionImportPanel({
   platform = "linux",
   selectedKeys,
   busy,
-  onAgentChange,
   onToggle,
   onScan,
-  onAddSelected,
 }) {
   const [showAllDirectories, setShowAllDirectories] = useState(false);
   const [showHiddenDirectories, setShowHiddenDirectories] = useState(false);
@@ -1415,7 +1873,7 @@ export function SessionImportPanel({
     if (!path || busy) return;
 
     const normalizedAgent = activeAgent === "claude" ? "claude" : "codex";
-    const key = sessionSelectionKey(normalizedAgent, path);
+    const key = sessionSelectionKey(normalizedAgent, path, "", workdirDisplayName(path));
     setManualEntries((items) => {
       if (items.some((item) => item.agentId === normalizedAgent && item.path === path)) return items;
       return [{ agentId: normalizedAgent, path, source: "manual", updatedAt: Date.now() }, ...items];
@@ -1566,21 +2024,23 @@ export function SessionImportPanel({
     (item) => showHiddenDirectories || !hiddenKeys.has(directoryPrefKey(activeAgent, item.path)),
   );
   const visibleDirectories = showAllDirectories ? visibleBaseDirectories : visibleBaseDirectories.slice(0, 20);
-  const selectedCount = selectedKeys.length;
   const hiddenByPreferenceCount = Math.max(0, searchedDirectories.length - visibleBaseDirectories.length);
   const hiddenCount = Math.max(0, visibleBaseDirectories.length - visibleDirectories.length);
+  const canManualAdd = state !== "scanning";
+  const canShowDirectoryTools = state === "done" || Boolean(query) || visibleBaseDirectories.length > 0;
+  const canShowDirectoryRows = canManualAdd && (state === "done" || visibleDirectories.length > 0 || query);
   const directoryStatusText =
     state === "idle"
-      ? "先连接机器并扫描已有 AI 会话"
+      ? "可以扫描已有 AI 会话，也可以手动输入路径"
       : state === "scanning"
         ? "正在扫描远端目录"
         : state === "error"
-          ? discovery?.message || "扫描失败"
+          ? `扫描失败，可手动输入路径${discovery?.message ? `：${discovery.message}` : ""}`
           : query
             ? `匹配 ${visibleBaseDirectories.length} 个目录`
             : visibleBaseDirectories.length === 0
-              ? "没有识别到 AI 历史目录"
-            : `${visibleBaseDirectories.length} 个常用目录，可多选添加`;
+              ? "没有识别到 AI 历史目录，可手动输入路径"
+              : `${visibleBaseDirectories.length} 个常用目录，可多选添加`;
 
   useEffect(() => {
     setShowAllDirectories(false);
@@ -1594,180 +2054,191 @@ export function SessionImportPanel({
   }, [historyScope, activeAgent]);
 
   return (
-    <section className="session-import">
-      <div className="session-import-head">
-        <div>
-          <strong>工作目录</strong>
-          <span>{directoryStatusText}</span>
-        </div>
-        <button type="button" className="ghost-button" onClick={() => onScan?.()} disabled={busy}>
-          {state === "done" ? "重新扫描" : "连接扫描"}
-        </button>
+    <section className="session-import-block">
+      <div className="session-import-label">
+        <strong>工作目录</strong>
+        <span>{directoryStatusText}</span>
       </div>
 
-      {state === "scanning" ? (
-        <div className="scan-skeleton compact">
-          <span />
-          <span />
-        </div>
-      ) : null}
-
-      {state === "error" ? <p className="discovery-error">{discovery?.message || "扫描失败。"}</p> : null}
-
-      {state === "done" ? (
-        <>
-          <div className="session-tabs" role="tablist" aria-label="AI 类型">
-            {agents.map((agent) => (
-              <button
-                key={agent.id}
-                type="button"
-                className={activeAgent === agent.id ? "active" : ""}
-                onClick={() => onAgentChange(agent.id)}
-              >
-                <AgentLogo agentId={agent.id} compact />
-                {agent.shortName}
-              </button>
-            ))}
+      <div className="session-import">
+        {state === "scanning" ? (
+          <div className="scan-skeleton compact">
+            <span />
+            <span />
           </div>
+        ) : null}
 
-          <div className="directory-tools">
-            <label className="directory-search">
-              <span>搜索</span>
-              <input
-                type="search"
-                value={directoryQuery}
-                placeholder="目录名或路径"
-                onChange={(event) => {
-                  setDirectoryQuery(event.target.value);
-                  setShowAllDirectories(false);
-                }}
-              />
-            </label>
-            <button
-              type="button"
-              className={`directory-filter-pill ${showHiddenDirectories ? "active" : ""}`}
-              onClick={() => setShowHiddenDirectories((value) => !value)}
-              disabled={!hiddenByPreferenceCount && !showHiddenDirectories}
-            >
-              {showHiddenDirectories ? "收起隐藏" : hiddenByPreferenceCount ? `隐藏 ${hiddenByPreferenceCount}` : "无隐藏"}
-            </button>
-          </div>
+        {state === "error" ? <p className="discovery-error">{discovery?.message || "扫描失败。"}</p> : null}
 
-          <div className="manual-directory">
-            <label>
-              <span>手动添加</span>
-              <input
-                type="text"
-                value={manualPath}
-                placeholder={manualPlaceholder}
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck="false"
-                onChange={(event) => setManualPath(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  addManualPath();
-                }}
-              />
-            </label>
-            <button type="button" onClick={addManualPath} disabled={busy || !manualPath.trim()}>
-              添加
-            </button>
-          </div>
+        {canManualAdd ? (
+          <>
+            <div className="directory-add-methods">
+              <div className="directory-method-card">
+                <div className="directory-method-main">
+                  <strong className="directory-method-title">自动扫描</strong>
+                  <button
+                    type="button"
+                    className="directory-method-action"
+                    onClick={() => onScan?.()}
+                    disabled={busy}
+                  >
+                    <ArrowClockwise size={16} weight="bold" />
+                    {state === "idle" ? "开始扫描" : "重新扫描"}
+                  </button>
+                </div>
+                <p className="directory-method-note">读取这台机器里的 Codex、Claude 历史和常用目录。</p>
+              </div>
 
-          <div className="session-pick-list">
-            {visibleDirectories.map((item) => {
-              const key = sessionSelectionKey(activeAgent, item.path, item.conversationId, item.name, item.sourceSessionId);
-              const checked = selectedKeys.includes(key);
-              const prefKey = directoryPrefKey(activeAgent, item.path);
-              const favorite = favoriteKeys.has(prefKey);
-              const hidden = hiddenKeys.has(prefKey);
-              const historyCount = Number(item.history?.[activeAgent] || 0);
-              const usageBadge = directoryUsageBadge(item, activeAgent);
-              const meta = [
-                item.conversationId ? "Agent 已同步" : "",
-                item.sourceSessionId ? "历史会话" : "",
-                item.conversationStatus === "running" || item.conversationStatus === "queued" ? "运行中" : "",
-                favorite ? "已收藏" : "",
-                hidden ? "已隐藏" : "",
-                historyCount ? `${activeAgent === "claude" ? "Claude" : "Codex"} ${historyCount}` : "",
-                ...displayMarkers(item.markers),
-              ]
-                .filter(Boolean)
-                .join(" · ");
-
-              return (
-                <div
-                  className={`session-pick-row ${checked ? "checked" : ""} ${favorite ? "favorite" : ""} ${
-                    hidden ? "hidden-directory" : ""
-                  }`}
-                  role="checkbox"
-                  aria-checked={checked}
-                  tabIndex={0}
-                  key={key}
-                  onClick={() => onToggle(key)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    onToggle(key);
-                  }}
-                >
-                  <input type="checkbox" checked={checked} readOnly tabIndex={-1} />
-                  <div className="session-row-copy">
-                    <span className="session-row-title">
-                      <strong>{item.name || workdirDisplayName(item.path)}</strong>
-                      {usageBadge ? <em>{usageBadge}</em> : null}
-                    </span>
-                    <span className="mono">{item.path}</span>
-                    <small>{meta || "普通目录"}</small>
-                  </div>
-                  <div className="session-row-actions">
+              <div className="directory-method-card manual">
+                <div className="directory-method-main">
+                  <strong className="directory-method-title">手动添加</strong>
+                  <div className="manual-directory">
+                    <label>
+                      <input
+                        type="text"
+                        value={manualPath}
+                        placeholder={manualPlaceholder}
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck="false"
+                        onChange={(event) => setManualPath(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          addManualPath();
+                        }}
+                      />
+                    </label>
                     <button
                       type="button"
-                      className={`directory-icon-button ${favorite ? "active" : ""}`}
-                      aria-label={favorite ? "取消收藏目录" : "收藏目录"}
-                      title={favorite ? "取消收藏" : "收藏"}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleFavorite(prefKey);
-                      }}
+                      onClick={addManualPath}
+                      disabled={busy || !manualPath.trim()}
                     >
-                      {favorite ? "★" : "☆"}
-                    </button>
-                    <button
-                      type="button"
-                      className="directory-hide-button"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleHidden(prefKey);
-                      }}
-                    >
-                      {hidden ? "显示" : "隐藏"}
+                      添加
                     </button>
                   </div>
                 </div>
-              );
-            })}
-            {!visibleDirectories.length ? (
-              <p className="session-empty">
-                {query ? "没有匹配的工作目录。" : "没有从 Codex 或 Claude 历史里识别到工作目录。"}
-              </p>
-            ) : null}
-            {hiddenCount ? (
-              <button type="button" className="show-more-directories" onClick={() => setShowAllDirectories(true)}>
-                显示全部 {visibleBaseDirectories.length} 个目录
-              </button>
-            ) : null}
-          </div>
+                <p className="directory-method-note">知道完整路径时可以直接添加，不需要先扫描。</p>
+              </div>
+            </div>
 
-          <button type="button" className="send-button session-add-button" onClick={() => onAddSelected?.()} disabled={busy || !selectedCount}>
-            添加 {selectedCount} 个会话
-          </button>
-        </>
-      ) : null}
+            {canShowDirectoryTools ? (
+              <div className="directory-tools">
+                <label className="directory-search">
+                  <span>搜索</span>
+                  <input
+                    type="search"
+                    value={directoryQuery}
+                    placeholder="目录名或路径"
+                    onChange={(event) => {
+                      setDirectoryQuery(event.target.value);
+                      setShowAllDirectories(false);
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className={`directory-filter-pill ${showHiddenDirectories ? "active" : ""}`}
+                  onClick={() => setShowHiddenDirectories((value) => !value)}
+                  disabled={!hiddenByPreferenceCount && !showHiddenDirectories}
+                >
+                  {showHiddenDirectories ? "收起隐藏" : hiddenByPreferenceCount ? `隐藏 ${hiddenByPreferenceCount}` : "无隐藏"}
+                </button>
+              </div>
+            ) : null}
+
+            {canShowDirectoryRows ? (
+              <div className="session-pick-list">
+                {visibleDirectories.map((item) => {
+                  const key = sessionSelectionKey(activeAgent, item.path, item.conversationId, item.name, item.sourceSessionId);
+                  const checked = selectedKeys.includes(key);
+                  const prefKey = directoryPrefKey(activeAgent, item.path);
+                  const favorite = favoriteKeys.has(prefKey);
+                  const hidden = hiddenKeys.has(prefKey);
+                  const historyCount = Number(item.history?.[activeAgent] || 0);
+                  const usageBadge = directoryUsageBadge(item, activeAgent);
+                  const meta = [
+                    item.conversationId ? "Agent 已同步" : "",
+                    item.sourceSessionId ? "历史会话" : "",
+                    item.conversationStatus === "running" || item.conversationStatus === "queued" ? "运行中" : "",
+                    favorite ? "已收藏" : "",
+                    hidden ? "已隐藏" : "",
+                    historyCount ? `${activeAgent === "claude" ? "Claude" : "Codex"} ${historyCount}` : "",
+                    ...displayMarkers(item.markers),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+
+                  return (
+                    <div
+                      className={`session-pick-row ${checked ? "checked" : ""} ${favorite ? "favorite" : ""} ${
+                        hidden ? "hidden-directory" : ""
+                      }`}
+                      role="checkbox"
+                      aria-checked={checked}
+                      tabIndex={0}
+                      key={key}
+                      onClick={() => onToggle(key)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        onToggle(key);
+                      }}
+                    >
+                      <input type="checkbox" checked={checked} readOnly tabIndex={-1} />
+                      <div className="session-row-copy">
+                        <span className="session-row-title">
+                          <strong>{item.name || workdirDisplayName(item.path)}</strong>
+                          {usageBadge ? <em>{usageBadge}</em> : null}
+                        </span>
+                        <span className="mono">{item.path}</span>
+                        <small>{meta || "普通目录"}</small>
+                      </div>
+                      <div className="session-row-actions">
+                        <button
+                          type="button"
+                          className={`directory-icon-button ${favorite ? "active" : ""}`}
+                          aria-label={favorite ? "取消收藏目录" : "收藏目录"}
+                          title={favorite ? "取消收藏" : "收藏"}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            toggleFavorite(prefKey);
+                          }}
+                        >
+                          {favorite ? "★" : "☆"}
+                        </button>
+                        <button
+                          type="button"
+                          className="directory-hide-button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            toggleHidden(prefKey);
+                          }}
+                        >
+                          {hidden ? "显示" : "隐藏"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!visibleDirectories.length ? (
+                  <p className="session-empty">
+                    {query ? "没有匹配的工作目录。" : "输入工作目录后点“添加”，不需要先扫描。"}
+                  </p>
+                ) : null}
+                {hiddenCount ? (
+                  <button type="button" className="show-more-directories" onClick={() => setShowAllDirectories(true)}>
+                    显示全部 {visibleBaseDirectories.length} 个目录
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+          </>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -1889,7 +2360,7 @@ function ConfigCopyButton({ value }) {
   );
 }
 
-export function ConfigField({ label, value, onChange, type = "text", inputMode, autoComplete, required = false }) {
+export function ConfigField({ label, value, onChange, type = "text", inputMode, autoComplete, placeholder, required = false }) {
   const resolvedAutoComplete = type === "password" ? autoComplete || "new-password" : autoComplete;
   const visibleType = type === "password" ? "text" : type;
 
@@ -1902,6 +2373,7 @@ export function ConfigField({ label, value, onChange, type = "text", inputMode, 
           type={visibleType}
           inputMode={inputMode}
           autoComplete={resolvedAutoComplete}
+          placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
         />
         <ConfigCopyButton value={value} />

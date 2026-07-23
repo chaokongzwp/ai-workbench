@@ -1,0 +1,771 @@
+/* iPad keeps the shared Mac chat language while retaining touch-first shell behavior. */
+.native-app-shell[data-native-form-factor="ipad"] {
+  --blue: #545964;
+  --blue-hover: #3f444d;
+  --blue-soft: rgba(84, 89, 100, 0.1);
+  --ipad-chat-bg: #f6f7fb;
+  --ipad-chat-surface: #ffffff;
+  --ipad-chat-raised: #fafbfc;
+  --ipad-chat-soft: #eef0f3;
+  --ipad-chat-line: rgba(18, 24, 32, 0.1);
+  --ipad-chat-line-strong: rgba(18, 24, 32, 0.16);
+  --ipad-chat-text: #17202c;
+  --ipad-chat-muted: #6e7784;
+  --ipad-chat-subtle: #9aa2ad;
+  position: fixed;
+  inset: 0;
+  grid-template-columns: var(--ipad-sidebar-width, 304px) minmax(0, 1fr);
+  width: var(--app-viewport-width, 100vw);
+  min-width: 0;
+  max-width: 100vw;
+  height: var(--app-viewport-height, 100dvh);
+  min-height: var(--app-viewport-height, 100dvh);
+  max-height: var(--app-viewport-height, 100dvh);
+  overflow: hidden;
+  contain: layout size;
+}
+
+html:has(.native-app-shell[data-native-form-factor="ipad"]),
+html:has(.native-app-shell[data-native-form-factor="ipad"]) body,
+html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
+  position: fixed;
+  inset: 0;
+  width: var(--app-viewport-width, 100vw);
+  min-width: 0;
+  max-width: 100vw;
+  height: var(--app-viewport-height, 100dvh);
+  min-height: var(--app-viewport-height, 100dvh);
+  max-height: var(--app-viewport-height, 100dvh);
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-ipad-sidebar {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-ipad-sidebar .server-list.has-empty-state {
+  align-content: center;
+  justify-items: center;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-sidebar-empty {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+  max-width: 240px;
+  gap: 8px;
+  padding: 24px 16px;
+  border: 0;
+  color: var(--ipad-chat-text);
+  background: transparent;
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-sidebar-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  border: 1px solid var(--ipad-chat-line);
+  border-radius: 50%;
+  color: var(--ipad-chat-text);
+  background: var(--ipad-chat-surface);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-sidebar-empty strong {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-sidebar-empty > span:last-child {
+  color: var(--ipad-chat-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-sidebar-empty:active .ipad-sidebar-empty-icon {
+  transform: scale(0.94);
+  background: var(--ipad-chat-soft);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-sidebar-empty:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.native-app-shell[data-native-form-factor="ipad"].sidebar-collapsed .native-ipad-sidebar {
+  display: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-session-sheet {
+  display: none !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--ipad-chat-bg);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] :is(input, textarea, select) {
+  font-size: max(16px, 1em);
+}
+
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] {
+  --blue: #c4c8d0;
+  --blue-hover: #eef0f3;
+  --blue-soft: rgba(235, 235, 245, 0.07);
+  --ipad-chat-bg: #101114;
+  --ipad-chat-surface: #171a20;
+  --ipad-chat-raised: #1d2128;
+  --ipad-chat-soft: #232831;
+  --ipad-chat-line: rgba(255, 255, 255, 0.1);
+  --ipad-chat-line-strong: rgba(255, 255, 255, 0.16);
+  --ipad-chat-text: #f2f4f8;
+  --ipad-chat-muted: #8e96a4;
+  --ipad-chat-subtle: #69717e;
+}
+
+.native-app-shell.native-app-shell[data-native-form-factor="ipad"] {
+  --composer-surface-bg: var(--ipad-chat-surface);
+  --composer-surface-line: var(--ipad-chat-line);
+  --composer-surface-text: var(--ipad-chat-text);
+  --composer-surface-placeholder: var(--ipad-chat-subtle);
+  --composer-surface-shadow: none;
+  --composer-surface-focus-shadow: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar-toggle, .native-settings-button),
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar-toggle, .native-settings-button) {
+  color: var(--ipad-chat-muted);
+  background: transparent;
+}
+
+/* iPad keeps Mac's exact navigation control language. Only placement changes. */
+.native-app-shell[data-native-form-factor="ipad"] .native-chat-nav {
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar-toggle, .native-more-button) {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: var(--ipad-chat-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]:not(.sidebar-collapsed)
+  .native-chat-nav
+  .native-ipad-sidebar-toggle {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"].sidebar-collapsed
+  .native-chat-nav
+  .native-ipad-sidebar-toggle {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar-toggle, .native-more-button)
+  svg {
+  width: 16px;
+  height: 16px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-more-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar-toggle, .native-more-button):active {
+  color: var(--ipad-chat-text);
+  background: var(--ipad-chat-soft);
+  transform: scale(0.94);
+}
+
+/* The persistent sidebar toolbar reuses the Mac controls verbatim. */
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-ipad-sidebar
+  :is(.sidebar-add, .sidebar-duplicate, .sidebar-collapse) {
+  display: inline-grid;
+  place-items: center;
+  width: 27px;
+  min-width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #4f5560;
+  background: rgba(118, 118, 128, 0.1);
+  box-shadow: none;
+}
+
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"]
+  .native-ipad-sidebar
+  :is(.sidebar-add, .sidebar-duplicate, .sidebar-collapse) {
+  color: #a9afb9;
+  background: rgba(255, 255, 255, 0.065);
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-ipad-sidebar
+  :is(.sidebar-add, .sidebar-duplicate, .sidebar-collapse)
+  svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Reading column */
+.native-app-shell[data-native-form-factor="ipad"] .native-chat-scroll {
+  align-items: center;
+  padding-inline: max(30px, var(--safe-left), var(--safe-right));
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .agent-response,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt {
+  box-sizing: border-box;
+  width: min(760px, 100%);
+  max-width: min(760px, 100%);
+  min-width: 0;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .agent-response {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Sent messages match Mac visually. The controls remain transparent but get iPad-sized hit areas. */
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt {
+  align-items: flex-end;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .user-message-card {
+  width: fit-content;
+  max-width: min(560px, calc(100% - 40px));
+  padding: 8px 12px;
+  border: 1px solid var(--ipad-chat-line-strong);
+  border-radius: 18px;
+  color: var(--ipad-chat-text);
+  background: var(--ipad-chat-soft);
+  box-shadow: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .user-message-card > p {
+  margin: 0;
+  padding: 0 !important;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .user-message-meta {
+  gap: 4px;
+  min-height: 36px;
+  margin: -2px 2px 0 0;
+  color: var(--ipad-chat-subtle);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .user-message-time {
+  height: 36px;
+  padding-inline: 6px;
+  font-size: 12px;
+  font-weight: 520;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .copy-user-message,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .edit-user-message {
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  border: 0;
+  border-radius: 9px;
+  color: var(--ipad-chat-subtle) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .copy-user-message svg,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .edit-user-message svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Assistant messages use the same density and neutral status language as Mac. */
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header {
+  min-width: 0;
+  min-height: 36px;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header strong {
+  color: var(--ipad-chat-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header .message-time {
+  color: var(--ipad-chat-subtle);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header .streaming,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header .task-timer,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header .streaming.running,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header .task-timer.running {
+  border: 0;
+  color: var(--ipad-chat-muted);
+  background: var(--ipad-chat-soft);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header-actions {
+  gap: 0;
+  margin-left: auto;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header-actions .refresh-message,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header-actions .copy-assistant-message {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--ipad-chat-subtle);
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header-actions .refresh-message svg,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header-actions .copy-assistant-message svg {
+  width: 15px;
+  height: 15px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .assistant-copy {
+  box-sizing: border-box;
+  width: calc(100% - 34px);
+  max-width: calc(100% - 34px);
+  margin: 0 0 8px 34px;
+  color: var(--ipad-chat-muted);
+  font-size: 15px;
+  line-height: 1.68;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .assistant-answer {
+  box-sizing: border-box;
+  width: calc(100% - 34px);
+  max-width: calc(100% - 34px);
+  margin: 4px 0 0 34px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .rich-message {
+  width: 100%;
+  color: var(--ipad-chat-text);
+  font-size: 15px;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .rich-message a {
+  color: var(--ipad-chat-text);
+  text-decoration-color: var(--ipad-chat-subtle);
+  text-decoration-line: underline;
+  text-underline-offset: 3px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .rich-message blockquote {
+  border-left-color: var(--ipad-chat-line-strong);
+  color: var(--ipad-chat-muted);
+  background: var(--ipad-chat-soft);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .task-status-card,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .running-task-hint,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .file-reference-list {
+  box-sizing: border-box;
+  max-width: calc(100% - 34px);
+  margin-left: 34px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .task-status-actions button,
+.native-app-shell[data-native-form-factor="ipad"] .native-conversation .model-choice-actions button {
+  min-height: 36px;
+}
+
+/* Compact Mac composer presentation with iPad-safe docking. Controls stay identical to Mac. */
+.native-app-shell[data-native-form-factor="ipad"] .native-composer-dock {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 12px max(18px, var(--safe-right)) calc(14px + var(--safe-bottom)) max(18px, var(--safe-left));
+  border-top: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-conversation
+  .native-composer-dock
+  .composer.compact.workbench-composer-surface {
+  box-sizing: border-box;
+  width: 100% !important;
+  max-width: none !important;
+  min-height: 126px;
+  max-height: min(34vh, 280px);
+  margin: 0 !important;
+  padding: 12px 14px 10px !important;
+  border: 1px solid var(--ipad-chat-line) !important;
+  border-radius: 20px !important;
+  background: var(--ipad-chat-surface) !important;
+  box-shadow: none !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-conversation
+  .native-composer-dock
+  .composer.compact.workbench-composer-surface:focus-within {
+  border-color: var(--ipad-chat-line) !important;
+  background: var(--ipad-chat-surface) !important;
+  box-shadow: none !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-composer-dock .composer.compact .input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-conversation
+  .native-composer-dock
+  .composer.compact.workbench-composer-surface
+  textarea {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  min-height: 76px !important;
+  max-height: min(25vh, 196px);
+  resize: none;
+  padding: 2px 4px 6px !important;
+  border: 0;
+  border-radius: 16px;
+  outline: none;
+  color: var(--ipad-chat-text) !important;
+  background: transparent !important;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-conversation
+  .native-composer-dock
+  .composer.compact.workbench-composer-surface.not-ready
+  .input-row {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 2px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-conversation
+  .native-composer-dock
+  .composer.compact.workbench-composer-surface.not-ready
+  textarea {
+  grid-column: 1 / -1;
+  height: auto;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-conversation
+  .native-composer-dock
+  .composer.compact.workbench-composer-surface.not-ready
+  .composer-bottom-row {
+  grid-column: 1 / -1;
+  min-height: 40px;
+  padding: 0 0 0 2px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-composer-dock .composer.compact .composer-bottom-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  gap: 8px;
+  padding: 0 0 0 2px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-composer-dock .composer.compact .voice-hint.inline {
+  display: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .native-composer-dock .composer.compact .input-actions {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .composer-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 9px !important;
+  color: #aeb7c5 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: 1;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .composer-icon-button
+  svg {
+  width: 17px;
+  height: 17px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .composer-icon-button:disabled {
+  color: #707887 !important;
+  background: transparent !important;
+  opacity: 0.36;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button {
+  margin-left: auto !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  color: #303238 !important;
+  background: #e7e8eb !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button:disabled {
+  color: rgba(104, 104, 112, 0.45) !important;
+  background: rgba(118, 118, 128, 0.13) !important;
+  opacity: 1;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .send-button.stop-icon-button {
+  color: #ffffff !important;
+  background: #ff453a !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .voice-button.listening {
+  color: #ff6b63 !important;
+  background: transparent !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
+  .wake-button.listening {
+  color: #70b4ff !important;
+  background: transparent !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .native-app-shell[data-native-form-factor="ipad"] .native-conversation .message-header-actions button:hover,
+  .native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-message-meta button:hover,
+  .native-app-shell[data-native-form-factor="ipad"]
+    .native-composer-dock
+    .composer.compact
+    .input-actions
+    .composer-icon-button:hover:not(:disabled) {
+    color: var(--ipad-chat-text) !important;
+    background: var(--ipad-chat-soft) !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .native-app-shell[data-native-form-factor="ipad"] .native-chat-scroll {
+    padding-inline: max(22px, var(--safe-left), var(--safe-right));
+  }
+
+  .native-app-shell[data-native-form-factor="ipad"] .native-composer-dock {
+    padding-inline: max(14px, var(--safe-left), var(--safe-right));
+  }
+}
+
+/*
+ * iPad settings are a self-contained sheet. The header and footer stay fixed;
+ * the content body is the only vertical scroller. Keep this platform-scoped so
+ * iPhone's full-screen navigation and Mac's windowed dialog remain independent.
+ */
+.native-app-shell[data-native-form-factor="ipad"] .settings-layer {
+  --ipad-settings-gutter-x: clamp(16px, 4vw, 34px);
+  --ipad-settings-gutter-y: clamp(14px, 3.5vh, 28px);
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 100%;
+  height: var(--app-viewport-height, 100dvh);
+  max-height: var(--app-viewport-height, 100dvh);
+  padding: calc(var(--ipad-settings-gutter-y) + var(--safe-top))
+    calc(var(--ipad-settings-gutter-x) + var(--safe-right))
+    calc(var(--ipad-settings-gutter-y) + var(--safe-bottom))
+    calc(var(--ipad-settings-gutter-x) + var(--safe-left));
+  overflow: hidden;
+  touch-action: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel:not(.add-session-mode),
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode {
+  position: relative;
+  inset: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: min(820px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  transform: none;
+  touch-action: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel:not(.add-session-mode) {
+  width: min(620px, 100%);
+  max-width: 100%;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode {
+  width: min(720px, 100%);
+  max-width: 100%;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel > .settings-navigation,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel > .settings-actions {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  > .settings-actions {
+  justify-content: flex-end;
+  padding: 12px 18px calc(14px + var(--safe-bottom));
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .settings-panel.add-session-mode
+  > .settings-actions
+  .session-add-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 42px;
+  margin: 0;
+  padding: 0 18px;
+  border-radius: 13px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel > .settings-navigation {
+  top: auto;
+  z-index: 2;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel > .settings-scroll-body,
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel.add-session-mode > .settings-scroll-body {
+  display: block;
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  touch-action: pan-y;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .settings-panel > .settings-scroll-body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

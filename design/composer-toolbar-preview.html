@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Workbench Composer Toolbar Preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d0f14;
+        --panel: #1f2229;
+        --panel-strong: #242832;
+        --line: rgba(255, 255, 255, 0.11);
+        --text: #f5f5f7;
+        --muted: #9ba1ad;
+        --subtle: #666d7a;
+        --blue: #0a84ff;
+        --blue-hover: #2794ff;
+        --danger: #e5484d;
+        --danger-hover: #f15b60;
+        --gold: #e0c15a;
+        --gold-bg: rgba(224, 193, 90, 0.13);
+        --soft: rgba(255, 255, 255, 0.06);
+        --soft-hover: rgba(255, 255, 255, 0.09);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC",
+          "Helvetica Neue", Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(10, 132, 255, 0.08), transparent 34%),
+          var(--bg);
+        color: var(--text);
+      }
+
+      .canvas {
+        width: 1120px;
+        padding: 54px 64px;
+      }
+
+      .title {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 30px;
+      }
+
+      .title strong {
+        font-size: 24px;
+        font-weight: 760;
+        letter-spacing: 0;
+      }
+
+      .title span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .preview-stack {
+        display: grid;
+        gap: 22px;
+      }
+
+      .composer {
+        width: 760px;
+        padding: 16px 18px 13px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow:
+          0 24px 70px rgba(0, 0, 0, 0.3),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .composer.focus {
+        border-color: rgba(255, 255, 255, 0.16);
+        background: #222630;
+      }
+
+      .composer.disabled {
+        opacity: 0.58;
+      }
+
+      .input {
+        min-height: 74px;
+        color: #f3f4f8;
+        font-size: 17px;
+        line-height: 1.52;
+      }
+
+      .placeholder {
+        color: #737b89;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 36px;
+        gap: 14px;
+      }
+
+      .toolbar-left,
+      .toolbar-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .toolbar-left {
+        flex: 1 1 auto;
+      }
+
+      .tool-button,
+      .main-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        outline: 0;
+        font: inherit;
+        user-select: none;
+      }
+
+      .tool-button {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        color: var(--muted);
+        background: transparent;
+      }
+
+      .tool-button svg,
+      .main-button svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        stroke-width: 1.85;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+
+      .tool-button:hover,
+      .tool-button.hover {
+        color: #e3e6ec;
+        background: var(--soft-hover);
+      }
+
+      .tool-button.selected {
+        color: #ffffff;
+        background: var(--blue);
+      }
+
+      .tool-button.disabled {
+        color: var(--subtle);
+        opacity: 0.42;
+      }
+
+      .main-button {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        color: #ffffff;
+        background: var(--blue);
+      }
+
+      .main-button:hover,
+      .main-button.hover {
+        background: var(--blue-hover);
+      }
+
+      .main-button.stop {
+        background: var(--danger);
+      }
+
+      .main-button.stop:hover,
+      .main-button.stop.hover {
+        background: var(--danger-hover);
+      }
+
+      .main-button.disabled {
+        color: #555d6b;
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .state-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        width: 760px;
+      }
+
+      .state-card {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .state-card .toolbar {
+        justify-content: flex-start;
+        gap: 8px;
+      }
+
+      .state-card strong {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 13px;
+        font-weight: 720;
+      }
+
+      .state-card small {
+        display: block;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .spec {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        width: 760px;
+      }
+
+      .spec div {
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .spec strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+
+      .spec span {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.42;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="canvas">
+      <div class="title">
+        <strong>输入框底部工具栏方案</strong>
+        <span>统一成轻量 iOS / Codex 风格：灰色工具、蓝色主动作、红色停止。</span>
+      </div>
+
+      <section class="preview-stack">
+        <div class="composer focus">
+          <div class="input">
+            <span class="placeholder">告诉 Claude 你想做什么</span>
+          </div>
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button class="tool-button hover" type="button" aria-label="下载">
+                <svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7.5 10.5 4.5 4.5 4.5-4.5" /><path d="M5 20h14" /></svg>
+              </button>
+              <button class="tool-button" type="button" aria-label="打开文件夹">
+                <svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.2a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3Z" /><path d="M3.5 10h17" /></svg>
+              </button>
+              <button class="tool-button disabled" type="button" aria-label="附件">
+                <svg viewBox="0 0 24 24"><path d="m8.5 13.5 6.7-6.7a3 3 0 0 1 4.2 4.2L10.6 19.8a4.4 4.4 0 0 1-6.2-6.2l8.7-8.7" /><path d="m9.2 14.2 7.7-7.7" /></svg>
+              </button>
+              <button class="tool-button selected" type="button" aria-label="语音开启">
+                <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" /><path d="M19 11a7 7 0 0 1-14 0" /><path d="M12 18v3" /></svg>
+              </button>
+            </div>
+            <div class="toolbar-right">
+              <button class="main-button stop hover" type="button" aria-label="停止">
+                <svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.5" /></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-grid">
+          <div class="state-card">
+            <strong>默认</strong>
+            <div class="toolbar">
+              <button class="tool-button" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7.5 10.5 4.5 4.5 4.5-4.5" /><path d="M5 20h14" /></svg></button>
+              <button class="tool-button" type="button"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.2a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3Z" /><path d="M3.5 10h17" /></svg></button>
+              <button class="main-button disabled" type="button"><svg viewBox="0 0 24 24"><path d="M12 19V5" /><path d="m6.5 10.5 5.5-5.5 5.5 5.5" /></svg></button>
+            </div>
+            <small>工具透明底，主按钮禁用可见但弱化。</small>
+          </div>
+          <div class="state-card">
+            <strong>可发送</strong>
+            <div class="toolbar">
+              <button class="tool-button hover" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7.5 10.5 4.5 4.5 4.5-4.5" /><path d="M5 20h14" /></svg></button>
+              <button class="tool-button" type="button"><svg viewBox="0 0 24 24"><path d="m8.5 13.5 6.7-6.7a3 3 0 0 1 4.2 4.2L10.6 19.8a4.4 4.4 0 0 1-6.2-6.2l8.7-8.7" /></svg></button>
+              <button class="main-button" type="button"><svg viewBox="0 0 24 24"><path d="M12 19V5" /><path d="m6.5 10.5 5.5-5.5 5.5 5.5" /></svg></button>
+            </div>
+            <small>只有发送使用蓝色，用户一眼知道主操作。</small>
+          </div>
+          <div class="state-card">
+            <strong>运行中</strong>
+            <div class="toolbar">
+              <button class="tool-button disabled" type="button"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.2a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3Z" /></svg></button>
+              <button class="tool-button disabled" type="button"><svg viewBox="0 0 24 24"><path d="m8.5 13.5 6.7-6.7a3 3 0 0 1 4.2 4.2L10.6 19.8a4.4 4.4 0 0 1-6.2-6.2l8.7-8.7" /></svg></button>
+              <button class="main-button stop" type="button"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1.5" /></svg></button>
+            </div>
+            <small>停止复用发送位，避免右侧堆一排按钮。</small>
+          </div>
+          <div class="state-card">
+            <strong>语音选中</strong>
+            <div class="toolbar">
+              <button class="tool-button" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7.5 10.5 4.5 4.5 4.5-4.5" /><path d="M5 20h14" /></svg></button>
+              <button class="tool-button selected" type="button"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" /><path d="M19 11a7 7 0 0 1-14 0" /><path d="M12 18v3" /></svg></button>
+              <button class="main-button" type="button"><svg viewBox="0 0 24 24"><path d="M12 19V5" /><path d="m6.5 10.5 5.5-5.5 5.5 5.5" /></svg></button>
+            </div>
+            <small>蓝色也可表达开关选中，但只给一个控件用。</small>
+          </div>
+        </div>
+
+        <div class="spec">
+          <div>
+            <strong>尺寸</strong>
+            <span>工具按钮 32px；主按钮 36px；图标 18px。</span>
+          </div>
+          <div>
+            <strong>颜色</strong>
+            <span>工具灰、主按钮蓝、停止红；运行态只禁用工具按钮，不额外放文字。</span>
+          </div>
+          <div>
+            <strong>状态</strong>
+            <span>默认透明，hover 轻底色，选中蓝底，运行中发送位切换为停止。</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

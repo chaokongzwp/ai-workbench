@@ -470,7 +470,7 @@ export function extractMarkedFinalOutput(text) {
 }
 
 export function extractWorkbenchResponse(text) {
-  const match = String(text || "").match(/__AIWB_RESPONSE_START__\r?\n([\s\S]*?)\r?\n__AIWB_RESPONSE_END__/);
+  const match = String(text || "").match(/__AIWB_RESPONSE_START__\s*([\s\S]*?)\s*__AIWB_RESPONSE_END__/);
   return match ? trimVisibleText(match[1]) : "";
 }
 
@@ -553,8 +553,13 @@ export function extractAgentFinalOutput(output, prompt = "") {
 export function looksLikeDeferredWaitingAnswer(text) {
   const normalized = trimVisibleText(stripTerminalControl(text)).replace(/\s+/g, " ");
   if (!normalized) return false;
+  // This heuristic is only for a short, stand-alone waiting response. A
+  // substantive final report may legitimately mention waiting for another
+  // team or ask the user to choose a next step.
+  if (normalized.length > 360) return false;
 
   return [
+    /^(?:I(?:'m| am)\s+)?(?:still\s+)?waiting for .{1,180}\bto (?:finish|complete|end)[.!…]*$/i,
     /\bI(?:'|’)ll wait for (?:the )?(?:notification|monitor|result|deployment|test|tests|build|pipeline|workflow|completion)\b/i,
     /\bI will wait for (?:the )?(?:notification|monitor|result|deployment|test|tests|build|pipeline|workflow|completion)\b/i,
     /\bwait for (?:the )?(?:notification|monitor|result|deployment|test|tests|build|pipeline|workflow|completion) before continuing\b/i,

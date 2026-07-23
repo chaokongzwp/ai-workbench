@@ -1,13 +1,18 @@
 :root {
   color: #17202b;
   background: #f6f7f8;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  --app-font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue",
+    "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--app-font-family);
   font-size: 15px;
   line-height: 1.45;
   text-rendering: geometricPrecision;
   color-scheme: light;
+  --message-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --message-font-size: 16px;
+  --message-font-weight: 500;
+  --message-line-height: 1.65;
 }
 
 * {
@@ -35,6 +40,44 @@ body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   background: #f6f7f8;
+}
+
+.app-fatal-error {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 24px;
+  color: #17202b;
+  background: #f6f7f8;
+}
+
+.app-fatal-error-card {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 12px;
+  padding: 22px;
+  border: 1px solid #d8dde6;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 60px rgb(15 23 42 / 10%);
+}
+
+.app-fatal-error-card strong {
+  font-size: 22px;
+}
+
+.app-fatal-error-card span {
+  color: #687586;
+}
+
+.app-fatal-error-card code {
+  overflow: auto;
+  max-height: 180px;
+  padding: 12px;
+  border-radius: 12px;
+  color: #0f172a;
+  background: #f2f4f7;
+  white-space: pre-wrap;
 }
 
 button,
@@ -173,7 +216,8 @@ textarea:disabled {
   display: block;
 }
 
-.topbar-logo-button {
+.topbar-logo-button,
+.topbar-refresh-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -192,12 +236,19 @@ textarea:disabled {
   border-radius: 9px;
 }
 
-.topbar-logo-button:hover {
+.topbar-logo-button:hover,
+.topbar-refresh-button:hover {
   background: rgba(118, 118, 128, 0.12);
 }
 
-.topbar-logo-button:active {
+.topbar-logo-button:active,
+.topbar-refresh-button:active {
   transform: scale(0.96);
+}
+
+.topbar-refresh-button:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .shell-icon {
@@ -1145,23 +1196,24 @@ textarea:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  gap: 12px;
-  margin: 12px 0 0 34px;
-  padding: 12px;
-  border: 1px solid rgba(60, 60, 67, 0.12);
-  border-radius: 16px;
-  color: #253041;
-  background: rgba(242, 242, 247, 0.72);
+  gap: 8px 12px;
+  margin: 8px 0 0 34px;
+  padding: 6px 0 6px 10px;
+  border: 0;
+  border-left: 2px solid rgba(60, 60, 67, 0.16);
+  border-radius: 0;
+  color: #626a76;
+  background: transparent;
 }
 
 .task-status-card.agent {
-  border-color: rgba(52, 199, 89, 0.2);
-  background: rgba(52, 199, 89, 0.08);
+  border-color: rgba(60, 60, 67, 0.18);
+  background: transparent;
 }
 
 .task-status-card.ssh {
-  border-color: rgba(255, 149, 0, 0.22);
-  background: rgba(255, 204, 0, 0.1);
+  border-color: rgba(60, 60, 67, 0.18);
+  background: transparent;
 }
 
 .task-status-main {
@@ -1171,15 +1223,15 @@ textarea:disabled {
 }
 
 .task-status-main strong {
-  color: #17202b;
-  font-size: 14px;
-  font-weight: 760;
+  color: #525a66;
+  font-size: 12px;
+  font-weight: 680;
 }
 
 .task-status-main span,
 .task-status-main small {
-  color: #5d6573;
-  font-size: 12px;
+  color: #8a9099;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1191,24 +1243,24 @@ textarea:disabled {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 7px;
+  gap: 6px;
 }
 
 .task-status-actions button {
-  min-height: 30px;
-  padding: 0 11px;
+  min-height: 26px;
+  padding: 0 9px;
   border: 0;
   border-radius: 999px;
-  color: #1c1c1e;
-  background: rgba(255, 255, 255, 0.82);
-  font-size: 12px;
-  font-weight: 720;
+  color: #6c737d;
+  background: rgba(118, 118, 128, 0.1);
+  font-size: 11px;
+  font-weight: 680;
   cursor: pointer;
 }
 
 .task-status-actions button:first-child {
-  color: #ffffff;
-  background: var(--blue);
+  color: var(--blue);
+  background: rgba(0, 122, 255, 0.1);
 }
 
 .task-status-actions button:disabled {
@@ -1309,72 +1361,60 @@ textarea:disabled {
 }
 
 .agent-failure-card {
-  display: grid;
-  gap: 11px;
-  margin: 12px 0 0 34px;
-  padding: 13px 14px;
-  border: 1px solid rgba(255, 149, 0, 0.22);
-  border-radius: 16px;
-  color: #4a3510;
-  background: rgba(255, 204, 0, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  width: fit-content;
+  max-width: calc(100% - 34px);
+  margin: 5px 0 0 34px;
+  padding: 0;
+  border: 0;
+  color: #6c737d;
+  background: transparent;
 }
 
 .agent-failure-copy {
-  display: grid;
-  gap: 5px;
   min-width: 0;
-}
-
-.agent-failure-copy strong {
-  color: #201807;
-  font-size: 14px;
-  font-weight: 760;
-  line-height: 1.35;
 }
 
 .agent-failure-copy p {
   margin: 0;
-  color: #4f3b12;
-  font-size: 13px;
-  line-height: 1.55;
+  color: #737a85;
+  font-size: 11.5px;
+  line-height: 1.45;
   text-wrap: pretty;
-}
-
-.agent-failure-copy span {
-  color: #7a5d18;
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .agent-failure-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 5px;
 }
 
 .agent-failure-actions button {
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: 24px;
+  padding: 0 8px;
   border: 0;
   border-radius: 999px;
-  color: #5a430f;
-  background: rgba(255, 255, 255, 0.74);
-  font-size: 12px;
-  font-weight: 720;
+  color: #747b85;
+  background: rgba(118, 118, 128, 0.08);
+  font-size: 10.5px;
+  font-weight: 660;
   cursor: pointer;
 }
 
 .agent-failure-actions button.primary {
-  color: #ffffff;
-  background: var(--blue);
+  color: #3478b9;
+  background: rgba(10, 132, 255, 0.09);
 }
 
 .agent-failure-actions button:hover {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(118, 118, 128, 0.13);
 }
 
 .agent-failure-actions button.primary:hover {
-  background: #006ee6;
+  background: rgba(10, 132, 255, 0.14);
 }
 
 .agent-failure-actions button:disabled {
@@ -1388,60 +1428,49 @@ textarea:disabled {
 }
 
 .friendly-progress-card {
-  display: grid;
-  gap: 8px;
-  width: min(680px, 100%);
-  margin: 10px 0 0 34px;
-  padding: 13px 15px;
-  border: 1px solid rgba(52, 199, 89, 0.2);
-  border-radius: 16px;
-  color: #253041;
-  background: rgba(52, 199, 89, 0.08);
-}
-
-.friendly-progress-card div {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
+  width: max-content;
+  max-width: calc(100% - 34px);
+  margin: 6px 0 0 34px;
+  padding: 0;
+  border: 0;
+  color: #69717d;
+  background: transparent;
 }
 
 .friendly-progress-card strong {
-  color: #17202b;
-  font-size: 14px;
-  font-weight: 760;
+  color: #606873;
+  font-size: 11px;
+  font-weight: 680;
   line-height: 1.35;
 }
 
 .friendly-progress-card span {
-  padding: 2px 7px;
-  border-radius: 999px;
-  color: #147a47;
-  background: rgba(52, 199, 89, 0.14);
-  font-size: 11px;
-  font-weight: 720;
+  overflow: hidden;
+  color: #8a9099;
+  font-size: 10.5px;
+  font-weight: 560;
   line-height: 1.35;
-}
-
-.friendly-progress-card p {
-  margin: 0;
-  color: #4d5968;
-  font-size: 13px;
-  line-height: 1.58;
-  text-wrap: pretty;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .friendly-progress-card button {
-  justify-self: start;
-  min-height: 32px;
-  padding: 0 13px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
-  border-radius: 999px;
-  color: #ffffff;
-  background: var(--blue);
-  font-size: 12px;
-  font-weight: 740;
+  border-radius: 8px;
+  color: #7b828d;
+  background: rgba(118, 118, 128, 0.08);
   cursor: pointer;
 }
 
@@ -1656,8 +1685,7 @@ textarea:disabled {
 .rich-diagram svg text,
 .rich-diagram svg tspan {
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif !important;
+    var(--app-font-family) !important;
 }
 
 .rich-diagram.pending,
@@ -2299,8 +2327,32 @@ textarea:disabled {
   background: rgba(255, 59, 48, 0.14);
 }
 
-.session-import {
+.session-import-block {
+  display: grid;
+  gap: 8px;
   margin: 0 18px 16px;
+}
+
+.session-import-label {
+  display: grid;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.session-import-label strong {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 760;
+  line-height: 1.22;
+}
+
+.session-import-label span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.session-import {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -2328,6 +2380,106 @@ textarea:disabled {
 .session-import-head span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.directory-add-methods {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  border-bottom: 1px solid rgba(60, 60, 67, 0.1);
+}
+
+.directory-method-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  min-height: 70px;
+  padding: 14px 18px;
+  border: 0;
+  background: transparent;
+}
+
+.directory-method-card + .directory-method-card {
+  border-top: 1px solid rgba(60, 60, 67, 0.08);
+}
+
+.directory-method-card.manual {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.directory-method-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: 14px;
+}
+
+.directory-method-card.manual .directory-method-main {
+  grid-template-columns: minmax(120px, 0.36fr) minmax(0, 1fr);
+}
+
+.directory-method-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-method-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.directory-method-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-method-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.directory-method-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 92px;
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  color: var(--blue);
+  background: rgba(0, 122, 255, 0.11);
+  font-weight: 760;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.directory-method-action:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+.directory-method-action:disabled {
+  color: rgba(60, 60, 67, 0.35);
+  background: rgba(118, 118, 128, 0.1);
+  cursor: default;
 }
 
 .session-tabs {
@@ -2421,7 +2573,7 @@ textarea:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  padding: 0 14px 12px;
+  padding: 0;
 }
 
 .manual-directory label {
@@ -2429,12 +2581,12 @@ textarea:disabled {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   min-width: 0;
-  height: 40px;
+  height: 38px;
   gap: 10px;
   padding: 0 12px;
   border: 1px solid rgba(60, 60, 67, 0.1);
-  border-radius: 13px;
-  background: #ffffff;
+  border-radius: 12px;
+  background: rgba(118, 118, 128, 0.08);
 }
 
 .manual-directory span {
@@ -2459,10 +2611,10 @@ textarea:disabled {
 
 .manual-directory button {
   min-width: 66px;
-  height: 40px;
+  height: 38px;
   padding: 0 14px;
   border: 0;
-  border-radius: 13px;
+  border-radius: 12px;
   color: var(--blue);
   background: rgba(0, 122, 255, 0.11);
   font-weight: 720;
@@ -3311,9 +3463,7 @@ textarea:disabled {
 :root {
   color: #1c1c1e;
   background: #f2f2f7;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue",
-    Arial, sans-serif;
+  font-family: var(--app-font-family);
   text-rendering: optimizeLegibility;
 }
 
@@ -4890,7 +5040,7 @@ body {
   width: fit-content;
   max-width: min(560px, 82%);
   margin-left: auto;
-  padding: 10px 44px 10px 13px;
+  padding: 10px 92px 10px 13px;
   border: 1px solid #e5e7eb;
   border-radius: 18px;
   background: #f4f4f5;
@@ -4969,6 +5119,27 @@ body {
   bottom: 8px;
   color: #52525b;
   background: transparent;
+}
+
+.conversation .user-prompt .edit-user-message {
+  position: absolute;
+  right: 46px;
+  bottom: 8px;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #52525b;
+  background: transparent;
+  cursor: pointer;
+}
+
+.conversation .user-prompt .edit-user-message:hover {
+  background: #f4f4f5;
 }
 
 .conversation .composer {
@@ -5976,55 +6147,31 @@ body {
   cursor: pointer;
 }
 
-.composer-release-button,
-.conversation .composer-release-button {
-  flex: 0 0 auto;
-  height: 30px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 999px;
-  color: #8a6100;
-  background: rgba(255, 204, 0, 0.16);
-  font-size: 12px;
-  font-weight: 720;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.composer-release-button:hover,
-.conversation .composer-release-button:hover {
-  background: rgba(255, 204, 0, 0.24);
-}
-
-.composer-release-button:disabled,
-.conversation .composer-release-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .composer .input-actions .composer-icon-button,
 .conversation .input-actions .composer-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 11px;
+  border-radius: 10px;
   box-shadow: none;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 120ms ease;
 }
 
 .composer .input-actions .composer-icon-button svg,
 .conversation .input-actions .composer-icon-button svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2.1;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  stroke: none;
 }
 
 .composer .input-actions .voice-button.composer-icon-button,
@@ -6229,6 +6376,11 @@ body {
   border-radius: 12px;
 }
 
+.settings-panel.add-session-mode .directory-add-methods {
+  flex: 0 0 auto;
+  padding: 12px 16px;
+}
+
 .settings-panel.add-session-mode .session-tabs {
   flex: 0 0 auto;
   padding: 12px 16px 10px;
@@ -6247,7 +6399,7 @@ body {
 
 .settings-panel.add-session-mode .manual-directory {
   flex: 0 0 auto;
-  padding: 0 16px 12px;
+  padding: 0;
 }
 
 .settings-panel.add-session-mode .session-pick-list {
@@ -6297,6 +6449,16 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .directory-method-card,
+  .directory-method-card.manual {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .directory-method-main,
+  .directory-method-card.manual .directory-method-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .directory-filter-pill {
     width: 100%;
   }
@@ -6322,7 +6484,7 @@ body {
 }
 
 .settings-panel.add-session-mode .settings-actions {
-  display: none;
+  display: flex;
 }
 
 @media (max-width: 820px) {
@@ -6426,6 +6588,20 @@ body {
     font-size: 15px;
   }
 
+  .settings-panel.add-session-mode .directory-add-methods {
+    padding: 0;
+  }
+
+  .settings-panel.add-session-mode .directory-method-card {
+    gap: 10px;
+    min-height: 0;
+    padding: 12px 14px;
+  }
+
+  .settings-panel.add-session-mode .directory-method-note {
+    font-size: 12px;
+  }
+
   .settings-panel.add-session-mode .directory-tools {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
@@ -6447,7 +6623,7 @@ body {
   .settings-panel.add-session-mode .manual-directory {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
-    padding: 0 12px 10px;
+    padding: 0;
   }
 
   .settings-panel.add-session-mode .manual-directory label {
@@ -6646,13 +6822,13 @@ body {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  height: 32px;
-  min-width: 52px;
-  padding: 0 10px;
+  height: 38px;
+  min-width: 60px;
+  padding: 0 12px;
   border: 0;
   border-radius: 10px;
-  color: var(--blue);
-  background: var(--blue-soft);
+  color: var(--muted);
+  background: transparent;
   font-size: 12px;
   font-weight: 720;
   cursor: pointer;
@@ -6660,12 +6836,18 @@ body {
 }
 
 .file-reference-actions .file-delete-button {
-  color: #d33b32;
-  background: rgba(255, 59, 48, 0.1);
+  color: var(--muted);
+  background: transparent;
 }
 
 .file-reference-actions .file-delete-button:hover {
-  background: rgba(255, 59, 48, 0.16);
+  color: var(--text);
+  background: transparent;
+}
+
+.file-reference-actions .file-delete-button.is-confirming {
+  color: #d66760;
+  background: transparent;
 }
 
 .file-reference.deleted {
@@ -6709,7 +6891,8 @@ body {
 }
 
 .file-reference-actions button:hover {
-  background: rgba(0, 122, 255, 0.18);
+  color: var(--text);
+  background: transparent;
 }
 
 .file-reference-actions button:active {
@@ -6719,7 +6902,8 @@ body {
 .file-reference-actions button:disabled {
   color: var(--muted);
   cursor: default;
-  background: rgba(118, 118, 128, 0.12);
+  background: transparent;
+  opacity: 0.46;
 }
 
 .file-download-status {
@@ -6796,6 +6980,16 @@ body {
   position: fixed;
   inset: 0;
   z-index: 55;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+}
+
+.remote-directory-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 54;
   display: grid;
   place-items: center;
   padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
@@ -6907,6 +7101,173 @@ body {
   min-width: 84px;
   height: 40px;
   border-radius: 999px;
+}
+
+.remote-download-browse-button {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.remote-directory-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  width: min(720px, 100%);
+  height: min(720px, 100%);
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.remote-directory-panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.remote-directory-panel header div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.remote-directory-panel header strong {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 780;
+  line-height: 1.2;
+}
+
+.remote-directory-panel header span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.remote-directory-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 0;
+}
+
+.remote-directory-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.remote-directory-path {
+  min-width: 0;
+  margin: 10px 18px 12px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-directory-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 14px;
+}
+
+.remote-directory-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 8px 6px 8px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.remote-directory-entry-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  gap: 11px;
+  padding: 5px 0;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.remote-directory-entry-main svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.remote-directory-entry.directory .remote-directory-entry-main svg {
+  color: #3b82f6;
+}
+
+.remote-directory-entry-main span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.remote-directory-entry-main strong,
+.remote-directory-entry-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-directory-entry-main strong {
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.remote-directory-entry-main small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.remote-directory-entry-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.remote-directory-entry-actions button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: var(--muted);
+  background: var(--surface-soft);
+}
+
+.remote-directory-entry-actions button:hover {
+  color: var(--accent);
+  border-color: var(--line-strong);
+}
+
+.remote-directory-empty {
+  padding: 40px 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.remote-directory-panel > .file-preview-state {
+  margin: 12px 18px;
 }
 
 .file-preview-panel {
@@ -7150,8 +7511,27 @@ body {
     padding: 12px;
   }
 
+  .remote-directory-layer {
+    align-items: end;
+    padding: 12px;
+  }
+
   .remote-download-panel {
     width: 100%;
+    border-radius: 22px;
+  }
+
+  .remote-download-actions {
+    flex-wrap: wrap;
+  }
+
+  .remote-download-browse-button {
+    margin-right: auto;
+  }
+
+  .remote-directory-panel {
+    width: 100%;
+    height: min(86vh, 720px);
     border-radius: 22px;
   }
 
@@ -7412,23 +7792,23 @@ body {
 }
 
 .app-shell[data-theme="dark"] .task-status-card {
-  border-color: rgba(255, 255, 255, 0.09);
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(235, 239, 245, 0.62);
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .task-status-card.agent {
-  border-color: rgba(48, 209, 88, 0.2);
-  background: rgba(48, 209, 88, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .task-status-card.ssh {
-  border-color: rgba(255, 184, 77, 0.24);
-  background: rgba(255, 184, 77, 0.1);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .task-status-main strong {
-  color: var(--text);
+  color: rgba(235, 239, 245, 0.7);
 }
 
 .app-shell[data-theme="dark"] .task-status-main span,
@@ -7442,13 +7822,13 @@ body {
 }
 
 .app-shell[data-theme="dark"] .task-status-actions button {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.09);
+  color: rgba(235, 239, 245, 0.68);
+  background: rgba(255, 255, 255, 0.065);
 }
 
 .app-shell[data-theme="dark"] .task-status-actions button:first-child {
-  color: #ffffff;
-  background: #0a84ff;
+  color: #8fc7ff;
+  background: rgba(10, 132, 255, 0.12);
 }
 
 .app-shell[data-theme="dark"] .task-status-details pre {
@@ -7507,49 +7887,35 @@ body {
 }
 
 .app-shell[data-theme="dark"] .friendly-progress-card {
-  border-color: rgba(52, 199, 89, 0.2);
-  color: var(--text);
-  background: rgba(52, 199, 89, 0.09);
+  color: rgba(235, 239, 245, 0.58);
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .friendly-progress-card strong {
-  color: var(--text);
+  color: rgba(235, 239, 245, 0.66);
 }
 
 .app-shell[data-theme="dark"] .friendly-progress-card span {
-  color: #8ee0ad;
-  background: rgba(52, 199, 89, 0.14);
-}
-
-.app-shell[data-theme="dark"] .friendly-progress-card p {
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(235, 239, 245, 0.44);
 }
 
 .app-shell[data-theme="dark"] .friendly-progress-card button {
-  background: #0a84ff;
+  color: rgba(235, 239, 245, 0.62);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .app-shell[data-theme="dark"] .agent-failure-card {
-  border-color: rgba(255, 184, 77, 0.24);
-  color: #f3d18a;
-  background: rgba(255, 184, 77, 0.1);
-}
-
-.app-shell[data-theme="dark"] .agent-failure-copy strong {
-  color: #ffe6ad;
+  color: rgba(235, 239, 245, 0.58);
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .agent-failure-copy p {
-  color: #e8d5a7;
-}
-
-.app-shell[data-theme="dark"] .agent-failure-copy span {
-  color: #cdbb8d;
+  color: rgba(235, 239, 245, 0.58);
 }
 
 .app-shell[data-theme="dark"] .agent-failure-actions button {
-  color: #ffe2a8;
-  background: rgba(255, 255, 255, 0.09);
+  color: rgba(235, 239, 245, 0.62);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .app-shell[data-theme="dark"] .agent-failure-actions button:hover {
@@ -7557,12 +7923,12 @@ body {
 }
 
 .app-shell[data-theme="dark"] .agent-failure-actions button.primary {
-  color: #ffffff;
-  background: #0a84ff;
+  color: #86bdf4;
+  background: rgba(10, 132, 255, 0.1);
 }
 
 .app-shell[data-theme="dark"] .agent-failure-actions button.primary:hover {
-  background: var(--blue);
+  background: rgba(10, 132, 255, 0.16);
 }
 
 .app-shell[data-theme="dark"] .assistant-answer,
@@ -7905,10 +8271,38 @@ body {
 
 .app-shell[data-theme="dark"] .config-control,
 .app-shell[data-theme="dark"] .directory-search,
-.app-shell[data-theme="dark"] .manual-directory,
+.app-shell[data-theme="dark"] .manual-directory label,
 .app-shell[data-theme="dark"] .wake-word-control {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.app-shell[data-theme="dark"] .directory-add-methods {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell[data-theme="dark"] .directory-method-card + .directory-method-card {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell[data-theme="dark"] .directory-method-copy strong {
+  color: var(--text);
+}
+
+.app-shell[data-theme="dark"] .manual-directory span {
+  color: rgba(235, 239, 245, 0.58);
+}
+
+.app-shell[data-theme="dark"] .directory-method-action,
+.app-shell[data-theme="dark"] .manual-directory button {
+  color: #8fc7ff;
+  background: rgba(41, 151, 255, 0.16);
+}
+
+.app-shell[data-theme="dark"] .directory-method-action:disabled,
+.app-shell[data-theme="dark"] .manual-directory button:disabled {
+  color: rgba(235, 239, 245, 0.32);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .app-shell[data-theme="dark"] .scan-skeleton span {
@@ -8319,17 +8713,6 @@ body {
   font-size: 12px;
 }
 
-.app-shell[data-theme="dark"].mac-shell .composer-release-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .composer-release-button {
-  color: #ffd866;
-  background: rgba(255, 204, 0, 0.13);
-}
-
-.app-shell[data-theme="dark"].mac-shell .composer-release-button:hover,
-.app-shell[data-theme="dark"].mac-shell .conversation .composer-release-button:hover {
-  background: rgba(255, 204, 0, 0.19);
-}
-
 .app-shell[data-theme="dark"].mac-shell .composer .input-actions .composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .conversation .input-actions .composer-icon-button {
   width: 34px;
@@ -8366,6 +8749,50 @@ body {
 .app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button:disabled {
   color: rgba(235, 239, 245, 0.34);
   background: rgba(255, 255, 255, 0.07);
+}
+
+.composer .input-actions .directory-button.composer-icon-button:not(:disabled),
+.conversation .input-actions .directory-button.composer-icon-button:not(:disabled),
+.composer .input-actions .image-button.composer-icon-button:not(:disabled),
+.conversation .input-actions .image-button.composer-icon-button:not(:disabled) {
+  color: #8d94a3;
+  background: transparent;
+}
+
+.composer .input-actions .directory-button.composer-icon-button:not(:disabled):hover,
+.conversation .input-actions .directory-button.composer-icon-button:not(:disabled):hover,
+.composer .input-actions .image-button.composer-icon-button:not(:disabled):hover,
+.conversation .input-actions .image-button.composer-icon-button:not(:disabled):hover {
+  color: #e6e8ee;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .directory-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .directory-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .image-button.composer-icon-button:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .image-button.composer-icon-button:not(:disabled) {
+  color: #8d94a3;
+  background: transparent;
+}
+
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .directory-button.composer-icon-button:not(:disabled):hover,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .directory-button.composer-icon-button:not(:disabled):hover,
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .image-button.composer-icon-button:not(:disabled):hover,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .image-button.composer-icon-button:not(:disabled):hover {
+  color: #e6e8ee;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.iphone-shell .iphone-icon-button.remote-directory-button:not(:disabled),
+.iphone-shell .iphone-icon-button.attachment-button:not(:disabled) {
+  color: #8d94a3;
+  background: transparent;
+}
+
+.iphone-shell[data-theme="dark"] .iphone-icon-button.remote-directory-button:not(:disabled),
+.iphone-shell[data-theme="dark"] .iphone-icon-button.attachment-button:not(:disabled) {
+  color: #8d94a3;
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"].mac-shell .composer .input-actions .download-button.composer-icon-button:disabled,
@@ -8806,6 +9233,12 @@ body {
     max(8px, var(--safe-left));
 }
 
+.app-shell:is([data-platform="ios"], [data-platform="android"]) .remote-directory-layer {
+  align-items: end;
+  padding: calc(8px + var(--safe-top)) max(8px, var(--safe-right)) calc(8px + var(--safe-bottom))
+    max(8px, var(--safe-left));
+}
+
 .app-shell:is([data-platform="ios"], [data-platform="android"]) .remote-download-panel {
   width: 100%;
   border-radius: 24px;
@@ -8845,7 +9278,9 @@ body {
 .app-shell[data-theme="dark"].mac-shell .input-row textarea,
 .app-shell[data-theme="dark"].mac-shell .conversation .input-row textarea {
   min-height: 72px;
+  max-height: min(28vh, 220px);
   padding: 6px 2px 0;
+  overflow-y: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -8858,116 +9293,101 @@ body {
   padding: 0;
 }
 
-.composer .input-actions .voice-button.composer-icon-button,
-.conversation .input-actions .voice-button.composer-icon-button,
-.composer .input-actions .download-button.composer-icon-button,
-.conversation .input-actions .download-button.composer-icon-button,
-.composer .input-actions .wake-button.composer-icon-button,
-.conversation .input-actions .wake-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .voice-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .voice-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .download-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .download-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .wake-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .wake-button.composer-icon-button {
-  color: #1c1c1e;
-  background: rgba(118, 118, 128, 0.12);
+.composer .input-actions .composer-icon-button,
+.conversation .input-actions .composer-icon-button,
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .composer-icon-button,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .composer-icon-button {
+  color: #8d94a3;
+  background: transparent;
 }
 
-.composer .input-actions .voice-button.composer-icon-button:hover,
-.conversation .input-actions .voice-button.composer-icon-button:hover,
-.composer .input-actions .download-button.composer-icon-button:hover,
-.conversation .input-actions .download-button.composer-icon-button:hover,
-.composer .input-actions .wake-button.composer-icon-button:hover,
-.conversation .input-actions .wake-button.composer-icon-button:hover {
-  background: rgba(118, 118, 128, 0.18);
-}
-
-.composer .input-actions .wake-button.composer-icon-button.listening,
-.conversation .input-actions .wake-button.composer-icon-button.listening {
-  color: #1c1c1e;
-  background: rgba(118, 118, 128, 0.2);
-}
-
-.composer .input-actions .send-button.composer-icon-button,
-.conversation .input-actions .send-button.composer-icon-button {
-  color: #ffffff;
-  background: #1c1c1e;
-}
-
-.composer .input-actions .send-button.composer-icon-button:hover,
-.conversation .input-actions .send-button.composer-icon-button:hover {
-  background: #000000;
-}
-
-.composer .input-actions .send-button.composer-icon-button.stop-icon-button,
-.conversation .input-actions .send-button.composer-icon-button.stop-icon-button {
-  color: #ffffff;
-  background: #ff3b30;
-}
-
-.composer .input-actions .send-button.composer-icon-button.stop-icon-button:hover,
-.conversation .input-actions .send-button.composer-icon-button.stop-icon-button:hover {
-  background: #e9342b;
-}
-
-.composer .input-actions .send-button.composer-icon-button:disabled,
-.conversation .input-actions .send-button.composer-icon-button:disabled {
-  color: rgba(60, 60, 67, 0.34);
-  background: rgba(118, 118, 128, 0.12);
-}
-
-.composer .input-actions .download-button.composer-icon-button:disabled,
-.conversation .input-actions .download-button.composer-icon-button:disabled {
-  color: rgba(60, 60, 67, 0.34);
-  background: rgba(118, 118, 128, 0.1);
-}
-
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .voice-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .voice-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .download-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .download-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .image-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .image-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .wake-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .wake-button.composer-icon-button,
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .wake-button.composer-icon-button.listening,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .wake-button.composer-icon-button.listening {
-  color: #f3f4f8;
+.composer .input-actions .composer-icon-button:hover:not(:disabled),
+.conversation .input-actions .composer-icon-button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .composer-icon-button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .composer-icon-button:hover:not(:disabled) {
+  color: #e6e8ee;
   background: rgba(255, 255, 255, 0.08);
 }
 
+.composer .input-actions .composer-icon-button:active:not(:disabled),
+.conversation .input-actions .composer-icon-button:active:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .composer-icon-button:active:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .composer-icon-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.composer .input-actions .voice-button.composer-icon-button.listening,
+.conversation .input-actions .voice-button.composer-icon-button.listening,
+.composer .input-actions .wake-button.composer-icon-button.listening,
+.conversation .input-actions .wake-button.composer-icon-button.listening,
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .voice-button.composer-icon-button.listening,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .voice-button.composer-icon-button.listening,
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .wake-button.composer-icon-button.listening,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .wake-button.composer-icon-button.listening,
+.composer .input-actions .send-button.composer-icon-button,
+.conversation .input-actions .send-button.composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button {
-  color: #111217;
-  background: #f3f4f8;
+  color: #ffffff;
+  background: #0a84ff;
 }
 
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button:hover,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button:hover {
-  background: #ffffff;
+.composer .input-actions .voice-button.composer-icon-button.listening:hover:not(:disabled),
+.conversation .input-actions .voice-button.composer-icon-button.listening:hover:not(:disabled),
+.composer .input-actions .wake-button.composer-icon-button.listening:hover:not(:disabled),
+.conversation .input-actions .wake-button.composer-icon-button.listening:hover:not(:disabled),
+.composer .input-actions .send-button.composer-icon-button:hover:not(:disabled),
+.conversation .input-actions .send-button.composer-icon-button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button:hover:not(:disabled) {
+  background: #2997ff;
 }
 
+.composer .input-actions .send-button.composer-icon-button.stop-icon-button,
+.conversation .input-actions .send-button.composer-icon-button.stop-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button.stop-icon-button,
 .app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button.stop-icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 9px;
   color: #ffffff;
   background: #ff453a;
 }
 
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button.stop-icon-button:hover,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button.stop-icon-button:hover {
+.composer .input-actions .send-button.composer-icon-button.stop-icon-button svg,
+.conversation .input-actions .send-button.composer-icon-button.stop-icon-button svg,
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button.stop-icon-button svg,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button.stop-icon-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.composer .input-actions .send-button.composer-icon-button.stop-icon-button:hover:not(:disabled),
+.conversation .input-actions .send-button.composer-icon-button.stop-icon-button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button.stop-icon-button:hover:not(:disabled),
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button.stop-icon-button:hover:not(:disabled) {
   background: #ff5a52;
 }
 
-.app-shell[data-theme="dark"].mac-shell .composer .input-actions .send-button.composer-icon-button:disabled,
-.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .send-button.composer-icon-button:disabled {
-  color: rgba(235, 239, 245, 0.34);
-  background: rgba(255, 255, 255, 0.07);
+.composer .input-actions .composer-icon-button:disabled,
+.conversation .input-actions .composer-icon-button:disabled,
+.app-shell[data-theme="dark"].mac-shell .composer .input-actions .composer-icon-button:disabled,
+.app-shell[data-theme="dark"].mac-shell .conversation .input-actions .composer-icon-button:disabled {
+  color: #687080;
+  background: transparent;
+  opacity: 0.38;
+  cursor: default;
 }
 
 .app-shell:is([data-platform="ios"], [data-platform="android"]) .composer {
   padding-top: 12px;
   padding-bottom: calc(11px + var(--safe-bottom));
+}
+
+.app-shell:is([data-platform="ios"], [data-platform="android"]) .composer .input-row textarea,
+.native-app-shell:is([data-platform="ios"], [data-platform="android"]) .composer .input-row textarea {
+  max-height: min(24vh, 168px);
 }
 
 .composer:focus-within,
@@ -9211,7 +9631,7 @@ body {
 
 .app-shell[data-theme="dark"]:is([data-platform="ios"], [data-platform="android"])
   .settings-panel.add-session-mode
-  .session-import:has(.session-tabs) {
+  .session-import {
   flex: 1 1 auto;
 }
 
@@ -9439,7 +9859,7 @@ body {
 
 .app-shell:is([data-platform="ios"], [data-platform="android"])
   .settings-panel.add-session-mode
-  .session-import:has(.session-tabs) {
+  .session-import {
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -10723,7 +11143,7 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
   touch-action: none;
   color: var(--iphone-text);
   background: var(--iphone-bg);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  font-family: var(--app-font-family);
 }
 
 @media (max-height: 760px) {
@@ -10979,7 +11399,7 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
   gap: 4px;
   width: 100%;
   max-width: 100%;
-  max-height: min(34dvh, 220px);
+  max-height: min(36dvh, 260px);
   padding: 8px 8px 7px 11px;
   overflow: hidden;
   border: 1px solid var(--iphone-line);
@@ -10996,10 +11416,10 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
 .iphone-composer textarea {
   width: 100%;
   min-height: 36px;
-  max-height: 96px;
+  max-height: min(22dvh, 140px);
   padding: 4px 3px 0;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   border: 0;
   outline: none;
   resize: none;
@@ -11046,13 +11466,13 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 13px;
-  color: var(--iphone-text);
-  background: var(--iphone-soft);
+  border-radius: 10px;
+  color: #8d94a3;
+  background: transparent;
   cursor: pointer;
 }
 
@@ -11060,11 +11480,8 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
 .iphone-send-button svg {
   width: 17px;
   height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2.1;
+  fill: currentColor;
+  stroke: none;
 }
 
 .iphone-icon-button.active {
@@ -11074,12 +11491,13 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
 
 .iphone-icon-button.muted {
   color: var(--iphone-muted);
-  background: var(--iphone-soft);
+  background: transparent;
+  opacity: 0.42;
 }
 
 .iphone-icon-button.danger {
   color: #ffffff;
-  background: #ff453a;
+  background: var(--iphone-accent);
 }
 
 .iphone-send-button {
@@ -11088,21 +11506,30 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
 }
 
 .iphone-send-button.stop {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
   color: #ffffff;
   background: #ff453a;
+}
+
+.iphone-send-button.stop svg {
+  width: 15px;
+  height: 15px;
 }
 
 .iphone-send-button:disabled,
 .iphone-icon-button:disabled {
   color: rgba(60, 60, 67, 0.38);
-  background: rgba(118, 118, 128, 0.11);
+  background: transparent;
+  opacity: 0.38;
   cursor: default;
 }
 
 .iphone-shell[data-theme="dark"] .iphone-send-button:disabled,
 .iphone-shell[data-theme="dark"] .iphone-icon-button:disabled {
   color: rgba(235, 239, 245, 0.28);
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
 }
 
 html.aiwb-keyboard-focus:has(.iphone-shell) body,
@@ -11120,8 +11547,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   padding-bottom: max(7px, var(--safe-bottom));
 }
 
-.iphone-add-session-button,
-.iphone-release-button {
+.iphone-add-session-button {
   height: 34px;
   padding: 0 14px;
   border: 0;
@@ -11131,13 +11557,6 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   font: inherit;
   font-size: 14px;
   font-weight: 700;
-}
-
-.iphone-release-button {
-  flex: 0 0 auto;
-  color: #8a6100;
-  background: rgba(255, 204, 0, 0.16);
-  font-size: 12px;
 }
 
 .iphone-voice-error {
@@ -11608,18 +12027,13 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 }
 
 .iphone-shell .friendly-progress-card {
-  width: 100%;
-  padding: 13px 14px;
-  border-radius: 16px;
+  width: max-content;
+  max-width: 100%;
+  padding: 0;
 }
 
 .iphone-shell .friendly-progress-card strong {
-  font-size: 15px;
-}
-
-.iphone-shell .friendly-progress-card p {
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 11px;
 }
 
 .iphone-shell .rich-message,
@@ -11909,6 +12323,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 
 .iphone-shell[data-theme="dark"] .settings-panel :is(.settings-grid, .session-import, .advanced-settings, .connection-summary-card, .agent-install-card, .migration-settings-card),
 .iphone-shell[data-theme="dark"] .remote-download-panel,
+.iphone-shell[data-theme="dark"] .remote-directory-panel,
 .iphone-shell[data-theme="dark"] .file-preview-panel {
   color: #f5f6fa;
   background: #1d1e24;
@@ -11954,8 +12369,20 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   padding: calc(10px + var(--safe-top)) max(10px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(10px, var(--safe-left));
 }
 
+.iphone-shell .remote-directory-layer {
+  align-items: end;
+  padding: calc(10px + var(--safe-top)) max(10px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(10px, var(--safe-left));
+}
+
 .iphone-shell .remote-download-panel {
   width: 100%;
+  max-width: none;
+  border-radius: 24px;
+}
+
+.iphone-shell .remote-directory-panel {
+  width: 100%;
+  height: min(86vh, 720px);
   max-width: none;
   border-radius: 24px;
 }
@@ -12338,13 +12765,13 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 /* Mac workspace redesign: conversation-first desktop layout matching the native design direction. */
 .mac-shell {
   --mac-sidebar-width: 288px;
-  grid-template-rows: 52px minmax(0, 1fr) auto;
+  grid-template-rows: 38px minmax(0, 1fr) auto;
   background: #f7f7f8;
 }
 
 .mac-shell .topbar {
-  min-height: 52px;
-  grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr) 44px;
+  min-height: 38px;
+  grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr) 78px;
   padding: 0 10px 0 0;
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(247, 247, 248, 0.96);
@@ -12362,16 +12789,34 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   grid-column: 2;
   align-items: center;
   justify-content: center;
+  height: 38px;
   min-width: 0;
   gap: 8px;
   opacity: 1;
+  transform: none;
 }
 
 .mac-shell .topbar-session strong {
+  display: inline-flex;
+  align-items: center;
   overflow: hidden;
   color: #202124;
   font-size: 14px;
   font-weight: 680;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-shell .topbar-session-detail {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  color: #7b818c;
+  font-size: 10.5px;
+  font-weight: 520;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -12384,6 +12829,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   color: #747984;
   font-size: 11px;
   font-weight: 600;
+  line-height: 18px;
 }
 
 .mac-shell .topbar-session-status .status-dot {
@@ -12397,20 +12843,22 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   justify-self: end;
 }
 
-.mac-shell .topbar-logo-button {
+.mac-shell .topbar-logo-button,
+.mac-shell .topbar-refresh-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
   border-radius: 9px;
   color: #636874;
-  background: rgba(118, 118, 128, 0.1);
+  background: transparent;
 }
 
-.mac-shell .topbar-logo-button:hover {
+.mac-shell .topbar-logo-button:hover,
+.mac-shell .topbar-refresh-button:hover {
   color: #202124;
   background: rgba(118, 118, 128, 0.16);
 }
@@ -12653,7 +13101,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 }
 
 .mac-shell .task-status-card {
-  border-radius: 12px;
+  border-radius: 0;
   box-shadow: none;
 }
 
@@ -12726,6 +13174,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 }
 
 .app-shell[data-theme="dark"].mac-shell .topbar {
+  min-height: 38px;
   border-bottom-color: rgba(255, 255, 255, 0.07);
   background: rgba(16, 18, 23, 0.96);
   box-shadow: none;
@@ -12735,17 +13184,23 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   color: #f2f3f5;
 }
 
+.app-shell[data-theme="dark"].mac-shell .topbar-session-detail {
+  color: #777e89;
+}
+
 .app-shell[data-theme="dark"].mac-shell .topbar-session-status,
 .app-shell[data-theme="dark"].mac-shell .topbar-more {
   color: #8a909b;
 }
 
-.app-shell[data-theme="dark"].mac-shell .topbar-logo-button {
+.app-shell[data-theme="dark"].mac-shell .topbar-logo-button,
+.app-shell[data-theme="dark"].mac-shell .topbar-refresh-button {
   color: #9aa0aa;
-  background: rgba(255, 255, 255, 0.065);
+  background: transparent;
 }
 
-.app-shell[data-theme="dark"].mac-shell .topbar-logo-button:hover {
+.app-shell[data-theme="dark"].mac-shell .topbar-logo-button:hover,
+.app-shell[data-theme="dark"].mac-shell .topbar-refresh-button:hover {
   color: #f1f3f6;
   background: rgba(255, 255, 255, 0.1);
 }
@@ -12826,9 +13281,9 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 
 .app-shell[data-theme="dark"].mac-shell .task-status-card.agent,
 .app-shell[data-theme="dark"].mac-shell .task-status-card.ssh {
-  border-color: rgba(255, 255, 255, 0.09);
-  color: #c8ccd4;
-  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(235, 239, 245, 0.58);
+  background: transparent;
 }
 
 /* Mac fidelity pass: match the selected native workbench reference. */
@@ -12856,8 +13311,11 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 }
 
 .mac-shell .sidebar-version-label {
-  flex: 1 1 auto;
+  display: block;
+  flex: 0 0 auto;
   min-width: 0;
+  margin-top: auto;
+  padding: 10px 2px 2px;
   overflow: hidden;
   color: rgba(60, 60, 67, 0.46);
   font-size: 10px;
@@ -12952,7 +13410,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-row textarea {
   grid-column: 1;
   min-height: 38px;
-  max-height: 92px;
+  max-height: min(22vh, 140px);
   padding: 9px 6px 7px;
   font-size: 14px;
   line-height: 1.45;
@@ -12980,13 +13438,6 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   border-radius: 10px;
 }
 
-.mac-shell .composer.compact .composer-release-button {
-  height: 30px;
-  padding: 0 9px;
-  border-radius: 9px;
-  font-size: 11px;
-}
-
 .app-shell[data-theme="dark"].mac-shell .mac-session-channel {
   color: #777f8b;
 }
@@ -13012,10 +13463,10 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .app-shell[data-theme="dark"].mac-shell .task-status-card.agent,
 .app-shell[data-theme="dark"].mac-shell .task-status-card.ssh {
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px 14px;
-  margin: 12px 0 0 34px;
-  padding: 10px 12px;
-  border-radius: 11px;
+  gap: 6px 12px;
+  margin: 6px 0 0 34px;
+  padding: 4px 0 4px 9px;
+  border-radius: 0;
 }
 
 .mac-shell .task-status-main {
@@ -13023,11 +13474,12 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 }
 
 .mac-shell .task-status-main strong {
-  font-size: 12px;
+  color: #666d78;
+  font-size: 11px;
 }
 
 .mac-shell .task-status-main > span {
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .mac-shell .task-status-main > small {
@@ -13040,10 +13492,10 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 }
 
 .mac-shell .task-status-actions button {
-  min-height: 28px;
-  padding: 0 9px;
-  border-radius: 8px;
-  font-size: 11px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
 }
 
 .mac-shell .task-status-details {
@@ -13397,7 +13849,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
     justify-self: end;
   }
 
-  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] :is(.native-ipad-sidebar-toggle, .native-log-button, .native-settings-button) {
+  .native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] :is(.native-ipad-sidebar-toggle, .native-refresh-button, .native-log-button, .native-settings-button) {
     color: rgba(245, 245, 247, 0.8);
     background: rgba(255, 255, 255, 0.08);
   }
@@ -13496,7 +13948,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 
   .native-app-shell[data-native-form-factor="ipad"] .native-composer-dock textarea {
     min-height: 38px;
-    max-height: 120px;
+    max-height: min(24vh, 160px);
     padding: 8px 8px 2px;
     font-size: 15px;
     line-height: 1.45;
@@ -13542,4 +13994,359 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   .native-app-shell[data-native-form-factor="ipad"] .native-composer-dock .composer.not-ready .voice-hint.inline {
     display: none;
   }
+}
+
+/* Sent-message redesign: compact bubble + separate timestamp/actions row. */
+.conversation .user-prompt,
+.mac-shell .conversation .user-prompt,
+.native-conversation .user-prompt,
+.iphone-shell .user-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: center;
+  width: min(820px, 100%);
+  max-width: min(820px, 100%);
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.iphone-shell .user-prompt {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+
+.user-prompt .user-message-card {
+  width: fit-content;
+  max-width: min(560px, 78%);
+  padding: 13px 18px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 26px;
+  color: #111827;
+  background: #f2f2f4;
+  box-shadow: none;
+}
+
+.conversation .user-prompt .user-message-card > p,
+.mac-shell .conversation .user-prompt .user-message-card > p,
+.native-conversation .user-prompt .user-message-card > p,
+.iphone-shell .user-prompt .user-message-card > p,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card > p,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .user-message-card > p,
+.iphone-shell[data-theme="dark"] .user-prompt .user-message-card > p {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mac-shell .conversation .user-prompt .user-message-card > p,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card > p {
+  font-size: 16px;
+}
+
+.iphone-shell .user-prompt .user-message-card {
+  max-width: min(82%, 560px);
+  padding: 12px 17px;
+  border-radius: 24px;
+}
+
+.iphone-shell .user-prompt .user-message-card > p {
+  font-size: 16px;
+}
+
+.user-prompt.has-files .user-message-card {
+  display: grid;
+  gap: 10px;
+  max-width: min(620px, 82%);
+}
+
+.user-prompt.has-files .user-message-card .file-reference-list {
+  margin: 0;
+}
+
+.user-prompt .user-message-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  min-height: 28px;
+  margin: 0 10px 0 0;
+  color: #8e8e93;
+}
+
+.user-prompt .user-message-time,
+.conversation .user-prompt .user-message-time,
+.native-conversation .user-prompt .user-message-time,
+.iphone-shell .user-prompt .user-message-time {
+  position: static;
+  inset: auto;
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message,
+.native-conversation .user-prompt .copy-message.copy-user-message,
+.iphone-shell .user-prompt .copy-message.copy-user-message,
+.user-prompt .edit-user-message {
+  position: static;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message:hover,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message:hover,
+.native-conversation .user-prompt .copy-message.copy-user-message:hover,
+.iphone-shell .user-prompt .copy-message.copy-user-message:hover,
+.user-prompt .edit-user-message:hover {
+  color: #56565c;
+  background: transparent;
+}
+
+.user-prompt .copy-message.copy-user-message .copy-message-label {
+  display: none;
+}
+
+.user-prompt .copy-message.copy-user-message svg,
+.user-prompt .edit-user-message svg {
+  width: 22px;
+  height: 22px;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.native-conversation .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.iphone-shell .user-prompt .copy-message.copy-user-message.copy-state-copied {
+  color: #32d36c;
+  background: transparent;
+}
+
+.app-shell[data-theme="dark"] .user-prompt .user-message-card,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .user-message-card,
+.iphone-shell[data-theme="dark"] .user-prompt .user-message-card {
+  border-color: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  background: #2c2c2e;
+}
+
+.app-shell[data-theme="dark"] .user-prompt .user-message-meta,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .user-message-meta,
+.iphone-shell[data-theme="dark"] .user-prompt .user-message-meta {
+  color: #8e8e93;
+}
+
+.app-shell[data-theme="dark"] .conversation .user-prompt .copy-message.copy-user-message:hover,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .copy-message.copy-user-message:hover,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .copy-message.copy-user-message:hover,
+.iphone-shell[data-theme="dark"] .user-prompt .copy-message.copy-user-message:hover,
+.app-shell[data-theme="dark"] .user-prompt .edit-user-message:hover,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .edit-user-message:hover,
+.iphone-shell[data-theme="dark"] .user-prompt .edit-user-message:hover {
+  color: #c7c7cc;
+  background: transparent;
+}
+
+@media (max-width: 767px) {
+  .iphone-shell .user-prompt .user-message-card,
+  .native-conversation .user-prompt .user-message-card {
+    max-width: 82%;
+  }
+
+  .iphone-shell .user-prompt .user-message-meta,
+  .native-conversation .user-prompt .user-message-meta {
+    gap: 16px;
+    margin-right: 9px;
+  }
+}
+
+/* Global message typography: sent and received message bodies share one readable system. */
+.conversation .user-prompt .user-message-card > p,
+.native-conversation .user-prompt .user-message-card > p,
+.iphone-shell .user-prompt .user-message-card > p,
+.agent-response .assistant-copy,
+.conversation .assistant-copy,
+.native-conversation .assistant-copy,
+.iphone-shell .assistant-copy,
+.assistant-answer .rich-message,
+.conversation .rich-message,
+.native-conversation .rich-message,
+.iphone-shell .rich-message {
+  font-family: var(--message-font-family);
+  font-size: var(--message-font-size);
+  font-weight: var(--message-font-weight);
+  line-height: var(--message-line-height);
+}
+
+.conversation .rich-message h1,
+.conversation .rich-message h2,
+.conversation .rich-message h3,
+.conversation .rich-message h4,
+.native-conversation .rich-message h1,
+.native-conversation .rich-message h2,
+.native-conversation .rich-message h3,
+.native-conversation .rich-message h4,
+.iphone-shell .rich-message h1,
+.iphone-shell .rich-message h2,
+.iphone-shell .rich-message h3,
+.iphone-shell .rich-message h4 {
+  font-family: var(--message-font-family);
+}
+
+/* Sent message meta polish: keep time, copy, and edit on one baseline with one neutral color. */
+.conversation .user-prompt .user-message-meta,
+.mac-shell .conversation .user-prompt .user-message-meta,
+.native-conversation .user-prompt .user-message-meta,
+.iphone-shell .user-prompt .user-message-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 20px;
+  margin: -1px 5px 0 0;
+  color: #8e8e93;
+}
+
+.conversation .user-prompt .user-message-meta > *,
+.mac-shell .conversation .user-prompt .user-message-meta > *,
+.native-conversation .user-prompt .user-message-meta > *,
+.iphone-shell .user-prompt .user-message-meta > * {
+  flex: 0 0 auto;
+}
+
+.conversation .user-prompt .user-message-time,
+.mac-shell .conversation .user-prompt .user-message-time,
+.native-conversation .user-prompt .user-message-time,
+.iphone-shell .user-prompt .user-message-time {
+  position: static !important;
+  inset: auto !important;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message,
+.native-conversation .user-prompt .copy-message.copy-user-message,
+.iphone-shell .user-prompt .copy-message.copy-user-message,
+.conversation .user-prompt .edit-user-message,
+.mac-shell .conversation .user-prompt .edit-user-message,
+.native-conversation .user-prompt .edit-user-message,
+.iphone-shell .user-prompt .edit-user-message {
+  position: static !important;
+  inset: auto !important;
+  display: inline-grid !important;
+  place-items: center;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: currentColor !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: 1;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message .copy-message-label,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message .copy-message-label,
+.native-conversation .user-prompt .copy-message.copy-user-message .copy-message-label,
+.iphone-shell .user-prompt .copy-message.copy-user-message .copy-message-label {
+  display: none;
+  max-width: 0;
+  opacity: 0;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message svg,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message svg,
+.native-conversation .user-prompt .copy-message.copy-user-message svg,
+.iphone-shell .user-prompt .copy-message.copy-user-message svg,
+.conversation .user-prompt .edit-user-message svg,
+.mac-shell .conversation .user-prompt .edit-user-message svg,
+.native-conversation .user-prompt .edit-user-message svg,
+.iphone-shell .user-prompt .edit-user-message svg {
+  width: 17px;
+  height: 17px;
+}
+
+.conversation .user-prompt .copy-message.copy-user-message:hover,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message:hover,
+.native-conversation .user-prompt .copy-message.copy-user-message:hover,
+.iphone-shell .user-prompt .copy-message.copy-user-message:hover,
+.conversation .user-prompt .edit-user-message:hover,
+.mac-shell .conversation .user-prompt .edit-user-message:hover,
+.native-conversation .user-prompt .edit-user-message:hover,
+.iphone-shell .user-prompt .edit-user-message:hover,
+.conversation .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.native-conversation .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.iphone-shell .user-prompt .copy-message.copy-user-message.copy-state-copied,
+.conversation .user-prompt .copy-message.copy-user-message.copy-state-failed,
+.mac-shell .conversation .user-prompt .copy-message.copy-user-message.copy-state-failed,
+.native-conversation .user-prompt .copy-message.copy-user-message.copy-state-failed,
+.iphone-shell .user-prompt .copy-message.copy-user-message.copy-state-failed {
+  color: #a8a8ad !important;
+  background: transparent !important;
+}
+
+.app-shell[data-theme="dark"] .conversation .user-prompt .user-message-meta,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .user-message-meta,
+.iphone-shell[data-theme="dark"] .user-prompt .user-message-meta {
+  color: #8e8e93;
+}
+
+.app-shell[data-theme="dark"] .conversation .user-prompt .copy-message.copy-user-message:hover,
+.app-shell[data-theme="dark"] .conversation .user-prompt .edit-user-message:hover,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .copy-message.copy-user-message:hover,
+.native-app-shell[data-theme="dark"] .native-conversation .user-prompt .edit-user-message:hover,
+.iphone-shell[data-theme="dark"] .user-prompt .copy-message.copy-user-message:hover,
+.iphone-shell[data-theme="dark"] .user-prompt .edit-user-message:hover {
+  color: #c7c7cc !important;
+}
+
+/* Mac sent messages stay compact even when the shared reading size is larger. */
+.mac-shell .conversation .user-prompt .user-message-card > p,
+.app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card > p {
+  font-size: 14px;
+  line-height: 1.5;
 }

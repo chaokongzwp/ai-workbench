@@ -235,6 +235,17 @@ export function shortError(error) {
     /^Error invoking remote method '[^']+': Error:\s*/i,
     "",
   );
+  if (/ENOSPC|no space left on device|not enough space/i.test(message)) {
+    return "远端磁盘空间不足：CLI 没有完成安装。请先清理 Windows 磁盘空间后再重试。";
+  }
+  if (/__AIWB_AGENT_CLI_STATUS__failed/i.test(message)) {
+    const cliError = message.match(/__AIWB_AGENT_CLI_ERROR__([^\r\n]+)/i)?.[1]?.trim();
+    if (cliError) return cliError;
+    return "CLI 安装失败：远端命令没有完成安装，请稍后重试。";
+  }
+  if (/^Load failed$|Failed to fetch|NetworkError|The Internet connection appears to be offline/i.test(message)) {
+    return "云端同步连接失败：请检查网络和服务地址，稍后重试。";
+  }
   if (/All configured authentication methods failed/i.test(message)) {
     return "SSH 登录失败：用户名或密码不正确。请手动重新输入 Windows 账户密码，不要使用系统自动填充。";
   }
@@ -314,12 +325,28 @@ export function detectAgentIssue(output, agent) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
   }
   if (/Windows PowerShell 模式暂时不能使用持续会话/i.test(text)) {
-    return `${agent.shortName} 在 Windows PowerShell 模式暂时不能使用持续会话。请改选 Windows + WSL，或把 ${agent.shortName} 安装到 WSL/Linux 环境。`;
+    return `${agent.shortName} 的 Windows 原生 Agent 还没有就绪。请先在全局设置中安装 Agent；未安装时仍可使用 SSH 直连。`;
+  }
+  if (
+    /Windows Agent 已启动，但没有找到/i.test(text) ||
+    /找不到可执行文件[：:]/i.test(text) ||
+    /spawn\s+(?:codex|claude)\s+ENOENT/i.test(text)
+  ) {
+    return missingCliIssue(agent).body;
   }
   if (text.includes(`AI Workbench: ${agent.shortName} 已退出`)) {
     return `${agent.shortName} 没有启动成功。原始原因已放在“详情”里，通常是服务器上的命令路径、登录状态或工具配置需要处理。`;
   }
   return "";
+}
+
+function missingCliIssue(agent) {
+  const name = agent?.shortName || "AI";
+  return {
+    title: `没有找到 ${name} CLI`,
+    body: `没有找到 ${name} CLI。后台 Agent 本身没有问题，但这台机器还没有安装 ${name} 命令行工具，任务没有执行。请到会话设置的“命令行工具”里单独安装 ${name}，完成后重新检测并发送。`,
+    hint: `也可以在目标 Windows PowerShell 中执行 where.exe ${agent?.id === "claude" ? "claude" : "codex"} 检查命令路径。`,
+  };
 }
 
 export function cleanAgentFailureDetail(raw) {
@@ -353,6 +380,10 @@ export function cleanAgentFailureDetail(raw) {
         parsed.hostMemPercent ? `内存：${parsed.hostMemPercent}%` : "",
         parsed.hostDiskPercent ? `磁盘：${parsed.hostDiskPercent}%` : "",
         parsed.hostLoadAvg ? `负载：${parsed.hostLoadAvg}` : "",
+        parsed.codexAvailable ? `Codex CLI：${parsed.codexAvailable === "1" ? "可用" : "未找到"}` : "",
+        parsed.codexExecutable ? `Codex 执行文件：${parsed.codexExecutable}` : "",
+        parsed.claudeAvailable ? `Claude CLI：${parsed.claudeAvailable === "1" ? "可用" : "未找到"}` : "",
+        parsed.claudeExecutable ? `Claude 执行文件：${parsed.claudeExecutable}` : "",
         output ? "\n输出：" : "",
         output,
       ];
@@ -363,12 +394,72 @@ export function cleanAgentFailureDetail(raw) {
   return clipPersistedText(text, 12_000);
 }
 
+function extractUsageLimitMessage(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  for (const line of raw.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    if (!line.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(line);
+      const result = String(parsed?.result || parsed?.error?.message || parsed?.message || "").trim();
+      if (result) return result;
+    } catch {
+      // Keep falling back to regex parsing below.
+    }
+  }
+  const resultMatch = raw.match(/["']result["']\s*:\s*["']([^"']+)["']/i);
+  if (resultMatch?.[1]) return resultMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+  const directMatch = raw.match(/You've hit your session limit\s*·?\s*resets?\s+[^"'\n\r]+/i);
+  if (directMatch?.[0]) return directMatch[0].trim();
+  return "";
+}
+
 export function classifyAgentFailure(raw, agent, status = {}) {
   const text = String(raw || status?.raw || "");
   const taskStatus = String(status?.taskStatus || "").toLowerCase();
   const exitCode = String(status?.exitCode || "").trim();
   const detail = cleanAgentFailureDetail(text);
   const blockedByTaskId = String(status?.blockedByTaskId || status?.taskId || "").trim();
+  const sessionLimitResetAt = text.match(/(?:You've hit your session limit|session limit).*?resets?\s+([^"'\n\r]+)/i)?.[1]?.trim() || "";
+  const usageLimitMessage = extractUsageLimitMessage(text);
+  const usageLimited =
+    /api_error_status["']?\s*:\s*429/i.test(text) ||
+    /You've hit your session limit/i.test(text) ||
+    /\b(?:rate|usage|session)\s+limit\b/i.test(text) ||
+    /\bquota\b/i.test(text);
+
+  if (usageLimited) {
+    return {
+      kind: "agent_usage_limited",
+      title: `${agent.shortName} 返回错误`,
+      body:
+        usageLimitMessage ||
+        (sessionLimitResetAt ? `You've hit your session limit · resets ${sessionLimitResetAt}` : "You've hit your session limit"),
+      hint: "",
+      detail,
+      canRetry: true,
+      canOpenSettings: false,
+    };
+  }
+
+  const codexCliUpgradeModel =
+    agent.id === "codex"
+      ? text.match(/The ['"]([^'"]+)['"] model requires a newer version of Codex/i)?.[1]?.trim() || ""
+      : "";
+  if (codexCliUpgradeModel || (agent.id === "codex" && /requires a newer version of Codex/i.test(text))) {
+    return {
+      kind: "agent_codex_cli_outdated",
+      title: "Codex 版本过旧",
+      body: codexCliUpgradeModel
+        ? `这台机器上的 Codex CLI 不支持 ${codexCliUpgradeModel}，所以任务没有执行成功。`
+        : "这台机器上的 Codex CLI 版本过旧，不支持当前会话选择的模型。",
+      hint: "请在这台机器上升级 Codex CLI，或先在会话设置里切回旧模型后重新发送。",
+      detail,
+      canRetry: true,
+      canOpenSettings: true,
+    };
+  }
+
   if (taskStatus === "busy" || /conversation already has a queued or running task/i.test(text)) {
     return {
       kind: "agent_conversation_busy",
@@ -450,11 +541,28 @@ export function classifyAgentFailure(raw, agent, status = {}) {
     return {
       kind: "agent_task_cancelled",
       title: `${agent.shortName} 任务已取消`,
-      body: "这条后台任务已经停止，输入框已释放。",
+      body: "这条后台任务已经停止，可以继续输入。",
       hint: "需要继续时可以重新发送同一条任务。",
       detail,
       canRetry: true,
       canOpenSettings: false,
+    };
+  }
+
+  const cliMissing =
+    /Windows Agent 已启动，但没有找到/i.test(text) ||
+    /找不到可执行文件[：:]/i.test(text) ||
+    /spawn\s+(?:codex|claude)\s+ENOENT/i.test(text);
+  if (cliMissing) {
+    const issue = missingCliIssue(agent);
+    return {
+      kind: "agent_cli_missing",
+      title: issue.title,
+      body: issue.body,
+      hint: issue.hint,
+      detail,
+      canRetry: true,
+      canOpenSettings: true,
     };
   }
 
@@ -472,11 +580,20 @@ export function classifyAgentFailure(raw, agent, status = {}) {
   }
 
   if (taskStatus === "error") {
+    const cliMissing =
+      /Windows Agent 已启动，但没有找到/i.test(text) ||
+      /找不到可执行文件[：:]/i.test(text) ||
+      /spawn\s+(?:codex|claude)\s+ENOENT/i.test(text);
+    const issue = missingCliIssue(agent);
     return {
-      kind: "agent_task_error",
-      title: `${agent.shortName} 后台任务失败`,
-      body: "Agent 已经结束这条任务，但远端工具没有返回可直接展示的最终结果。",
-      hint: "可以查看详情定位原因，修复后重新发送。",
+      kind: cliMissing ? "agent_cli_missing" : "agent_task_error",
+      title: cliMissing ? issue.title : `${agent.shortName} 后台任务失败`,
+      body: cliMissing
+        ? issue.body
+        : "Agent 已经结束这条任务，但远端工具没有返回可直接展示的最终结果。",
+      hint: cliMissing
+        ? issue.hint
+        : "可以查看详情定位原因，修复后重新发送。",
       detail,
       canRetry: true,
       canOpenSettings: true,

@@ -185,7 +185,7 @@ function selectedAgentModel(profile, agent) {
 
 export function createRemoteTaskId(conversationId, agentId) {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-  return sanitizeId(`task-${unique}-${agentId}-${conversationId || "local"}`);
+  return sanitizeId(`task-${unique}-${agentId}-${conversationId || "local"}`).replace(/-+/g, "-").slice(0, 48);
 }
 
 export function profileWithDetectedTools(profile, health) {
@@ -621,10 +621,15 @@ export function buildWindowsDiscoveryCommand(profile) {
   return powershellStdinCommand(`
 function Resolve-AiwbCommand {
   param([string]$Name)
-  $AIWB_NAMES = @($Name)
-  if ($Name -and -not $Name.EndsWith(".cmd")) { $AIWB_NAMES += "$Name.cmd" }
-  if ($Name -and -not $Name.EndsWith(".ps1")) { $AIWB_NAMES += "$Name.ps1" }
-  if ($Name -and -not $Name.EndsWith(".exe")) { $AIWB_NAMES += "$Name.exe" }
+  $AIWB_NAMES = @()
+  if ($Name -and $Name.EndsWith(".ps1")) {
+    $AIWB_NAMES += [IO.Path]::ChangeExtension($Name, ".cmd")
+  } elseif ($Name -and -not $Name.EndsWith(".cmd") -and -not $Name.EndsWith(".exe")) {
+    $AIWB_NAMES += "$Name.cmd"
+    $AIWB_NAMES += "$Name.ps1"
+    $AIWB_NAMES += "$Name.exe"
+  }
+  $AIWB_NAMES += $Name
   foreach ($AIWB_NAME in $AIWB_NAMES) {
     if (-not $AIWB_NAME) { continue }
     $AIWB_CMD = Get-Command $AIWB_NAME -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1115,12 +1120,12 @@ rm -f "$AIWB_OUTPUT" "$AIWB_LOG"
 
 export function buildWindowsCodexExecCommand(profile, agent, prompt) {
   const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
-  const command = agentCommand(profile, agent);
+  const command = agentCommand(profile, agent) || "codex";
   const stateDir = joinWindowsPath(profile.workdir, ".ai-workbench");
   const sessionFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.session`);
   const model = selectedAgentModel(profile, agent);
 
-  return powershellCommand(`
+  return powershellStdinCommand(`
 $AIWB_WORKDIR = ${psQuote(profile.workdir)}
 $AIWB_STATE_DIR = ${psQuote(stateDir)}
 $AIWB_SESSION_FILE = ${psQuote(sessionFile)}
@@ -1132,6 +1137,27 @@ $AIWB_PROMPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase
 $AIWB_OUTPUT = Join-Path $env:TEMP ("aiwb-codex-output-" + [guid]::NewGuid().ToString() + ".txt")
 $AIWB_LOG = Join-Path $env:TEMP ("aiwb-codex-log-" + [guid]::NewGuid().ToString() + ".log")
 $AIWB_MODEL = ${psQuote(model)}
+$AIWB_COMMAND = ${psQuote(command)}
+if ($AIWB_COMMAND -and (-not (Test-Path -LiteralPath $AIWB_COMMAND -PathType Leaf))) {
+  $AIWB_COMMAND_PROBE = Get-Command $AIWB_COMMAND -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($AIWB_COMMAND_PROBE) { $AIWB_COMMAND = $AIWB_COMMAND_PROBE.Source }
+}
+if ($AIWB_COMMAND -and $AIWB_COMMAND.EndsWith(".ps1")) {
+  $AIWB_CMD_SIBLING = [IO.Path]::ChangeExtension($AIWB_COMMAND, ".cmd")
+  if (Test-Path -LiteralPath $AIWB_CMD_SIBLING -PathType Leaf) { $AIWB_COMMAND = $AIWB_CMD_SIBLING }
+}
+if ($AIWB_COMMAND -and ([IO.Path]::GetExtension($AIWB_COMMAND) -match "^\.(ps1|cmd)$")) {
+  $AIWB_NPM_DIR = Split-Path -Parent $AIWB_COMMAND
+  $AIWB_CODEX_PACKAGE = Join-Path $AIWB_NPM_DIR "node_modules\@openai\codex"
+  if (Test-Path -LiteralPath $AIWB_CODEX_PACKAGE -PathType Container) {
+    $AIWB_NATIVE_COMMAND = Get-ChildItem -LiteralPath $AIWB_CODEX_PACKAGE -Recurse -Filter "codex.exe" -File -ErrorAction SilentlyContinue |
+      Select-Object -First 1 -ExpandProperty FullName
+    if ($AIWB_NATIVE_COMMAND) { $AIWB_COMMAND = $AIWB_NATIVE_COMMAND }
+  }
+}
+if (-not $AIWB_COMMAND -or (-not (Test-Path -LiteralPath $AIWB_COMMAND -PathType Leaf))) {
+  throw "没有找到 Codex 命令：$AIWB_COMMAND"
+}
 $AIWB_SESSION = ""
 if (Test-Path -LiteralPath $AIWB_SESSION_FILE) {
   $AIWB_SESSION = (Get-Content -LiteralPath $AIWB_SESSION_FILE -Raw -ErrorAction SilentlyContinue).Trim()
@@ -1141,15 +1167,18 @@ $AIWB_ARGS = @("exec")
 if ($AIWB_MODEL) {
   $AIWB_ARGS += @("--model", $AIWB_MODEL)
 }
-$AIWB_ARGS += @("--skip-git-repo-check", "--sandbox", "danger-full-access", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT)
+$AIWB_ARGS += @("--skip-git-repo-check", "--sandbox", "danger-full-access", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT, "--color", "never")
 if ($AIWB_SESSION -match "^[0-9a-fA-F-]{36}$") {
   $AIWB_ARGS += @("resume", $AIWB_SESSION, $AIWB_PROMPT)
 } else {
   $AIWB_ARGS += @($AIWB_PROMPT)
 }
 
-& ${psQuote(command)} @AIWB_ARGS *> $AIWB_LOG
+$AIWB_PREVIOUS_ERROR_ACTION = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $AIWB_COMMAND @AIWB_ARGS *> $AIWB_LOG
 $AIWB_STATUS = $LASTEXITCODE
+$ErrorActionPreference = $AIWB_PREVIOUS_ERROR_ACTION
 if ($null -eq $AIWB_STATUS) { $AIWB_STATUS = 0 }
 if ($AIWB_STATUS -ne 0) {
   if (Test-Path -LiteralPath $AIWB_LOG) { Get-Content -LiteralPath $AIWB_LOG -Raw }
@@ -1208,6 +1237,7 @@ mkdir -p ${shQuote(profile.workdir)}
 mkdir -p ${shQuote(stateDir)}
 cd ${shQuote(profile.workdir)}
 
+export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
 AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
 AIWB_OUTPUT=$(mktemp /tmp/aiwb-claude-output.XXXXXX)
 AIWB_LOG=$(mktemp /tmp/aiwb-claude-log.XXXXXX)
@@ -1420,6 +1450,24 @@ tmux send-keys -t ${shQuote(targetSession)} C-m
 sleep 1.4
 tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
 `);
+}
+
+export function buildAgentTaskCommand(profile, agent, prompt) {
+  if (!isWindowsProfile(profile)) return buildAgentSendCommand(profile, agent, prompt);
+
+  const kind = agent.id === "claude" ? "claude" : "codex";
+  const command = agentCommand(profile, agent) || kind;
+  const stateDir = joinWindowsPath(profile.workdir || ".", ".ai-workbench");
+  const suffix = kind === "claude" ? ".claude-session" : ".session";
+  const sessionFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}${suffix}`);
+  return {
+    kind,
+    command,
+    workdir: String(profile.workdir || ".").trim(),
+    model: selectedAgentModel(profile, agent),
+    prompt: formatAgentPrompt(prompt),
+    sessionFile,
+  };
 }
 
 export function buildWindowsUnsupportedAgentCommand(agent) {

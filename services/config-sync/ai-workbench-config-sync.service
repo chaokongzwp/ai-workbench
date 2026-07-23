@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Workbench Config Sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-workbench-config-sync/app
+ExecStart=/usr/bin/python3 /opt/ai-workbench-config-sync/app/aiwb_config_sync.py
+Restart=always
+RestartSec=3
+Environment=AIWB_CONFIG_SYNC_HOST=0.0.0.0
+Environment=AIWB_CONFIG_SYNC_PORT=18088
+Environment=AIWB_CONFIG_SYNC_DATA_DIR=/opt/ai-workbench-config-sync/data
+
+[Install]
+WantedBy=multi-user.target
