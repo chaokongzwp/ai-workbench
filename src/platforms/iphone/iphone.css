@@ -77,11 +77,32 @@
 }
 
 .iphone-shell .iphone-composer-actions {
+  width: auto;
   min-height: 32px;
 }
 
 .iphone-shell .iphone-composer-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 4px;
   margin-top: 4px;
+}
+
+.iphone-shell .iphone-composer-leading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.iphone-shell .iphone-composer-leading .iphone-composer-status {
+  flex: 1 1 auto;
+}
+
+.iphone-shell .iphone-composer-primary-action {
+  min-width: 32px;
+  transform: translateX(4px);
 }
 
 .iphone-shell .iphone-send-button,

@@ -328,74 +328,80 @@ function IphoneComposer({
         />
 
         <div className="iphone-composer-bottom">
-          <p className="iphone-composer-status">{statusText}</p>
-          <div className="iphone-composer-actions">
-            {profileReady ? (
-              <>
-                <button
-                  type="button"
-                  className="iphone-icon-button download-button"
-                  onClick={onOpenDownloadFile}
-                  aria-label="下载远程文件"
-                >
-                  <DownloadSimple size={17} weight="regular" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="iphone-icon-button remote-directory-button"
-                  onClick={onOpenRemoteDirectory}
-                  aria-label="查看远程文件夹"
-                  title="查看远程文件夹"
-                >
-                  <FolderOpen size={17} weight="regular" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="iphone-icon-button attachment-button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={disabled}
-                  aria-label="添加文件"
-                  title="添加文件"
-                >
-                  <Paperclip size={17} weight="regular" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className={`iphone-icon-button ${voiceActive ? "active danger" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
-                  onClick={handleVoiceClick}
-                  disabled={voiceDisabled}
-                  aria-label={
-                    !voiceInputEnabled ? "语音未开启，打开语音设置" : voiceActive ? "停止语音输入" : "语音输入"
-                  }
-                >
-                  <Microphone size={17} weight="regular" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className={`iphone-icon-button ${wakeActive ? "active" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
-                  onClick={handleWakeClick}
-                  disabled={wakeDisabled}
-                  aria-label={
-                    !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
-                  }
-                >
-                  <Lightning size={17} weight={wakeActive ? "fill" : "regular"} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className={`iphone-send-button ${stopMode ? "stop" : ""}`}
-                  onClick={() => {
-                    if (stopMode) onCancelRunningTask?.();
-                    else onSend?.();
-                  }}
-                  disabled={stopMode ? stopDisabled : sendDisabled}
-                  aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
-                >
-                  {stopMode ? <Stop size={17} weight="fill" aria-hidden="true" /> : <ArrowUp size={17} weight="bold" aria-hidden="true" />}
-                </button>
-              </>
-            ) : null}
+          <div className="iphone-composer-leading">
+            <p className="iphone-composer-status">{statusText}</p>
+            <div className="iphone-composer-actions">
+              {profileReady ? (
+                <>
+                  <button
+                    type="button"
+                    className="iphone-icon-button download-button"
+                    onClick={onOpenDownloadFile}
+                    aria-label="下载远程文件"
+                  >
+                    <DownloadSimple size={17} weight="regular" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="iphone-icon-button remote-directory-button"
+                    onClick={onOpenRemoteDirectory}
+                    aria-label="查看远程文件夹"
+                    title="查看远程文件夹"
+                  >
+                    <FolderOpen size={17} weight="regular" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="iphone-icon-button attachment-button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={disabled}
+                    aria-label="添加文件"
+                    title="添加文件"
+                  >
+                    <Paperclip size={17} weight="regular" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`iphone-icon-button ${voiceActive ? "active danger" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
+                    onClick={handleVoiceClick}
+                    disabled={voiceDisabled}
+                    aria-label={
+                      !voiceInputEnabled ? "语音未开启，打开语音设置" : voiceActive ? "停止语音输入" : "语音输入"
+                    }
+                  >
+                    <Microphone size={17} weight="regular" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`iphone-icon-button ${wakeActive ? "active" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
+                    onClick={handleWakeClick}
+                    disabled={wakeDisabled}
+                    aria-label={
+                      !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
+                    }
+                  >
+                    <Lightning size={17} weight={wakeActive ? "fill" : "regular"} aria-hidden="true" />
+                  </button>
+                </>
+              ) : null}
+            </div>
           </div>
+          {profileReady ? (
+            <div className="iphone-composer-actions iphone-composer-primary-action">
+              <button
+                type="button"
+                className={`iphone-send-button ${stopMode ? "stop" : ""}`}
+                onClick={() => {
+                  if (stopMode) onCancelRunningTask?.();
+                  else onSend?.();
+                }}
+                disabled={stopMode ? stopDisabled : sendDisabled}
+                aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
+              >
+                {stopMode ? <Stop size={17} weight="fill" aria-hidden="true" /> : <ArrowUp size={17} weight="bold" aria-hidden="true" />}
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {voiceInputEnabled && voiceActive ? (
