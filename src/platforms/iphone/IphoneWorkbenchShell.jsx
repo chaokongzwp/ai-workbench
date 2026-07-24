@@ -586,13 +586,19 @@ export function IphoneWorkbenchShell({
 
   const closeSessionSheet = () => setMobileNavOpen(false);
   const closeMoreMenu = () => setMoreMenuOpen(false);
-  const selectSession = async (server) => {
-    await onSelectServer?.(server.id);
+  const selectSession = (server) => {
     const serverConnection = server.id === activeServerId ? connection : server.connection;
-    if (!connectionIsLive(serverConnection) && !serverTaskRunning(server)) {
-      await onTestConnection?.(server.id);
-    }
     closeSessionSheet();
+    setSessionQuery("");
+
+    void (async () => {
+      await onSelectServer?.(server.id);
+      if (!connectionIsLive(serverConnection) && !serverTaskRunning(server)) {
+        await onTestConnection?.(server.id);
+      }
+    })().catch((error) => {
+      console.warn("[aiwb:iphone:session-select]", shortError(error));
+    });
   };
 
   async function handleExportLogsFromMenu() {
@@ -872,7 +878,6 @@ export function IphoneWorkbenchShell({
 	                        type="button"
 	                        className="iphone-session-select"
 	                        onClick={() => selectSession(server)}
-	                        disabled={busy}
 	                        aria-label={`打开 ${sessionName}${sessionIdTail ? `，会话编号末四位 ${sessionIdTail}` : ""}`}
 	                      >
 	                        <span className="iphone-session-index">{index + 1}</span>
