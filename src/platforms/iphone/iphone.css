@@ -80,6 +80,10 @@
   min-height: 32px;
 }
 
+.iphone-shell .iphone-composer-bottom {
+  margin-top: 4px;
+}
+
 .iphone-shell .iphone-send-button,
 .iphone-shell .iphone-send-button.stop {
   align-self: center;
