@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light">
+<title>AI Workbench + Tailscale 远程办公方案</title>
+<style>
+  :root {
+    --ink: #17191c;
+    --muted: #616871;
+    --soft: #8a919a;
+    --canvas: #f4f5f7;
+    --paper: #ffffff;
+    --line: #dfe2e6;
+    --line-strong: #c9ced5;
+    --blue: #1478f2;
+    --blue-soft: #eaf3ff;
+    --green: #18864b;
+    --green-soft: #eaf7ef;
+    --amber: #9a6500;
+    --amber-soft: #fff4d6;
+    --dark: #20242a;
+    --dark-soft: #303640;
+    --radius: 8px;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    color: var(--ink);
+    background: var(--canvas);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Microsoft YaHei", sans-serif;
+    line-height: 1.65;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  .page {
+    overflow: hidden;
+  }
+
+  .inner {
+    width: min(1120px, calc(100% - 48px));
+    margin: 0 auto;
+  }
+
+  .hero {
+    min-height: 520px;
+    display: grid;
+    align-items: center;
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hero-content {
+    padding: 72px 0 64px;
+    text-align: center;
+  }
+
+  .brand {
+    width: 76px;
+    height: 76px;
+    margin: 0 auto 24px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--paper);
+    box-shadow: 0 16px 34px rgba(23, 25, 28, 0.1);
+  }
+
+  .brand img {
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+  }
+
+  .eyebrow {
+    margin: 0 0 10px;
+    color: var(--blue);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  h1 {
+    max-width: 900px;
+    margin: 0 auto;
+    font-size: clamp(36px, 6vw, 64px);
+    line-height: 1.08;
+    letter-spacing: 0;
+  }
+
+  .lead {
+    max-width: 760px;
+    margin: 24px auto 0;
+    color: var(--muted);
+    font-size: 19px;
+  }
+
+  .hero-outcome {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 30px;
+  }
+
+  .hero-outcome span {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: #3d434b;
+    background: #fafafa;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  section {
+    padding: 76px 0;
+  }
+
+  .section-white {
+    background: var(--paper);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .section-dark {
+    color: #f8f9fb;
+    background: var(--dark);
+  }
+
+  .section-head {
+    max-width: 720px;
+    margin-bottom: 34px;
+  }
+
+  .section-head h2 {
+    margin: 0;
+    font-size: 34px;
+    line-height: 1.2;
+  }
+
+  .section-head p {
+    margin: 12px 0 0;
+    color: var(--muted);
+    font-size: 16px;
+  }
+
+  .section-dark .section-head p {
+    color: #b8bec7;
+  }
+
+  .flow {
+    display: grid;
+    grid-template-columns: 1fr 56px 1fr 56px 1.25fr;
+    align-items: stretch;
+  }
+
+  .flow-node {
+    min-height: 190px;
+    padding: 24px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  .flow-node strong {
+    display: block;
+    margin: 16px 0 6px;
+    font-size: 20px;
+  }
+
+  .flow-node p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .flow-node.highlight {
+    color: #ffffff;
+    border-color: var(--dark-soft);
+    background: var(--dark);
+  }
+
+  .flow-node.highlight p {
+    color: #c6cbd2;
+  }
+
+  .node-icon {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--blue);
+    background: var(--blue-soft);
+    font-size: 22px;
+    font-weight: 750;
+  }
+
+  .flow-node.highlight .node-icon {
+    color: #ffffff;
+    background: var(--dark-soft);
+  }
+
+  .flow-arrow {
+    display: grid;
+    place-items: center;
+    color: var(--soft);
+    font-size: 28px;
+  }
+
+  .path-note {
+    margin-top: 16px;
+    padding: 15px 18px;
+    border-left: 3px solid var(--green);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    color: #315b43;
+    background: var(--green-soft);
+    font-size: 14px;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--line);
+  }
+
+  .step {
+    min-height: 210px;
+    padding: 26px;
+    background: var(--paper);
+  }
+
+  .step-number {
+    color: var(--blue);
+    font-size: 13px;
+    font-weight: 750;
+  }
+
+  .step h3 {
+    margin: 18px 0 8px;
+    font-size: 19px;
+  }
+
+  .step p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .experience {
+    display: grid;
+    grid-template-columns: 0.9fr 1.1fr;
+    gap: 36px;
+    align-items: center;
+  }
+
+  .phone {
+    width: min(330px, 100%);
+    margin: 0 auto;
+    padding: 14px;
+    border: 1px solid #3d444e;
+    border-radius: 38px;
+    background: #101216;
+    box-shadow: 0 26px 60px rgba(0, 0, 0, 0.32);
+  }
+
+  .phone-screen {
+    min-height: 520px;
+    padding: 24px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 28px;
+    color: #f7f8fa;
+    background: #171a1f;
+  }
+
+  .phone-top {
+    padding-bottom: 18px;
+    border-bottom: 1px solid #30353d;
+    text-align: center;
+  }
+
+  .phone-top strong {
+    display: block;
+    font-size: 16px;
+  }
+
+  .phone-top span {
+    color: #aeb5bf;
+    font-size: 12px;
+  }
+
+  .bubble {
+    max-width: 82%;
+    margin: 28px 0 0 auto;
+    padding: 12px 14px;
+    border: 1px solid #414750;
+    border-radius: 18px 18px 5px 18px;
+    background: #282c32;
+    font-size: 14px;
+  }
+
+  .reply {
+    margin-top: 28px;
+  }
+
+  .reply-head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .reply-head i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #35c66b;
+  }
+
+  .reply p {
+    margin: 10px 0 0;
+    color: #c9ced6;
+    font-size: 13px;
+  }
+
+  .composer {
+    min-height: 68px;
+    margin-top: auto;
+    padding: 12px 12px 12px 15px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid #3a4049;
+    border-radius: 22px;
+    color: #8f96a0;
+    background: #20242a;
+    font-size: 12px;
+  }
+
+  .composer b {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: #1b1d21;
+    background: #f0f1f3;
+    font-size: 17px;
+  }
+
+  .benefits {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid #3a4048;
+    border-radius: var(--radius);
+    background: #3a4048;
+  }
+
+  .benefit {
+    min-height: 160px;
+    padding: 24px;
+    background: #262b32;
+  }
+
+  .benefit h3 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .benefit p {
+    margin: 9px 0 0;
+    color: #b8bec7;
+    font-size: 14px;
+  }
+
+  .requirements {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .requirement {
+    padding: 24px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  .requirement h3 {
+    margin: 0 0 14px;
+    font-size: 18px;
+  }
+
+  .requirement ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .requirement li {
+    position: relative;
+    padding: 9px 0 9px 24px;
+    color: var(--muted);
+    border-top: 1px solid #edf0f2;
+    font-size: 14px;
+  }
+
+  .requirement li:first-child {
+    border-top: 0;
+  }
+
+  .requirement li::before {
+    content: "";
+    position: absolute;
+    top: 17px;
+    left: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  .risk {
+    margin-top: 20px;
+    padding: 18px 20px;
+    border: 1px solid #e8cf91;
+    border-radius: var(--radius);
+    color: #664b12;
+    background: var(--amber-soft);
+    font-size: 14px;
+  }
+
+  .status-table {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  .status-row {
+    display: grid;
+    grid-template-columns: 130px 1fr 1fr;
+    gap: 24px;
+    padding: 18px 22px;
+    border-top: 1px solid var(--line);
+    align-items: center;
+  }
+
+  .status-row:first-child {
+    border-top: 0;
+  }
+
+  .status-row strong {
+    font-size: 14px;
+  }
+
+  .status-row span,
+  .status-row p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .status {
+    width: fit-content;
+    min-width: 76px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    text-align: center;
+    font-weight: 700;
+  }
+
+  .status.ready {
+    color: var(--green);
+    background: var(--green-soft);
+  }
+
+  .status.wait {
+    color: var(--amber);
+    background: var(--amber-soft);
+  }
+
+  .rollout {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px;
+  }
+
+  .rollout article {
+    padding: 24px 0 0;
+    border-top: 2px solid var(--line-strong);
+  }
+
+  .rollout small {
+    color: var(--blue);
+    font-weight: 750;
+  }
+
+  .rollout h3 {
+    margin: 12px 0 6px;
+    font-size: 19px;
+  }
+
+  .rollout p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .sources {
+    padding: 34px 0 48px;
+    color: var(--muted);
+    background: var(--paper);
+    font-size: 13px;
+  }
+
+  .sources strong {
+    color: var(--ink);
+  }
+
+  .source-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin-top: 8px;
+  }
+
+  .source-links a {
+    color: #4a525d;
+  }
+
+  @media (max-width: 900px) {
+    .flow {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .flow-arrow {
+      height: 34px;
+      transform: rotate(90deg);
+    }
+
+    .steps {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .experience {
+      grid-template-columns: 1fr;
+    }
+
+    .phone {
+      order: 2;
+    }
+  }
+
+  @media (max-width: 680px) {
+    .inner {
+      width: min(100% - 28px, 1120px);
+    }
+
+    .hero {
+      min-height: 620px;
+    }
+
+    .hero-content {
+      padding: 54px 0;
+    }
+
+    h1 {
+      font-size: 38px;
+    }
+
+    .lead {
+      font-size: 17px;
+    }
+
+    section {
+      padding: 58px 0;
+    }
+
+    .section-head h2 {
+      font-size: 28px;
+    }
+
+    .steps,
+    .benefits,
+    .requirements,
+    .rollout {
+      grid-template-columns: 1fr;
+    }
+
+    .status-row {
+      grid-template-columns: 88px 1fr;
+      gap: 12px;
+    }
+
+    .status-row p {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media print {
+    body {
+      background: #ffffff;
+    }
+
+    .hero {
+      min-height: auto;
+    }
+
+    section {
+      break-inside: avoid;
+    }
+
+    .phone {
+      box-shadow: none;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hero">
+    <div class="inner hero-content">
+      <div class="brand">
+        <img src="../public/icons/workbench.png" alt="AI Workbench">
+      </div>
+      <p class="eyebrow">团队远程办公方案</p>
+      <h1>AI Workbench + Tailscale</h1>
+      <p class="lead">
+        每个人在自己的电脑和手机安装 Tailscale。离开办公室后，只需打开 iPhone 上的
+        AI Workbench，就能安全连接自己的工作电脑，继续使用 Codex、Claude 和已有项目。
+      </p>
+      <div class="hero-outcome" aria-label="方案特点">
+        <span>不开放公网 SSH</span>
+        <span>电脑与手机点对点连接</span>
+        <span>任务可在电脑后台继续</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section aria-labelledby="how-it-works">
+      <div class="inner">
+        <div class="section-head">
+          <h2 id="how-it-works">它是怎么工作的</h2>
+          <p>Tailscale 只负责建立可信的私有网络，AI Workbench 负责会话、任务和结果。</p>
+        </div>
+
+        <div class="flow" aria-label="远程连接流程">
+          <article class="flow-node">
+            <div class="node-icon">1</div>
+            <strong>随身设备</strong>
+            <p>iPhone、iPad 或另一台电脑登录团队的 Tailscale 网络。</p>
+          </article>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <article class="flow-node">
+            <div class="node-icon">2</div>
+            <strong>Tailscale 私网</strong>
+            <p>通过设备身份建立加密连接，不依赖办公室固定公网 IP。</p>
+          </article>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <article class="flow-node highlight">
+            <div class="node-icon">3</div>
+            <strong>自己的工作电脑</strong>
+            <p>AI Workbench Agent 接收任务，交给本机 Codex 或 Claude 执行并保存结果。</p>
+          </article>
+        </div>
+
+        <div class="path-note">
+          App 优先连接 Agent；Agent 不可用时，可降级为传统 SSH。两种方式都只通过 Tailscale
+          的机器名或私网地址访问，不需要把端口暴露到互联网。
+        </div>
+      </div>
+    </section>
+
+    <section class="section-white" aria-labelledby="setup">
+      <div class="inner">
+        <div class="section-head">
+          <h2 id="setup">每个人只需要完成四步</h2>
+          <p>首次设置由 IT 或管理员协助完成，之后员工直接打开 App 使用。</p>
+        </div>
+
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">01</span>
+            <h3>电脑加入团队网络</h3>
+            <p>安装 Tailscale，用自己的团队身份登录，并由管理员批准设备。</p>
+          </article>
+          <article class="step">
+            <span class="step-number">02</span>
+            <h3>准备工作环境</h3>
+            <p>安装 AI Workbench Agent，添加需要使用的项目与 Codex/Claude 会话。</p>
+          </article>
+          <article class="step">
+            <span class="step-number">03</span>
+            <h3>手机加入同一网络</h3>
+            <p>安装 Tailscale 和 AI Workbench，登录同一团队并同步工作配置。</p>
+          </article>
+          <article class="step">
+            <span class="step-number">04</span>
+            <h3>离开电脑继续工作</h3>
+            <p>手机选择任务、发送指令；电脑在原工作目录执行，结果回到手机。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-dark" aria-labelledby="experience">
+      <div class="inner experience">
+        <div class="phone" aria-label="iPhone 使用示意">
+          <div class="phone-screen">
+            <div class="phone-top">
+              <strong>官网项目</strong>
+              <span>已通过 Tailscale 连接</span>
+            </div>
+            <div class="bubble">检查今天的发布状态，有问题就修复。</div>
+            <div class="reply">
+              <div class="reply-head"><i></i> Codex 执行中</div>
+              <p>任务在办公室电脑后台运行。你可以退出 App，稍后重新打开查看结果。</p>
+            </div>
+            <div class="composer">
+              <span>告诉 Codex 你想做什么</span>
+              <b>↑</b>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-head">
+            <h2 id="experience">员工看到的是工作，不是网络配置</h2>
+            <p>连接细节在首次设置后隐藏，日常只保留会话、任务状态和最终结果。</p>
+          </div>
+          <div class="benefits">
+            <article class="benefit">
+              <h3>不用随身带电脑</h3>
+              <p>只要工作电脑在线，手机就能继续安排任务、检查代码和查看结果。</p>
+            </article>
+            <article class="benefit">
+              <h3>使用原来的开发环境</h3>
+              <p>代码、账号和工具仍留在原电脑，不需要把整个环境搬到云端。</p>
+            </article>
+            <article class="benefit">
+              <h3>任务不会依赖手机前台</h3>
+              <p>使用 Agent 后，App 退出或手机网络切换，电脑端任务仍可继续执行。</p>
+            </article>
+            <article class="benefit">
+              <h3>一台手机管理多个项目</h3>
+              <p>不同机器、工作目录和 AI 会话统一显示，任务之间可以快速切换。</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="reliable">
+      <div class="inner">
+        <div class="section-head">
+          <h2 id="reliable">要稳定使用，必须满足这些条件</h2>
+          <p>真正的远程办公关键不在手机，而在远端电脑是否持续可用。</p>
+        </div>
+
+        <div class="requirements">
+          <article class="requirement">
+            <h3>工作电脑</h3>
+            <ul>
+              <li>保持开机、联网，避免进入深度睡眠。</li>
+              <li>Tailscale 和 AI Workbench Agent 随系统启动。</li>
+              <li>Windows 开启 Run Unattended，重启后无需用户先登录。</li>
+              <li>固定使用 Tailscale 机器名，不依赖变化的局域网 IP。</li>
+            </ul>
+          </article>
+          <article class="requirement">
+            <h3>iPhone / iPad</h3>
+            <ul>
+              <li>启用 Tailscale VPN On Demand，网络切换后自动恢复。</li>
+              <li>与工作电脑加入同一个团队 Tailnet。</li>
+              <li>首次打开 AI Workbench 时同步会话配置。</li>
+              <li>App 恢复前台后主动查询未完成任务状态。</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="risk">
+          <strong>明确边界：</strong>
+          如果办公室电脑关机、断网或睡眠，手机无法凭空唤醒并连接它。长期使用建议准备一台持续在线的
+          Mac mini、Windows 主机或服务器；个人笔记本则需要调整电源策略。
+        </div>
+      </div>
+    </section>
+
+    <section class="section-white" aria-labelledby="status">
+      <div class="inner">
+        <div class="section-head">
+          <h2 id="status">App 应该给出可理解的连接状态</h2>
+          <p>用户不需要判断 SSH、端口或网络路由，只需要知道下一步该做什么。</p>
+        </div>
+
+        <div class="status-table" role="table" aria-label="连接状态说明">
+          <div class="status-row" role="row">
+            <strong class="status ready">可用</strong>
+            <span>已通过 Tailscale 连接</span>
+            <p>可以直接发送任务。</p>
+          </div>
+          <div class="status-row" role="row">
+            <strong class="status wait">电脑离线</strong>
+            <span>目标设备不在 Tailnet</span>
+            <p>检查电脑是否开机、联网，以及 Tailscale 是否运行。</p>
+          </div>
+          <div class="status-row" role="row">
+            <strong class="status wait">等待授权</strong>
+            <span>手机或电脑尚未获准加入</span>
+            <p>联系管理员在 Tailscale 后台批准设备。</p>
+          </div>
+          <div class="status-row" role="row">
+            <strong class="status wait">Agent 异常</strong>
+            <span>网络可达，但后台服务不可用</span>
+            <p>App 自动尝试重启 Agent；仍失败时降级为 SSH。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="security">
+      <div class="inner">
+        <div class="section-head">
+          <h2 id="security">团队安全规则</h2>
+          <p>不能让“安装方便”变成“所有设备互相开放”。</p>
+        </div>
+
+        <div class="requirements">
+          <article class="requirement">
+            <h3>Tailscale 管理</h3>
+            <ul>
+              <li>每位员工使用自己的账号，不共享同一个登录身份。</li>
+              <li>开启设备审批，丢失或离职设备可立即撤销。</li>
+              <li>使用 Grants 只允许员工访问自己的工作电脑。</li>
+              <li>只开放 SSH 和 Agent 所需端口，不采用默认全互通。</li>
+            </ul>
+          </article>
+          <article class="requirement">
+            <h3>AI Workbench 管理</h3>
+            <ul>
+              <li>服务器密码保存在设备安全存储，不同步聊天记录。</li>
+              <li>重要操作仍由远端 Codex/Claude 的权限策略控制。</li>
+              <li>同一会话同时只运行一条任务，避免多设备互相干扰。</li>
+              <li>保留连接、任务与错误日志，方便员工导出诊断。</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-white" aria-labelledby="rollout">
+      <div class="inner">
+        <div class="section-head">
+          <h2 id="rollout">建议分三步落地</h2>
+          <p>先验证真实办公场景，再逐步扩大，不需要一次性改造所有电脑。</p>
+        </div>
+
+        <div class="rollout">
+          <article>
+            <small>第一阶段 · 试点</small>
+            <h3>3–5 人使用一周</h3>
+            <p>覆盖 Mac、Windows、iPhone 和不同网络，记录离线、睡眠和任务恢复问题。</p>
+          </article>
+          <article>
+            <small>第二阶段 · 标准化</small>
+            <h3>固化安装与权限</h3>
+            <p>统一机器命名、设备审批、Grants、Agent 自启动和诊断日志。</p>
+          </article>
+          <article>
+            <small>第三阶段 · 推广</small>
+            <h3>员工自助接入</h3>
+            <p>App 引导登录、检测 Tailscale、同步配置，并明确展示电脑离线原因。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="sources">
+    <div class="inner">
+      <strong>参考资料</strong>
+      <div class="source-links">
+        <a href="https://tailscale.com/docs/features/magicdns">MagicDNS</a>
+        <a href="https://tailscale.com/docs/features/client/ios-vpn-on-demand">iOS VPN On Demand</a>
+        <a href="https://tailscale.com/docs/features/access-control/device-management/device-approval">设备审批</a>
+        <a href="https://tailscale.com/docs/features/access-control/grants">访问权限 Grants</a>
+        <a href="https://tailscale.com/docs/how-to/run-unattended">Windows Run Unattended</a>
+        <a href="https://tailscale.com/docs/features/access-control/key-expiry">设备密钥有效期</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
