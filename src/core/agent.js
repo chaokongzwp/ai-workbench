@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "25";
+export const latestWorkbenchAgentVersion = "27";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -185,6 +185,9 @@ AIWB_DAEMON_LOG="$AIWB_HOME/daemon.log"
 AIWB_DAEMON_HEARTBEAT="$AIWB_HOME/daemon.heartbeat"
 AIWB_DAEMON_LOCK="$AIWB_HOME/daemon.lock"
 AIWB_TICK_LOCK="$AIWB_HOME/tick.lock"
+AIWB_LAUNCH_AGENT_LABEL="com.beexofficial.ai-workbench-agent"
+AIWB_LAUNCH_AGENT_DIR="$AIWB_USER_HOME/Library/LaunchAgents"
+AIWB_LAUNCH_AGENT_PLIST="$AIWB_LAUNCH_AGENT_DIR/$AIWB_LAUNCH_AGENT_LABEL.plist"
 AIWB_MAX_CONCURRENCY="4"
 mkdir -p "$AIWB_TASKS" "$AIWB_CONVERSATIONS" "$AIWB_CONVERSATION_LOCKS"
 
@@ -690,6 +693,12 @@ if [ "$AIWB_DECODE_STATUS" -ne 0 ] || [ -z "$AIWB_DECODED_COMMAND" ]; then
   exit 0
 fi
 
+# Codex bundled with ChatGPT is executable but is not exposed on the PATH used
+# by remote SSH commands. Keep older saved profiles working on macOS hosts.
+if [ ! -x "/usr/local/bin/codex" ] && [ -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]; then
+  AIWB_DECODED_COMMAND="$(printf "%s" "$AIWB_DECODED_COMMAND" | sed "s#/usr/local/bin/codex#/Applications/ChatGPT.app/Contents/Resources/codex#g")"
+fi
+
 AIWB_TASK_AGENT_ID="$(cat "$AIWB_TASK_DIR/agent_id" 2>/dev/null || printf "")"
 if [ "$AIWB_TASK_AGENT_ID" = "claude" ]; then
   export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
@@ -726,7 +735,7 @@ aiwb_launch_task() {
   aiwb_write_file "$task_dir/runner_started_at" ""
   : > "$task_dir/launcher.log"
 
-  nohup bash "$task_dir/run.sh" "$task_dir" >"$task_dir/launcher.log" 2>&1 &
+  nohup bash "$task_dir/run.sh" "$task_dir" </dev/null >"$task_dir/launcher.log" 2>&1 &
   aiwb_write_file "$task_dir/pid" "$!"
   aiwb_append_log "launched task=$task_id attempt=$attempt pid=$(cat "$task_dir/pid" 2>/dev/null || printf "")"
 }
@@ -864,7 +873,7 @@ aiwb_start_daemon() {
   if aiwb_daemon_alive; then
     return 0
   fi
-  nohup "$0" daemon >> "$AIWB_DAEMON_LOG" 2>&1 &
+  nohup "$0" daemon </dev/null >> "$AIWB_DAEMON_LOG" 2>&1 &
   sleep 0.25
   if aiwb_daemon_alive; then
     return 0
@@ -883,6 +892,14 @@ aiwb_daemon_status() {
 
 aiwb_service_status() {
   local state
+  if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    if launchctl print "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+      printf "active\\n"
+    else
+      printf "inactive\\n"
+    fi
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     printf "unsupported\\n"
     return 0
@@ -1405,6 +1422,52 @@ aiwb_install_service() {
     systemctl stop ai-workbench-agent.service >/dev/null 2>&1 || true
   fi
   aiwb_stop_daemons
+  if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    mkdir -p "$AIWB_LAUNCH_AGENT_DIR"
+    cat > "$AIWB_LAUNCH_AGENT_PLIST" <<AIWB_LAUNCH_AGENT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$AIWB_LAUNCH_AGENT_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$AIWB_HOME/aiwbctl</string>
+    <string>daemon</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$AIWB_USER_HOME</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>$AIWB_HOME</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>StandardOutPath</key>
+  <string>$AIWB_DAEMON_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$AIWB_DAEMON_LOG</string>
+</dict>
+</plist>
+AIWB_LAUNCH_AGENT
+    chmod 600 "$AIWB_LAUNCH_AGENT_PLIST"
+    launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    if launchctl bootstrap "gui/$(id -u)" "$AIWB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+      launchctl kickstart -k "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+      printf "__AIWB_AGENT_SERVICE__launchd\\n"
+      return 0
+    fi
+    printf "__AIWB_AGENT_SERVICE__launchd-fallback\\n"
+    aiwb_start_daemon >/dev/null 2>&1 || true
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     printf "__AIWB_AGENT_SERVICE__unsupported\\n"
     aiwb_start_daemon >/dev/null 2>&1 || true
@@ -1453,6 +1516,10 @@ aiwb_uninstall_service() {
     else
       systemctl --user disable --now ai-workbench-agent.service >/dev/null 2>&1 || true
     fi
+  fi
+  if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    rm -f "$AIWB_LAUNCH_AGENT_PLIST"
   fi
 
   daemon_pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
@@ -2329,6 +2396,8 @@ resolve_aiwb_command() {
       "/usr/bin/$AIWB_CANDIDATE_NAME" \\
       "/bin/$AIWB_CANDIDATE_NAME" \\
       "/opt/homebrew/bin/$AIWB_CANDIDATE_NAME" \\
+      "/Applications/ChatGPT.app/Contents/Resources/$AIWB_CANDIDATE_NAME" \\
+      "$HOME/Applications/ChatGPT.app/Contents/Resources/$AIWB_CANDIDATE_NAME" \\
       "$HOME/.local/bin/$AIWB_CANDIDATE_NAME" \\
       "$HOME/.npm-global/bin/$AIWB_CANDIDATE_NAME" \\
       "$HOME/.yarn/bin/$AIWB_CANDIDATE_NAME" \\
