@@ -638,6 +638,7 @@ export function useWorkbenchController() {
   const [draftProfile, setDraftProfile] = useState(defaultProfile);
   const [editingServerId, setEditingServerId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialPage, setSettingsInitialPage] = useState("root");
   const [settingsDiscovery, setSettingsDiscovery] = useState(null);
   const [agentManagementTargetId, setAgentManagementTargetId] = useState("");
   const [settingsAgentTab, setSettingsAgentTab] = useState("codex");
@@ -3101,6 +3102,7 @@ export function useWorkbenchController() {
     setSettingsSelectedSessions([]);
     setSettingsAgentTab(targetProfile.agentId);
     setAgentManagementTargetId("");
+    setSettingsInitialPage("root");
     setSettingsOpen(true);
   }
 
@@ -3115,6 +3117,21 @@ export function useWorkbenchController() {
     setSettingsSelectedSessions([]);
     setSettingsAgentTab(activeAgentId);
     setAgentManagementTargetId(nextAgentTargetId);
+    setSettingsInitialPage("root");
+    setSettingsOpen(true);
+  }
+
+  function openCloudSyncSettings() {
+    setEditingServerId("global");
+    updateDraftProfile({
+      ...defaultProfile,
+      ...globalSettingsFromProfile(profileRef.current),
+    });
+    setSettingsDiscovery(null);
+    setSettingsSelectedSessions([]);
+    setSettingsAgentTab(activeAgentId);
+    setAgentManagementTargetId("");
+    setSettingsInitialPage("global-cloud-sync");
     setSettingsOpen(true);
   }
 
@@ -3134,6 +3151,7 @@ export function useWorkbenchController() {
     setSettingsSelectedSessions([]);
     setSettingsAgentTab("codex");
     setAgentManagementTargetId("");
+    setSettingsInitialPage("root");
     setSettingsOpen(true);
   }
 
@@ -6830,6 +6848,7 @@ export function useWorkbenchController() {
     fileDownload,
     taskNotice,
     settingsOpen,
+    settingsInitialPage,
     settingsDiscovery,
     settingsAgentTab,
     settingsSelectedSessions,
@@ -6845,6 +6864,7 @@ export function useWorkbenchController() {
     onAddServer: openNewServerSettings,
     onDuplicateServer: () => duplicateServer(),
     onOpenGlobalSettings: openGlobalSettings,
+    onOpenCloudSync: openCloudSyncSettings,
     onTestConnection: connectExistingSession,
     onDisconnectServer: disconnectSession,
     onRefreshOutput: refreshOutput,

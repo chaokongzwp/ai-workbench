@@ -583,6 +583,7 @@ export function SettingsPanel({
   onCloudClearConfig,
   onShareSession,
   onTest,
+  initialPage = "root",
 }) {
   const [migrationBusy, setMigrationBusy] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState(null);
@@ -606,7 +607,7 @@ export function SettingsPanel({
   const [gitBranch, setGitBranch] = useState("");
   const [gitStatus, setGitStatus] = useState(null);
   const [agentSelectionNotice, setAgentSelectionNotice] = useState("");
-  const [settingsPage, setSettingsPage] = useState("root");
+  const [settingsPage, setSettingsPage] = useState(() => initialPage || "root");
   const [appInfo, setAppInfo] = useState(() => normalizeAppInfo());
   const migrationInputRef = useRef(null);
   const settingsScrollRef = useRef(null);
@@ -911,8 +912,8 @@ export function SettingsPanel({
   }, [editingSession, editingServer?.id, draftProfile.workdir]);
 
   useEffect(() => {
-    setSettingsPage("root");
-  }, [mode, editingServer?.id]);
+    setSettingsPage(initialPage || "root");
+  }, [mode, editingServer?.id, initialPage]);
 
   useEffect(() => {
     let mounted = true;

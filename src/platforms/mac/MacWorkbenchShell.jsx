@@ -53,6 +53,7 @@ export function MacWorkbenchShell({
   fileDownload,
   taskNotice,
   settingsOpen,
+  settingsInitialPage,
   settingsDiscovery,
   settingsAgentTab,
   settingsSelectedSessions,
@@ -68,6 +69,7 @@ export function MacWorkbenchShell({
   onAddServer,
   onDuplicateServer,
   onOpenGlobalSettings,
+  onOpenCloudSync,
   onTestConnection,
   onDisconnectServer,
   onRefreshOutput,
@@ -137,9 +139,11 @@ export function MacWorkbenchShell({
     NavigationPanel,
     ConnectionSummary,
     DiscoveryPanel,
+    EmptyWorkspaceActions,
     MessageBubble,
     Composer,
     RawOutput,
+    TaskNotice,
     SettingsPanel,
     FilePreviewPanel,
     RemoteDirectoryDialog,
@@ -148,6 +152,7 @@ export function MacWorkbenchShell({
   const editingServer = servers.find((server) => server.id === editingServerId) || activeServer;
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const hasWorkSession = servers.length > 0;
   const macSessionTitle = String(activeSessionName || "当前会话")
     .replace(/\s*[·•]\s*(codex|claude|gemini|aider|ollama)\s*$/i, "")
     .trim();
@@ -221,8 +226,16 @@ export function MacWorkbenchShell({
               <span>文件会先加入输入框，发送时上传到当前工作目录</span>
             </div>
           ) : null}
+          {taskNotice ? (
+            <div className="conversation-task-notice">
+              <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} />
+            </div>
+          ) : null}
           <div className="conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
-            {showConnectionSummary ? (
+            {!hasWorkSession ? (
+              <EmptyWorkspaceActions busy={busy} onAddServer={onAddServer} onSyncCloud={onOpenCloudSync} />
+            ) : null}
+            {hasWorkSession && showConnectionSummary ? (
               <ConnectionSummary
                 profile={profile}
                 connection={connection}
@@ -231,7 +244,7 @@ export function MacWorkbenchShell({
                 profileReady={isProfileReady}
               />
             ) : null}
-            {shouldShowDiscovery ? (
+            {hasWorkSession && shouldShowDiscovery ? (
               <DiscoveryPanel
                 discovery={discovery}
                 profile={profile}
@@ -241,7 +254,7 @@ export function MacWorkbenchShell({
                 onAddWorkdir={onAddWorkdir}
               />
             ) : null}
-            {messages.map((message) => (
+            {hasWorkSession ? messages.map((message) => (
               <MessageBubble
                 key={message.id}
                 message={message}
@@ -266,10 +279,10 @@ export function MacWorkbenchShell({
                 onOpenSettings={onOpenSettingsFromMessage}
                 onEditUserMessage={(text) => setComposer(text)}
               />
-            ))}
+            )) : null}
           </div>
 
-          {showComposer ? (
+          {showComposer && hasWorkSession ? (
             <Composer
               compact
               compactPlaceholder={
@@ -388,6 +401,7 @@ export function MacWorkbenchShell({
           editingServerIndex={editingServerIndex}
           busy={busy}
           mode={editingServerId === "global" ? "global" : editingServerId ? "edit" : "add"}
+          initialPage={settingsInitialPage}
           settingsDiscovery={settingsDiscovery}
           settingsAgentTab={settingsAgentTab}
           settingsSelectedSessions={settingsSelectedSessions}

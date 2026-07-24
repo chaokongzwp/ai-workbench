@@ -2020,20 +2020,37 @@ textarea:disabled {
 }
 
 .task-notice {
-  position: fixed;
-  right: max(18px, env(safe-area-inset-right));
-  bottom: calc(96px + env(safe-area-inset-bottom));
-  z-index: 20;
+  position: relative;
   display: inline-flex;
   align-items: center;
-  max-width: min(420px, calc(100% - 32px));
+  max-width: min(460px, calc(100vw - 32px));
   overflow: hidden;
   border: 1px solid rgba(60, 60, 67, 0.12);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.13);
   backdrop-filter: blur(22px);
   animation: notice-in 180ms ease-out both;
+  pointer-events: auto;
+}
+
+.conversation-task-notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 30;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.native-conversation .conversation-task-notice {
+  top: calc(var(--safe-top) + 64px);
+}
+
+.iphone-chat .conversation-task-notice {
+  top: 12px;
 }
 
 .task-notice.error {
@@ -2044,9 +2061,9 @@ textarea:disabled {
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  min-height: 48px;
-  gap: 9px;
-  padding: 0 12px 0 14px;
+  min-height: 36px;
+  gap: 7px;
+  padding: 0 10px 0 12px;
   border: 0;
   color: #1c1c1e;
   background: transparent;
@@ -2056,20 +2073,129 @@ textarea:disabled {
 
 .task-notice-main strong {
   overflow: hidden;
-  font-size: 14px;
-  font-weight: 750;
+  font-size: 12px;
+  font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .task-notice-close {
-  width: 42px;
-  height: 48px;
+  width: 32px;
+  height: 36px;
   border: 0;
   color: #8a8f98;
   background: transparent;
-  font-size: 20px;
+  font-size: 17px;
   cursor: pointer;
+}
+
+.app-shell[data-theme="dark"] .task-notice,
+.iphone-shell[data-theme="dark"] .task-notice {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f3f4f6;
+  background: rgba(35, 36, 42, 0.9);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
+}
+
+.app-shell[data-theme="dark"] .task-notice-main,
+.iphone-shell[data-theme="dark"] .task-notice-main {
+  color: #f3f4f6;
+}
+
+.empty-workspace-actions {
+  display: grid;
+  justify-items: center;
+  align-self: center;
+  width: min(440px, calc(100% - 24px));
+  gap: 8px;
+  margin: auto;
+  padding: 24px 16px;
+  color: var(--text, #1c1c1e);
+  text-align: center;
+}
+
+.empty-workspace-actions > strong {
+  font-size: 18px;
+  font-weight: 680;
+  letter-spacing: 0;
+}
+
+.empty-workspace-actions > span {
+  color: var(--muted, rgba(60, 60, 67, 0.62));
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.empty-workspace-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.empty-workspace-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  gap: 7px;
+  padding: 0 15px;
+  border: 1px solid rgba(60, 60, 67, 0.14);
+  border-radius: 11px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.empty-workspace-buttons button:active {
+  transform: scale(0.97);
+}
+
+.empty-workspace-buttons button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.empty-workspace-primary {
+  color: #ffffff;
+  background: #25262b;
+}
+
+.empty-workspace-secondary {
+  color: #25262b;
+  background: rgba(118, 118, 128, 0.09);
+}
+
+.app-shell[data-theme="dark"] .empty-workspace-actions,
+.iphone-shell[data-theme="dark"] .empty-workspace-actions {
+  color: #f2f3f5;
+}
+
+.app-shell[data-theme="dark"] .empty-workspace-actions > span,
+.iphone-shell[data-theme="dark"] .empty-workspace-actions > span {
+  color: rgba(235, 239, 245, 0.54);
+}
+
+.app-shell[data-theme="dark"] .empty-workspace-buttons button,
+.iphone-shell[data-theme="dark"] .empty-workspace-buttons button {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.app-shell[data-theme="dark"] .empty-workspace-primary,
+.iphone-shell[data-theme="dark"] .empty-workspace-primary {
+  color: #17181c;
+  background: #f1f2f4;
+}
+
+.app-shell[data-theme="dark"] .empty-workspace-secondary,
+.iphone-shell[data-theme="dark"] .empty-workspace-secondary {
+  color: #f1f2f4;
+  background: rgba(235, 235, 245, 0.08);
 }
 
 @keyframes notice-in {

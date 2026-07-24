@@ -462,6 +462,7 @@ export function IphoneWorkbenchShell({
   fileDownload,
   taskNotice,
   settingsOpen,
+  settingsInitialPage,
   settingsDiscovery,
   settingsAgentTab,
   settingsSelectedSessions,
@@ -476,6 +477,7 @@ export function IphoneWorkbenchShell({
   onAddServer,
   onDuplicateServer,
   onOpenGlobalSettings,
+  onOpenCloudSync,
   onTestConnection,
   onDisconnectServer,
   onRefreshOutput,
@@ -543,6 +545,7 @@ export function IphoneWorkbenchShell({
   const {
     ConnectionSummary,
     DiscoveryPanel,
+    EmptyWorkspaceActions,
     MessageBubble,
     RawOutput,
     TaskNotice,
@@ -723,14 +726,14 @@ export function IphoneWorkbenchShell({
             <span>文件会加入当前任务，发送时上传到工作目录</span>
           </div>
         ) : null}
+        {taskNotice ? (
+          <div className="conversation-task-notice">
+            <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} />
+          </div>
+        ) : null}
         <div className="iphone-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
           {!hasWorkSession ? (
-            <div className="iphone-empty-workspace">
-              <button type="button" onClick={onAddServer} aria-label="添加工作会话">
-                <Plus size={30} weight="regular" aria-hidden="true" />
-              </button>
-              <strong>添加工作会话</strong>
-            </div>
+            <EmptyWorkspaceActions busy={busy} onAddServer={onAddServer} onSyncCloud={onOpenCloudSync} />
           ) : null}
           {hasWorkSession && showConnectionSummary ? (
             <ConnectionSummary
@@ -932,8 +935,6 @@ export function IphoneWorkbenchShell({
         onKill={onKillAgentSession}
       />
 
-      {taskNotice ? <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} /> : null}
-
       {settingsOpen ? (
         <SettingsPanel
           servers={servers}
@@ -942,6 +943,7 @@ export function IphoneWorkbenchShell({
           editingServerIndex={editingServerIndex}
           busy={busy}
           mode={editingServerId === "global" ? "global" : editingServerId ? "edit" : "add"}
+          initialPage={settingsInitialPage}
           settingsDiscovery={settingsDiscovery}
           settingsAgentTab={settingsAgentTab}
           settingsSelectedSessions={settingsSelectedSessions}

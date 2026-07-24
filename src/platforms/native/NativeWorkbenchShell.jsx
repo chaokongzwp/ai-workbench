@@ -51,6 +51,7 @@ export function NativeWorkbenchShell({
   fileDownload,
   taskNotice,
   settingsOpen,
+  settingsInitialPage,
   settingsDiscovery,
   settingsAgentTab,
   settingsSelectedSessions,
@@ -65,6 +66,7 @@ export function NativeWorkbenchShell({
   onAddServer,
   onDuplicateServer,
   onOpenGlobalSettings,
+  onOpenCloudSync,
   onTestConnection,
   onDisconnectServer,
   onRefreshOutput,
@@ -133,6 +135,7 @@ export function NativeWorkbenchShell({
     NavigationPanel,
     ConnectionSummary,
     DiscoveryPanel,
+    EmptyWorkspaceActions,
     MessageBubble,
     Composer,
     RawOutput,
@@ -147,6 +150,7 @@ export function NativeWorkbenchShell({
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const isIpad = nativeFormFactor === "ipad";
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const hasWorkSession = servers.length > 0;
 
   function handleFileDrop(event) {
     event.preventDefault();
@@ -289,8 +293,17 @@ export function NativeWorkbenchShell({
           </div>
         </header>
 
+        {taskNotice ? (
+          <div className="conversation-task-notice">
+            <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} />
+          </div>
+        ) : null}
+
         <div className="native-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
-          {showConnectionSummary ? (
+          {!hasWorkSession ? (
+            <EmptyWorkspaceActions busy={busy} onAddServer={onAddServer} onSyncCloud={onOpenCloudSync} />
+          ) : null}
+          {hasWorkSession && showConnectionSummary ? (
             <ConnectionSummary
               profile={profile}
               connection={connection}
@@ -299,7 +312,7 @@ export function NativeWorkbenchShell({
               profileReady={isProfileReady}
             />
           ) : null}
-          {shouldShowDiscovery ? (
+          {hasWorkSession && shouldShowDiscovery ? (
             <DiscoveryPanel
               discovery={discovery}
               profile={profile}
@@ -309,7 +322,7 @@ export function NativeWorkbenchShell({
               onAddWorkdir={onAddWorkdir}
             />
           ) : null}
-          {messages.map((message) => (
+          {hasWorkSession ? messages.map((message) => (
             <MessageBubble
               key={message.id}
               message={message}
@@ -334,10 +347,10 @@ export function NativeWorkbenchShell({
                 onOpenSettings={onOpenSettingsFromMessage}
                 onEditUserMessage={(text) => setComposer(text)}
               />
-            ))}
+          )) : null}
         </div>
 
-        {showComposer ? (
+        {showComposer && hasWorkSession ? (
           <div className="native-composer-dock">
             <Composer
               compact={isIpad}
@@ -416,8 +429,6 @@ export function NativeWorkbenchShell({
         onKill={onKillAgentSession}
       />
 
-      {taskNotice ? <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} /> : null}
-
       {settingsOpen ? (
         <SettingsPanel
           servers={servers}
@@ -426,6 +437,7 @@ export function NativeWorkbenchShell({
           editingServerIndex={editingServerIndex}
           busy={busy}
           mode={editingServerId === "global" ? "global" : editingServerId ? "edit" : "add"}
+          initialPage={settingsInitialPage}
           settingsDiscovery={settingsDiscovery}
           settingsAgentTab={settingsAgentTab}
           settingsSelectedSessions={settingsSelectedSessions}

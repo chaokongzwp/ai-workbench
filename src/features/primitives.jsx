@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CloudArrowDown, Plus } from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 
 const {
@@ -271,6 +272,25 @@ export function TaskNotice({ notice, onOpen, onClose }) {
       <button type="button" className="task-notice-close" aria-label="关闭提示" onClick={onClose}>
         ×
       </button>
+    </div>
+  );
+}
+
+export function EmptyWorkspaceActions({ busy = false, onAddServer, onSyncCloud }) {
+  return (
+    <div className="empty-workspace-actions">
+      <strong>开始使用 AI Workbench</strong>
+      <span>添加新的工作会话，或从云端同步已有配置。</span>
+      <div className="empty-workspace-buttons">
+        <button type="button" className="empty-workspace-primary" onClick={onAddServer} disabled={busy}>
+          <Plus size={17} weight="bold" aria-hidden="true" />
+          <span>添加会话</span>
+        </button>
+        <button type="button" className="empty-workspace-secondary" onClick={onSyncCloud} disabled={busy}>
+          <CloudArrowDown size={17} weight="bold" aria-hidden="true" />
+          <span>同步云端会话</span>
+        </button>
+      </div>
     </div>
   );
 }
