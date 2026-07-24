@@ -377,9 +377,51 @@ export function NavigationPanel({
 }) {
   const macVariant = variant === "mac";
   const ipadVariant = variant === "ipad";
+  const [runtimeVersionLabel, setRuntimeVersionLabel] = useState(appDisplayVersion);
+  const [versionCopied, setVersionCopied] = useState(false);
+  const versionCopyResetRef = useRef(null);
   const connected = connectionIsLive(connection);
   const connectLabel =
     connection.state === "testing" ? "连接中" : connected ? "断开" : connection.state === "error" ? "重试" : "连接";
+
+  useEffect(() => {
+    if (!macVariant) return undefined;
+
+    let active = true;
+    desktopBridge()
+      ?.getAppInfo?.()
+      .then((info) => {
+        if (!active || !info) return;
+        const version = String(info.version || "").trim();
+        const build = String(info.build || "").trim();
+        if (version) {
+          setRuntimeVersionLabel(build && build !== version ? `v${version} · build ${build}` : `v${version}`);
+        }
+      })
+      .catch(() => {
+        // Keep the compile-time version as a fallback for browser previews.
+      });
+
+    return () => {
+      active = false;
+      if (versionCopyResetRef.current) {
+        window.clearTimeout(versionCopyResetRef.current);
+      }
+    };
+  }, [macVariant]);
+
+  async function copyRuntimeVersion() {
+    const copied = await Primitives.copyPlainText(runtimeVersionLabel);
+    if (!copied) return;
+    setVersionCopied(true);
+    if (versionCopyResetRef.current) {
+      window.clearTimeout(versionCopyResetRef.current);
+    }
+    versionCopyResetRef.current = window.setTimeout(() => {
+      setVersionCopied(false);
+      versionCopyResetRef.current = null;
+    }, 1400);
+  }
 
   function selectServerFromCard(event, serverId) {
     if (event.key && event.key !== "Enter" && event.key !== " ") return;
@@ -691,7 +733,17 @@ export function NavigationPanel({
         })}
       </div>
 
-      {macVariant ? <div className="sidebar-version-label">{appDisplayVersion}</div> : null}
+      {macVariant ? (
+        <button
+          className="sidebar-version-label"
+          type="button"
+          title={`点击复制 ${runtimeVersionLabel}`}
+          aria-label={`复制版本号 ${runtimeVersionLabel}`}
+          onClick={copyRuntimeVersion}
+        >
+          {versionCopied ? "已复制" : runtimeVersionLabel}
+        </button>
+      ) : null}
     </>
   );
 }

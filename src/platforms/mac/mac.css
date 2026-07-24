@@ -311,11 +311,29 @@
 }
 
 .mac-shell .sidebar-version-label {
+  display: block;
   flex: 0 0 auto;
+  width: fit-content;
   margin: 0;
   padding: 6px 5px 3px;
+  border: 0;
   color: var(--mac-subtle);
+  font-family: inherit;
   font-size: 9px;
+  line-height: 1.2;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.mac-shell .sidebar-version-label:hover {
+  color: var(--mac-muted);
+}
+
+.mac-shell .sidebar-version-label:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-text) 34%, transparent);
+  outline-offset: 2px;
 }
 
 .mac-shell.sidebar-collapsed .mac-session-row,
