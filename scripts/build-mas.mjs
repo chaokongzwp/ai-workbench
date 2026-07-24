@@ -84,5 +84,15 @@ child.on("exit", (code, signal) => {
     console.error(`electron-builder stopped by signal ${signal}.`);
     process.exit(1);
   }
-  process.exit(code || 0);
+  if (code) process.exit(code);
+
+  const outputDirectory =
+    target === "mas" ? `mas-${arch}` : `mas-dev-${arch}`;
+  const appPath = resolve("build", "mac", outputDirectory, "AI Workbench.app");
+  execFileSync(
+    process.execPath,
+    [resolve("scripts/verify-electron-package.mjs"), appPath],
+    { stdio: "inherit" },
+  );
+  process.exit(0);
 });

@@ -5,6 +5,7 @@ directories:
 files:
   - dist/**/*
   - electron/**/*
+  - src/core/**/*.js
   - public/icons/**/*
   - package.json
   - "!node_modules/@capacitor/**"
