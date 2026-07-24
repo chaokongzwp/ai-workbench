@@ -6582,6 +6582,7 @@ export function useWorkbenchController() {
           status: "cancelled",
           backend: "agent",
           remoteTaskId: runningAgentMessage.remoteTaskId,
+          remoteTaskStatus: "cancelled",
           agentId: targetAgent.id,
           agentFailure: undefined,
           technicalDetail: failure?.detail || cleanAgentFailureDetail(raw),

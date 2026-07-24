@@ -30,6 +30,7 @@ export function responsePhaseForMessage(message) {
   const status = text(message?.status);
   const remoteStatus = text(message?.remoteTaskStatus);
   if (remoteTaskIsTerminal(remoteStatus)) return responsePhaseCompleted;
+  if (status === "cancelled" || Number(message?.cancelledAt || 0) > 0) return responsePhaseCompleted;
   if (pendingMessageStatuses.has(status)) return responsePhasePending;
   if (
     message?.backend === "agent" &&
@@ -52,7 +53,13 @@ export function responseOutcomeForMessage(message) {
   const status = text(message?.status);
   const remoteStatus = text(message?.remoteTaskStatus);
   if (successfulRemoteTaskStatuses.has(remoteStatus) && text(message?.output)) return "success";
-  if (status === "cancelled" || cancelledRemoteTaskStatuses.has(remoteStatus)) return "cancelled";
+  if (
+    status === "cancelled" ||
+    cancelledRemoteTaskStatuses.has(remoteStatus) ||
+    (Number(message?.cancelledAt || 0) > 0 && status !== "error")
+  ) {
+    return "cancelled";
+  }
   if (
     status === "error" ||
     failedRemoteTaskStatuses.has(remoteStatus) ||

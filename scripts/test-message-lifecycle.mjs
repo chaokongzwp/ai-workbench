@@ -32,6 +32,17 @@ assert.equal(completed.responsePhase, responsePhaseCompleted);
 assert.equal(completed.responseOutcome, "success");
 assert.equal(isPendingAgentResponse(completed), false);
 
+const cancelledWithStaleRemoteStatus = normalizeMessageLifecycle({
+  ...pending,
+  status: "cancelled",
+  remoteTaskStatus: "running",
+  cancelledAt: 180,
+});
+assert.equal(cancelledWithStaleRemoteStatus.responsePhase, responsePhaseCompleted);
+assert.equal(cancelledWithStaleRemoteStatus.responseOutcome, "cancelled");
+assert.equal(cancelledWithStaleRemoteStatus.status, "cancelled");
+assert.equal(isPendingAgentResponse(cancelledWithStaleRemoteStatus), false);
+
 const transportTimeout = normalizeMessageLifecycle({
   ...pending,
   status: "error",
