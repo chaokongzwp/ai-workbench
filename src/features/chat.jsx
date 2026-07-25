@@ -462,6 +462,7 @@ function agentDeliveryStatus(message, liveOutputText = "") {
   if (message?.backend !== "agent" || message?.status !== "running") return "";
 
   const remoteStatus = String(message?.remoteTaskStatus || "").trim();
+  if (remoteStatus === "syncing") return "同步中";
   if (remoteStatus === "preparing" || !String(message?.remoteTaskId || "").trim()) return "正在发送";
   if (remoteStatus === "queued") return "Agent 已接收";
   if (remoteStatus === "running") {

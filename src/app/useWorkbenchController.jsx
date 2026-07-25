@@ -3052,6 +3052,19 @@ export function useWorkbenchController() {
     const reconnectKey = `${target.id}:${profileConnectionKey(normalizeProfile(target.profile))}`;
     if (startupSessionReconnectRef.current === reconnectKey) return undefined;
 
+    const recoveringMessage = lastIncompleteAgentResponse(target);
+    if (recoveringMessage?.backend === "agent") {
+      updateAssistantMessageInServer(target.id, recoveringMessage.id, {
+        title: "同步中",
+        body: "正在连接服务器并同步上一次任务状态。",
+        status: "running",
+        remoteTaskStatus: "syncing",
+        remoteTaskCheckedAt: Date.now(),
+        syncState: "pending",
+        forceUpdate: true,
+      });
+    }
+
     const timer = window.setTimeout(() => {
       if (startupSessionReconnectRef.current === reconnectKey) return;
       startupSessionReconnectRef.current = reconnectKey;
