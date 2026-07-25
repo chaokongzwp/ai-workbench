@@ -465,9 +465,10 @@ function agentDeliveryStatus(message, liveOutputText = "") {
   if (remoteStatus === "preparing" || !String(message?.remoteTaskId || "").trim()) return "正在发送";
   if (remoteStatus === "queued") return "Agent 已接收";
   if (remoteStatus === "running") {
-    if (String(liveOutputText || "").trim()) return "AI 已响应";
-    if (String(message?.remoteTaskRunnerStartedAt || "").trim()) return "AI 已启动";
-    return "Agent 已接收";
+    if (String(message?.remoteTaskRunnerStartedAt || "").trim() || String(liveOutputText || "").trim()) {
+      return "AI 执行中";
+    }
+    return "正在交给 AI";
   }
   if (remoteStatus === "busy") return "会话占用";
   if (remoteStatus === "sync-lost" || remoteStatus === "sync-timeout" || remoteStatus === "unknown") {

@@ -1610,22 +1610,12 @@ export function dormantConnectionForProfile(profile, previous = {}, label = "未
 }
 
 export function connectionForAppLaunch(server) {
-  const task = taskForStorage(server?.task);
   const profile = normalizeProfile(server?.profile);
   const connection = server?.connection || initialConnectionForProfile(profile);
-  if (task?.state === "running" && task?.backend === "agent" && task?.remoteTaskId) {
-    return {
-      ...connection,
-      state: "testing",
-      label: "等待结果",
-      detail: "等待同步",
-      mode: "agent",
-    };
-  }
-  if (connection.state === "connected" || connection.state === "testing") {
-    return dormantConnectionForProfile(profile, connection, "未连接");
-  }
-  return connection;
+  if (!profileReady(profile)) return initialConnectionForProfile(profile);
+  // A persisted transport result only describes the previous App process.
+  // Remote task recovery is tracked independently through server.task.
+  return dormantConnectionForProfile(profile, connection, "未连接");
 }
 
 export function readyConnectionForSession(profile, previous = {}) {

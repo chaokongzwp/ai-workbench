@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import {
+  connectionForAppLaunch,
+} from "../src/core/foundation.js";
+
+function loadedServer(connection, task = { state: "idle" }) {
+  const server = {
+    id: "session-1",
+    name: "测试会话",
+    conversationId: "conversation-1",
+    profile: {
+      host: "127.0.0.1",
+      port: 22,
+      username: "tester",
+      password: "secret",
+      workdir: "/workspace",
+      agentId: "claude",
+      useWorkbenchAgent: true,
+    },
+    connection,
+    task,
+  };
+  return {
+    ...server,
+    connection: connectionForAppLaunch(server),
+  };
+}
+
+for (const previousState of ["connected", "testing", "error"]) {
+  const server = loadedServer({
+    state: previousState,
+    label: "旧状态",
+    detail: "上一次 App 运行留下的状态",
+    mode: "agent",
+  });
+  assert.equal(server.connection.state, "idle");
+  assert.equal(server.connection.label, "未连接");
+  assert.equal(server.connection.mode, "agent");
+}
+
+const recovering = loadedServer(
+  {
+    state: "connected",
+    label: "已连接",
+    detail: "旧连接",
+    mode: "agent",
+  },
+  {
+    state: "running",
+    backend: "agent",
+    remoteTaskId: "task-1",
+    agentId: "claude",
+    startedAt: Date.now(),
+  },
+);
+assert.equal(recovering.connection.state, "idle");
+assert.equal(recovering.task.state, "running");
+assert.equal(recovering.task.remoteTaskId, "task-1");
+
+console.log("session connection lifecycle regression: ok");

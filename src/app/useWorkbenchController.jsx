@@ -722,7 +722,7 @@ export function useWorkbenchController() {
   const startupAgentSyncNoticeRef = useRef(new Set());
   const agentHealthRefreshKeysRef = useRef(new Set());
   const agentHealthInFlightConnectionsRef = useRef(new Set());
-  const agentStartupHealthCheckedRef = useRef(false);
+  const startupSessionReconnectRef = useRef("");
   const agentConnectionPollAtRef = useRef(new Map());
   const agentConversationAutoSyncAtRef = useRef(new Map());
   const agentConversationSyncFailedAtRef = useRef(new Map());
@@ -2884,11 +2884,6 @@ export function useWorkbenchController() {
       agentHealthInFlightConnectionsRef.current.add(connectionKey);
 
       try {
-        const agentSetup = await ensureWorkbenchAgentForProfile(targetProfile, {
-          serverId,
-          reason,
-        });
-        if (!agentSetup.available) return;
         const stdout = await runRemoteCommandForProfile(targetProfile, buildWorkbenchAgentTaskListCommand(targetProfile), 768_000, 30);
         const parsed = parseWorkbenchAgentOutput(stdout);
         if (parsed.status !== "ready" && !parsed.version) return;
@@ -2897,7 +2892,6 @@ export function useWorkbenchController() {
         const nextServers = serversRef.current.map((server) => {
           const serverProfile = normalizeProfile(server.profile);
           if (profileConnectionKey(serverProfile) !== connectionKey) return server;
-          const isTargetServer = server.id === serverId;
           return {
             ...server,
             diagnostics: {
@@ -2910,13 +2904,6 @@ export function useWorkbenchController() {
             connection: {
               ...(server.connection || {}),
               mode: agentPreferredForProfile(serverProfile) ? "agent" : server.connection?.mode || "ssh",
-              ...(isTargetServer
-                ? {
-                    state: "connected",
-                    label: "已连接",
-                    detail: "Agent 正常",
-                  }
-                : {}),
             },
           };
         });
@@ -2936,18 +2923,6 @@ export function useWorkbenchController() {
     },
     [runRemoteCommandForProfile],
   );
-
-  useEffect(() => {
-    if (!workspaceLoaded) return;
-    if (agentStartupHealthCheckedRef.current) return;
-    agentStartupHealthCheckedRef.current = true;
-    const currentServers = serversRef.current.length ? serversRef.current : [];
-    for (const server of currentServers) {
-      const normalized = withKnownPassword(server.profile, currentServers);
-      if (!profileReady(normalized)) continue;
-      void refreshAgentHealthForServer(server.id, "startup");
-    }
-  }, [refreshAgentHealthForServer, workspaceLoaded]);
 
   async function connectExistingSession(serverId = activeServerIdRef.current) {
     if (busy) return;
@@ -3040,6 +3015,13 @@ export function useWorkbenchController() {
       setServers(nextServers);
       serversRef.current = nextServers;
       await saveWorkspace(nextServers, target.id);
+      const connectedServer = nextServers.find((server) => server.id === target.id);
+      if (agentSetup.available && connectedServer?.conversationId) {
+        await syncAgentConversationForServer(connectedServer, {
+          limit: 1,
+          reason: "session-connect-latest",
+        });
+      }
     } catch (error) {
       const message = shortError(error);
       setRawOpen(true);
@@ -3061,6 +3043,32 @@ export function useWorkbenchController() {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!workspaceLoaded) return undefined;
+    const target = serverById(activeServerIdRef.current);
+    if (!target || !profileReady(withKnownPassword(target.profile))) return undefined;
+
+    const reconnectKey = `${target.id}:${profileConnectionKey(normalizeProfile(target.profile))}`;
+    if (startupSessionReconnectRef.current === reconnectKey) return undefined;
+
+    const timer = window.setTimeout(() => {
+      if (startupSessionReconnectRef.current === reconnectKey) return;
+      startupSessionReconnectRef.current = reconnectKey;
+      void appLog("info", "session.startup_reconnect.begin", {
+        serverId: target.id,
+        conversationId: target.conversationId || "",
+      });
+      connectExistingSession(target.id).catch((error) => {
+        void appLog("warn", "session.startup_reconnect.failed", {
+          serverId: target.id,
+          error: shortError(error),
+        });
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [workspaceLoaded]);
 
   async function disconnectSession(serverId = activeServerIdRef.current) {
     if (busy) return;
@@ -4389,9 +4397,9 @@ export function useWorkbenchController() {
             forceUpdate: true,
           });
         }
-	        updateAssistantMessageInServer(serverId, assistantMessageId, {
-	          title: "提交中",
-	          body: `正在把任务交给 ${agent.shortName}。`,
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: "正在发送",
+          body: `正在把消息发送给 Agent。`,
           status: "running",
           backend: "agent",
           conversationId,
@@ -4472,10 +4480,10 @@ export function useWorkbenchController() {
             startedAt,
             label: `会话占用 ${agent.shortName}`,
           });
-	          setServerConnection(serverId, {
-	            state: "testing",
-	            label: "执行中",
-	            detail: agent.shortName,
+          setServerConnection(serverId, {
+            state: "connected",
+            label: "已连接",
+            detail: agent.shortName,
             mode: "agent",
           });
           return { used: true, ok: false, pending: true };
@@ -4524,12 +4532,15 @@ export function useWorkbenchController() {
             forceUpdate: true,
           });
         }
-	        updateAssistantMessageInServer(serverId, assistantMessageId, {
-	          title: attempt === 1 ? "执行中" : "正在重试",
-	          body:
-	            attempt === 1
-	              ? `已交给 ${agent.shortName}，正在等待结果。`
-	              : `第 ${attempt - 1} 次启动失败，正在重新尝试。`,
+        const acceptedRunnerStarted = Boolean(String(created.runnerStartedAt || "").trim());
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: attempt === 1 ? (acceptedRunnerStarted ? "AI 执行中" : "Agent 已接收") : "正在重试",
+          body:
+            attempt === 1
+              ? acceptedRunnerStarted
+                ? `AI 已开始处理，完成后会自动返回结果。`
+                : "消息发送成功，Agent 正在把任务交给 AI。"
+              : `第 ${attempt - 1} 次启动失败，正在重新尝试。`,
           status: "running",
           backend: "agent",
           conversationId,
@@ -4548,8 +4559,8 @@ export function useWorkbenchController() {
           technicalDetail: undefined,
         });
         setServerConnection(serverId, {
-          state: "testing",
-          label: attempt === 1 ? "等待结果" : "Agent 重试中",
+          state: "connected",
+          label: "已连接",
           detail: agent.shortName,
           mode: "agent",
         });
@@ -4662,8 +4673,8 @@ export function useWorkbenchController() {
               finishedAt: Date.now(),
             });
             setServerConnection(serverId, {
-              state: "idle",
-              label: "已取消",
+              state: "connected",
+              label: "已连接",
               detail: agent.shortName,
               mode: "agent",
             });
@@ -4709,9 +4720,9 @@ export function useWorkbenchController() {
                   technicalDetail: cleanAgentFailureDetail(raw),
                 });
                 setServerConnection(serverId, {
-                  state: "testing",
-                  label: "Agent 重试中",
-                  detail: `${attempt}/${maxAgentStartupAttempts}`,
+                  state: "connected",
+                  label: "已连接",
+                  detail: agent.shortName,
                   mode: "agent",
                 });
                 retryAgentStartup = true;
@@ -4747,11 +4758,11 @@ export function useWorkbenchController() {
                 startedAt: fallbackStartedAt,
                 label: `SSH 直连 ${agent.shortName}`,
               });
-              setServerConnection(serverId, {
-                state: "testing",
-                label: "SSH 直连中",
-                detail: "Agent 自动降级",
-                mode: "ssh",
+	            setServerConnection(serverId, {
+	              state: "connected",
+	              label: "已连接",
+	              detail: "Agent 自动降级",
+	              mode: "ssh",
               });
               return { used: false, fallbackReason: failure.kind };
             }
@@ -4777,8 +4788,16 @@ export function useWorkbenchController() {
               agentFailure: failure,
               technicalDetail: failure?.detail || cleanAgentFailureDetail(raw),
             });
-            setServerRawOutput(serverId, raw);
-            setServerConnection(serverId, {
+	            setServerRawOutput(serverId, raw);
+	            setServerTask(serverId, {
+	              state: "idle",
+	              backend: "agent",
+	              conversationId,
+	              remoteTaskId,
+	              agentId: agent.id,
+	              finishedAt: Date.now(),
+	            });
+	            setServerConnection(serverId, {
               state: "connected",
               label: "已连接",
               detail: agent.shortName,
@@ -4788,11 +4807,24 @@ export function useWorkbenchController() {
           }
 
           const liveOutput = formatAgentLiveOutput(status.output || "", text);
-	          updateAssistantMessageInServer(serverId, assistantMessageId, {
-	            title: "执行中",
-	            body: liveOutput
-	              ? "正在接收中间输出，最终结果会自动更新。"
-	              : `正在等待 ${agent.shortName} 返回结果。`,
+          const runnerStarted = Boolean(String(status.runnerStartedAt || "").trim());
+          const stageTitle =
+            taskStatus === "queued" || taskStatus === "preparing"
+              ? "Agent 已接收"
+              : runnerStarted || liveOutput
+                ? "AI 执行中"
+                : "正在交给 AI";
+          const stageBody =
+            taskStatus === "queued" || taskStatus === "preparing"
+              ? "消息发送成功，Agent 正在把任务交给 AI。"
+              : liveOutput
+                ? "正在接收 AI 的中间输出，最终结果会自动更新。"
+                : runnerStarted
+                  ? "AI 已开始处理，完成后会自动返回结果。"
+                  : "Agent 正在启动 AI 会话。";
+          updateAssistantMessageInServer(serverId, assistantMessageId, {
+            title: stageTitle,
+            body: stageBody,
             status: "running",
             backend: "agent",
             conversationId,
@@ -4935,12 +4967,25 @@ export function useWorkbenchController() {
 
       if (taskStatus === "queued" || taskStatus === "running" || taskStatus === "preparing" || taskStatus === "unknown") {
         const liveOutput = formatAgentLiveOutput(status.output || "", message.promptText || "");
+        const runnerStarted = Boolean(String(status.runnerStartedAt || "").trim());
+        const stageTitle =
+          taskStatus === "queued" || taskStatus === "preparing"
+            ? "Agent 已接收"
+            : runnerStarted || liveOutput
+              ? "AI 执行中"
+              : "正在交给 AI";
+        const stageBody =
+          taskStatus === "queued" || taskStatus === "preparing"
+            ? "消息发送成功，Agent 正在把任务交给 AI。"
+            : liveOutput
+              ? "正在接收 AI 的中间输出，最终结果会自动更新。"
+              : runnerStarted
+                ? "AI 已开始处理，完成后会自动返回结果。"
+                : "Agent 正在启动 AI 会话。";
         if (liveOutput) setServerRawOutput(serverId, raw);
-		        updateAssistantMessageInServer(serverId, message.id, {
-		          title: "执行中",
-		          body: liveOutput
-		            ? "正在接收中间输出，最终结果会自动更新。"
-		            : "任务仍在执行，恢复连接后会继续同步。",
+        updateAssistantMessageInServer(serverId, message.id, {
+          title: stageTitle,
+          body: stageBody,
           status: "running",
           backend: "agent",
           remoteTaskId: message.remoteTaskId,
@@ -4966,8 +5011,8 @@ export function useWorkbenchController() {
         });
         setServerConnection(serverId, {
           ...(server.connection || {}),
-          state: "testing",
-	          label: "等待结果",
+          state: "connected",
+          label: "已连接",
           detail: agent.shortName,
           mode: "agent",
         });
@@ -5088,7 +5133,7 @@ export function useWorkbenchController() {
           agentId: agent.id,
           finishedAt: Date.now(),
         });
-        setServerConnection(serverId, { state: "idle", label: "已取消", detail: agent.shortName, mode: "agent" });
+        setServerConnection(serverId, { state: "connected", label: "已连接", detail: agent.shortName, mode: "agent" });
         return true;
       }
 
@@ -5230,8 +5275,8 @@ export function useWorkbenchController() {
         nextTask.state === "running"
           ? {
               ...(current.connection || {}),
-              state: "testing",
-              label: "执行中",
+              state: "connected",
+              label: "已连接",
               detail: agentById(agentId).shortName,
               mode: "agent",
             }
@@ -5331,7 +5376,14 @@ export function useWorkbenchController() {
           });
           const candidate = taskCandidates[0];
           agentConnectionPollAtRef.current.set(connectionKey, Date.now());
-          await syncRemoteAgentMessage(candidate.server.id, candidate.message);
+          if (String(candidate.message.remoteTaskId || "").trim()) {
+            await syncRemoteAgentMessage(candidate.server.id, candidate.message);
+          } else if (candidate.server.conversationId) {
+            await syncAgentConversationForServer(candidate.server, {
+              limit: 1,
+              reason: "pending-message-recovery",
+            });
+          }
           continue;
         }
       }
@@ -5363,6 +5415,7 @@ export function useWorkbenchController() {
     const server = serverById(activeServerIdRef.current);
     const message = lastIncompleteAgentResponse(server);
     if (!server || !message) return undefined;
+    if (!connectionIsLive(server.connection)) return undefined;
 
     const taskId = String(message.remoteTaskId || "").trim();
     const agent = agentById(message.agentId || normalizeProfile(server.profile).agentId);
@@ -5370,47 +5423,18 @@ export function useWorkbenchController() {
     if (startupAgentSyncNoticeRef.current.has(noticeKey)) return undefined;
     startupAgentSyncNoticeRef.current.add(noticeKey);
 
-	    if (!taskId) {
-	      updateAssistantMessageInServer(server.id, message.id, {
-	        title: "状态待确认",
-	        body: "App 上次没有拿到任务 ID，暂时不能确认是否还在执行。请先检查状态；如果确认不想继续，点红色停止按钮结束当前任务。",
-        status: "running",
-        backend: "agent",
-        agentId: agent.id,
-        remoteTaskStatus: "sync-lost-no-task-id",
-        remoteTaskCheckedAt: Date.now(),
-        remoteSyncError: "missing remote task id on app launch",
-        forceUpdate: true,
-      });
-      setServerTask(server.id, {
-        state: "running",
-        backend: "agent",
-        agentId: agent.id,
-        startedAt: message.startedAt || message.createdAtMs || Date.now(),
-        label: "状态待确认",
-      });
-      setServerConnection(server.id, {
-        ...(server.connection || {}),
-        state: "testing",
-        label: "待确认",
-        detail: "缺少任务 ID，请检查状态",
-        mode: "agent",
-      });
-      enqueueTaskNotice({ serverId: server.id, title: "上次任务状态待确认，请先检查状态", tone: "warning" });
-      void appLog("warn", "agent.startup_sync.missing_task_id", {
-        serverId: server.id,
-        messageId: message.id,
-      });
-      return undefined;
+    if (!taskId) {
+      const timer = window.setTimeout(() => {
+        syncAgentConversationForServer(server, {
+          limit: 1,
+          reason: "startup-missing-task-id",
+        }).catch((error) => {
+          console.warn("[aiwb:agent-startup-conversation-sync:error]", shortError(error));
+        });
+      }, 350);
+      return () => window.clearTimeout(timer);
     }
 
-    setServerConnection(server.id, {
-      ...(server.connection || {}),
-      state: "testing",
-      label: "同步中",
-      detail: "正在检查上次任务",
-      mode: "agent",
-    });
     enqueueTaskNotice({ serverId: server.id, title: "正在同步上次未完成的任务", tone: "progress" });
     void appLog("info", "agent.startup_sync.begin", {
       serverId: server.id,
@@ -5424,7 +5448,7 @@ export function useWorkbenchController() {
       });
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [workspaceLoaded]);
+  }, [activeServerId, connection?.state, workspaceLoaded]);
 
   useEffect(() => {
     if (!workspaceLoaded) return undefined;
@@ -5818,8 +5842,8 @@ export function useWorkbenchController() {
       return;
     }
 
-    const sourceServer = serverById(serverId) || activeServer;
-    const currentProfile = withKnownPassword(profileRef.current);
+    let sourceServer = serverById(serverId) || activeServer;
+    let currentProfile = withKnownPassword(profileRef.current);
     if (showProfileIssue(currentProfile)) {
       enqueueTaskNotice({ serverId, title: "连接信息不完整，请先补全配置", tone: "error" });
       return;
@@ -5829,6 +5853,16 @@ export function useWorkbenchController() {
       setServerConnection(serverId, { state: "idle", label: "待选择目录", detail: "未选择工作目录" });
       enqueueTaskNotice({ serverId, title: "请先选择一个工作目录", tone: "error" });
       return;
+    }
+    if (!connectionIsLive(sourceServer.connection)) {
+      enqueueTaskNotice({ serverId, title: "正在连接当前会话", tone: "progress" });
+      await connectExistingSession(serverId);
+      sourceServer = serverById(serverId) || sourceServer;
+      currentProfile = withKnownPassword(sourceServer.profile);
+      if (!connectionIsLive(sourceServer.connection)) {
+        enqueueTaskNotice({ serverId, title: "会话连接失败，消息没有发送", tone: "error" });
+        return;
+      }
     }
 
     const selectedAgent = agentById(currentProfile.agentId, activeAgent);
@@ -5849,8 +5883,8 @@ export function useWorkbenchController() {
       label: `等待 ${selectedAgent.shortName}`,
     });
     setServerConnection(serverId, {
-      state: "testing",
-      label: "运行中",
+      state: "connected",
+      label: "已连接",
       detail: selectedAgent.shortName,
     });
     setServerMessages(serverId, (items) => [
@@ -6599,8 +6633,8 @@ export function useWorkbenchController() {
           finishedAt: now,
         });
         setServerConnection(serverId, {
-          state: "idle",
-          label: "已取消",
+          state: "connected",
+          label: "已连接",
           detail: targetAgent.shortName,
           mode: "agent",
         });
@@ -6636,8 +6670,8 @@ export function useWorkbenchController() {
         finishedAt: now,
       });
       setServerConnection(serverId, {
-        state: "idle",
-        label: "已停止",
+        state: "connected",
+        label: "已连接",
         detail: sessionName(currentProfile, taskAgent.id),
         mode: runningMessage?.backend === "agent" ? "agent" : "ssh",
       });
