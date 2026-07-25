@@ -1,0 +1,1260 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Workbench App Store Screenshots</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+          "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+        font-synthesis: none;
+        --page: #0b0d11;
+        --page-soft: #12161c;
+        --surface: #15191f;
+        --surface-2: #1d222a;
+        --surface-3: #252b34;
+        --line: #303640;
+        --text: #f7f8fa;
+        --muted: #9ea6b2;
+        --blue: #67adff;
+        --green: #41c77a;
+        --amber: #f0b84f;
+        --red: #ef6868;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--page);
+        color: var(--text);
+      }
+
+      body {
+        position: relative;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .store-shot {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: var(--page);
+      }
+
+      .store-shot::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(#ffffff08 1px, transparent 1px),
+          linear-gradient(90deg, #ffffff08 1px, transparent 1px);
+        background-size: 96px 96px;
+        mask-image: linear-gradient(to bottom, black, transparent 52%);
+        pointer-events: none;
+      }
+
+      .story {
+        position: relative;
+        z-index: 2;
+      }
+
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        color: #b9c0ca;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .eyebrow img {
+        display: block;
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+      }
+
+      .story h1,
+      .story p {
+        margin: 0;
+      }
+
+      .story h1 {
+        max-width: 1040px;
+        font-weight: 760;
+        line-height: 1.08;
+      }
+
+      .story p {
+        max-width: 980px;
+        color: #b9c0ca;
+        line-height: 1.45;
+      }
+
+      .app-stage {
+        position: absolute;
+        z-index: 2;
+      }
+
+      .app-frame {
+        position: relative;
+        overflow: hidden;
+        background: #0c0e12;
+        border: 1px solid #3b424d;
+        box-shadow: 0 44px 110px #00000072;
+      }
+
+      .app-frame::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border: 1px solid #ffffff0d;
+        border-radius: inherit;
+        pointer-events: none;
+      }
+
+      .app-icon,
+      .agent-icon {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        overflow: hidden;
+        background: #f7f8fa;
+      }
+
+      .app-icon img,
+      .agent-icon img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .agent-icon.codex {
+        background: #eaf3ff;
+      }
+
+      .agent-icon.claude {
+        background: #fff3ea;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+
+      .dot.green {
+        background: var(--green);
+      }
+
+      .dot.amber {
+        background: var(--amber);
+      }
+
+      .dot.blue {
+        background: var(--blue);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 36px;
+        padding: 0 15px;
+        border-radius: 999px;
+        color: #c8cdd5;
+        background: #272c34;
+      }
+
+      .pill.success {
+        color: #a7e8c1;
+        background: #183528;
+      }
+
+      .pill.progress {
+        color: #abd2ff;
+        background: #19314d;
+      }
+
+      .pill.warning {
+        color: #f8d696;
+        background: #3b2d16;
+      }
+
+      .icon-button {
+        display: grid;
+        place-items: center;
+        color: #d8dde4;
+        background: #242930;
+        border: 0;
+      }
+
+      .mobile-shell {
+        position: relative;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: #0d0f13;
+      }
+
+      .mobile-topbar {
+        display: grid;
+        grid-template-columns: 78px 1fr 78px;
+        align-items: center;
+        height: 150px;
+        padding: 22px 32px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .mobile-topbar .icon-button {
+        width: 68px;
+        height: 68px;
+        border-radius: 20px;
+        font-size: 32px;
+      }
+
+      .mobile-title {
+        text-align: center;
+      }
+
+      .mobile-title strong {
+        display: block;
+        font-size: 31px;
+        line-height: 1.2;
+      }
+
+      .mobile-title span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 20px;
+      }
+
+      .mobile-content {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        padding: 40px 36px 180px;
+      }
+
+      .mobile-composer {
+        position: absolute;
+        right: 28px;
+        bottom: 28px;
+        left: 28px;
+        min-height: 138px;
+        padding: 26px 26px 20px;
+        border: 1px solid #414751;
+        border-radius: 34px;
+        background: #1b1f25;
+      }
+
+      .mobile-composer .placeholder {
+        color: #9ea5af;
+        font-size: 26px;
+      }
+
+      .composer-tools {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 16px;
+        margin-top: 25px;
+      }
+
+      .composer-tools .icon-button {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        font-size: 25px;
+      }
+
+      .composer-tools .send {
+        color: #14171b;
+        background: #f0f1f3;
+      }
+
+      .user-bubble {
+        width: fit-content;
+        max-width: 78%;
+        margin-left: auto;
+        padding: 22px 27px;
+        border: 1px solid #3b414a;
+        border-radius: 28px 28px 8px 28px;
+        background: #23272d;
+        font-size: 28px;
+        line-height: 1.45;
+      }
+
+      .message-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 28px 0 18px;
+      }
+
+      .message-meta .agent-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+      }
+
+      .message-meta strong {
+        font-size: 27px;
+      }
+
+      .message-meta .pill {
+        min-height: 32px;
+        padding: 0 12px;
+        font-size: 17px;
+      }
+
+      .assistant-copy {
+        padding-left: 57px;
+        color: #e7e9ed;
+        font-size: 25px;
+        line-height: 1.62;
+      }
+
+      .assistant-copy h3 {
+        margin: 0 0 18px;
+        font-size: 31px;
+      }
+
+      .assistant-copy p {
+        margin: 0 0 18px;
+      }
+
+      .assistant-copy ul {
+        margin: 0;
+        padding-left: 32px;
+      }
+
+      .assistant-copy li {
+        margin: 12px 0;
+      }
+
+      .progress-card {
+        margin-top: 24px;
+        padding: 24px;
+        border: 1px solid #35404b;
+        border-radius: 24px;
+        background: #151a20;
+      }
+
+      .progress-card header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 21px;
+      }
+
+      .progress-card header strong {
+        font-size: 25px;
+      }
+
+      .progress-row {
+        display: grid;
+        grid-template-columns: 28px 1fr auto;
+        gap: 14px;
+        align-items: center;
+        padding: 13px 0;
+        color: #c5cbd3;
+        font-size: 22px;
+      }
+
+      .check {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        color: #0d1115;
+        background: var(--green);
+        font-size: 15px;
+        font-weight: 900;
+      }
+
+      .check.current {
+        color: #102338;
+        background: var(--blue);
+      }
+
+      .session-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 34px;
+      }
+
+      .session-heading h2 {
+        margin: 0;
+        font-size: 45px;
+      }
+
+      .session-heading p {
+        margin: 7px 0 0;
+        color: var(--muted);
+        font-size: 22px;
+      }
+
+      .add-session {
+        display: grid;
+        place-items: center;
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        color: #111419;
+        background: #f1f2f4;
+        font-size: 37px;
+      }
+
+      .search-row {
+        display: flex;
+        align-items: center;
+        height: 70px;
+        margin-bottom: 26px;
+        padding: 0 24px;
+        border-radius: 22px;
+        color: #a8afb9;
+        background: #20242a;
+        font-size: 23px;
+      }
+
+      .session-list {
+        border-radius: 25px;
+        overflow: hidden;
+        background: #171b20;
+      }
+
+      .session-row {
+        display: grid;
+        grid-template-columns: 50px 52px 1fr auto;
+        gap: 17px;
+        align-items: center;
+        min-height: 116px;
+        padding: 17px 22px;
+        border-bottom: 1px solid #2a3037;
+      }
+
+      .session-row:last-child {
+        border-bottom: 0;
+      }
+
+      .session-row.active {
+        background: #242931;
+      }
+
+      .session-index {
+        color: #8e96a2;
+        font-size: 21px;
+        text-align: center;
+      }
+
+      .session-row .agent-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 13px;
+      }
+
+      .session-copy strong {
+        display: block;
+        font-size: 24px;
+      }
+
+      .session-copy span {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .file-list {
+        margin-top: 25px;
+        overflow: hidden;
+        border-top: 1px solid #303640;
+        border-bottom: 1px solid #303640;
+      }
+
+      .file-row {
+        display: grid;
+        grid-template-columns: 52px 1fr auto;
+        gap: 18px;
+        align-items: center;
+        min-height: 106px;
+        border-bottom: 1px solid #303640;
+      }
+
+      .file-row:last-child {
+        border-bottom: 0;
+      }
+
+      .file-icon {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        color: #8fc3ff;
+        background: #182b42;
+        font-size: 23px;
+        font-weight: 800;
+      }
+
+      .file-copy strong {
+        display: block;
+        font-size: 22px;
+      }
+
+      .file-copy span {
+        display: block;
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 17px;
+      }
+
+      .file-actions {
+        display: flex;
+        gap: 18px;
+        color: #9cc9ff;
+        font-size: 18px;
+      }
+
+      .desktop-shell {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: #0c0e12;
+      }
+
+      .window-bar {
+        display: grid;
+        grid-template-columns: 150px 1fr 150px;
+        align-items: center;
+        height: 82px;
+        padding: 0 24px;
+        border-bottom: 1px solid #292e36;
+      }
+
+      .traffic {
+        display: flex;
+        gap: 12px;
+      }
+
+      .traffic i {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+      }
+
+      .traffic i:nth-child(1) {
+        background: #ff5f57;
+      }
+
+      .traffic i:nth-child(2) {
+        background: #febc2e;
+      }
+
+      .traffic i:nth-child(3) {
+        background: #28c840;
+      }
+
+      .window-title {
+        text-align: center;
+      }
+
+      .window-title strong {
+        display: block;
+        font-size: 24px;
+      }
+
+      .window-title span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 5px;
+        color: #969eaa;
+        font-size: 15px;
+      }
+
+      .desktop-body {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 310px 1fr;
+      }
+
+      .sidebar {
+        padding: 28px 20px;
+        border-right: 1px solid #292e36;
+        background: #13161b;
+      }
+
+      .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        color: #aab1bb;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .sidebar-header .add-session {
+        width: 34px;
+        height: 34px;
+        font-size: 22px;
+      }
+
+      .sidebar .session-row {
+        grid-template-columns: 34px 1fr auto;
+        min-height: 82px;
+        padding: 14px 12px;
+        border: 0;
+        border-radius: 16px;
+      }
+
+      .sidebar .session-row + .session-row {
+        margin-top: 8px;
+      }
+
+      .sidebar .session-row.active {
+        background: #272c33;
+      }
+
+      .sidebar .session-copy strong {
+        font-size: 18px;
+      }
+
+      .sidebar .session-copy span {
+        font-size: 14px;
+      }
+
+      .desktop-main {
+        position: relative;
+        min-width: 0;
+        padding: 45px 72px 170px;
+        overflow: hidden;
+      }
+
+      .desktop-main .user-bubble {
+        max-width: 68%;
+        padding: 18px 23px;
+        border-radius: 22px 22px 7px 22px;
+        font-size: 20px;
+      }
+
+      .desktop-main .message-meta {
+        margin-top: 36px;
+      }
+
+      .desktop-main .assistant-copy {
+        max-width: 900px;
+        padding-left: 58px;
+        font-size: 18px;
+        line-height: 1.7;
+      }
+
+      .desktop-main .assistant-copy h3 {
+        font-size: 27px;
+      }
+
+      .desktop-composer {
+        position: absolute;
+        right: 55px;
+        bottom: 34px;
+        left: 55px;
+        min-height: 114px;
+        padding: 21px 24px;
+        border: 1px solid #3d434c;
+        border-radius: 22px;
+        background: #191d23;
+      }
+
+      .desktop-composer .placeholder {
+        color: #8f97a2;
+        font-size: 18px;
+      }
+
+      .desktop-composer .composer-tools {
+        margin-top: 18px;
+      }
+
+      .desktop-composer .icon-button {
+        width: 40px;
+        height: 40px;
+        font-size: 18px;
+      }
+
+      .desktop-main .progress-card {
+        max-width: 860px;
+      }
+
+      .desktop-main .file-row {
+        min-height: 84px;
+      }
+
+      .diagram-card {
+        margin-top: 26px;
+        padding: 25px;
+        border: 1px solid #353b45;
+        border-radius: 20px;
+        background: #14181e;
+      }
+
+      .diagram-flow {
+        display: grid;
+        grid-template-columns: 1fr 46px 1fr 46px 1fr;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .diagram-node {
+        padding: 17px 14px;
+        border: 1px solid #48515e;
+        border-radius: 14px;
+        color: #e8ebef;
+        background: #20252c;
+        text-align: center;
+      }
+
+      .diagram-arrow {
+        color: #7fbaff;
+        font-size: 28px;
+        text-align: center;
+      }
+
+      .table-card {
+        margin-top: 24px;
+        overflow: hidden;
+        border: 1px solid #343b45;
+        border-radius: 18px;
+      }
+
+      .table-row {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 0.8fr;
+        min-height: 49px;
+        border-bottom: 1px solid #343b45;
+      }
+
+      .table-row:last-child {
+        border-bottom: 0;
+      }
+
+      .table-row.header {
+        background: #242a32;
+        font-weight: 700;
+      }
+
+      .table-row span {
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        border-right: 1px solid #343b45;
+      }
+
+      .table-row span:last-child {
+        border-right: 0;
+      }
+
+      .session-board {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .session-tile {
+        min-height: 148px;
+        padding: 22px;
+        border: 1px solid #343b45;
+        border-radius: 20px;
+        background: #161a20;
+      }
+
+      .session-tile header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .session-tile .agent-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+      }
+
+      .session-tile strong {
+        font-size: 21px;
+      }
+
+      .session-tile p {
+        margin: 17px 0 0;
+        color: #99a2ad;
+        font-size: 16px;
+        line-height: 1.5;
+      }
+
+      .platform-iphone .story {
+        padding: 118px 96px 0;
+      }
+
+      .platform-iphone .eyebrow {
+        font-size: 25px;
+      }
+
+      .platform-iphone .story h1 {
+        margin-top: 30px;
+        font-size: 77px;
+      }
+
+      .platform-iphone .story p {
+        margin-top: 25px;
+        font-size: 31px;
+      }
+
+      .platform-iphone .app-stage {
+        top: 610px;
+        right: 80px;
+        bottom: 72px;
+        left: 80px;
+      }
+
+      .platform-iphone .app-frame {
+        width: 100%;
+        height: 100%;
+        border-radius: 56px;
+      }
+
+      .platform-ipad .story {
+        padding: 58px 105px 0;
+      }
+
+      .platform-ipad .eyebrow {
+        font-size: 21px;
+      }
+
+      .platform-ipad .story h1 {
+        margin-top: 18px;
+        font-size: 61px;
+      }
+
+      .platform-ipad .story p {
+        margin-top: 14px;
+        font-size: 26px;
+      }
+
+      .platform-ipad .app-stage {
+        top: 390px;
+        right: 68px;
+        bottom: 54px;
+        left: 68px;
+      }
+
+      .platform-ipad .app-frame {
+        width: 100%;
+        height: 100%;
+        border-radius: 40px;
+      }
+
+      .platform-ipad .window-bar {
+        height: 92px;
+      }
+
+      .platform-ipad .desktop-body {
+        grid-template-columns: 370px 1fr;
+      }
+
+      .platform-ipad .sidebar {
+        padding: 30px 24px;
+      }
+
+      .platform-ipad .desktop-main {
+        padding: 54px 60px 180px;
+      }
+
+      .platform-ipad .desktop-main .assistant-copy {
+        max-width: 1100px;
+        font-size: 21px;
+      }
+
+      .platform-ipad .desktop-main .user-bubble {
+        font-size: 23px;
+      }
+
+      .platform-mac .story {
+        padding: 70px 120px 0;
+      }
+
+      .platform-mac .eyebrow {
+        font-size: 22px;
+      }
+
+      .platform-mac .story h1 {
+        margin-top: 18px;
+        font-size: 65px;
+      }
+
+      .platform-mac .story p {
+        margin-top: 15px;
+        font-size: 27px;
+      }
+
+      .platform-mac .app-stage {
+        top: 375px;
+        right: 85px;
+        bottom: 54px;
+        left: 85px;
+      }
+
+      .platform-mac .app-frame {
+        width: 100%;
+        height: 100%;
+        border-radius: 28px;
+      }
+
+      .theme-blue {
+        --page: #0b1118;
+        --page-soft: #111a25;
+      }
+
+      .theme-green {
+        --page: #0c1210;
+        --page-soft: #121b17;
+      }
+
+      .theme-warm {
+        --page: #12100e;
+        --page-soft: #1b1713;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="root"></main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const platform = ["iphone", "ipad", "mac"].includes(params.get("platform"))
+        ? params.get("platform")
+        : "iphone";
+      const slide = Math.min(4, Math.max(1, Number(params.get("slide") || 1)));
+
+      const stories = [
+        {
+          title: "把远程 AI 装进口袋",
+          subtitle: "Codex 与 Claude，随时继续你的工作会话",
+          theme: "theme-blue",
+        },
+        {
+          title: "任务交给后台，你可以先离开",
+          subtitle: "关闭 App 后继续执行，回来自动同步最新结果",
+          theme: "theme-green",
+        },
+        {
+          title: "多个项目，一处管理",
+          subtitle: "不同服务器、工作目录与 AI 会话清晰排列",
+          theme: "",
+        },
+        {
+          title: "结果和文件，都在手边",
+          subtitle: "Markdown、表格、流程图与远程文件直接查看",
+          theme: "theme-warm",
+        },
+      ];
+
+      const iconPath = "../../public/icons/workbench.png";
+      const codexPath = "../../public/icons/codex.svg";
+      const claudePath = "../../public/icons/claude.svg";
+      const story = stories[slide - 1];
+
+      const agentIcon = (type = "codex") => `
+        <span class="agent-icon ${type}">
+          <img src="${type === "claude" ? claudePath : codexPath}" alt="" />
+        </span>
+      `;
+
+      const pill = (text, tone = "") => `<span class="pill ${tone}">${text}</span>`;
+
+      const sessions = (compact = false) => `
+        ${compact ? "" : `
+          <div class="session-heading">
+            <div>
+              <h2>工作会话</h2>
+              <p>选择一个项目继续</p>
+            </div>
+            <span class="add-session">+</span>
+          </div>
+          <div class="search-row">⌕　搜索会话名称</div>
+        `}
+        <div class="session-list">
+          <div class="session-row ${slide === 1 ? "active" : ""}">
+            <span class="session-index">01</span>
+            ${compact ? "" : agentIcon("codex")}
+            <div class="session-copy">
+              <strong>官网性能优化</strong>
+              <span><i class="dot ${slide === 1 ? "green" : ""}"></i> Codex · Agent</span>
+            </div>
+            ${pill(slide === 1 ? "已连接" : "可连接", slide === 1 ? "success" : "")}
+          </div>
+          <div class="session-row ${slide === 2 ? "active" : ""}">
+            <span class="session-index">02</span>
+            ${compact ? "" : agentIcon("claude")}
+            <div class="session-copy">
+              <strong>移动端发布</strong>
+              <span><i class="dot ${slide === 2 ? "amber" : ""}"></i> Claude · ${slide === 2 ? "执行中" : "Agent"}</span>
+            </div>
+            ${pill(slide === 2 ? "运行中" : "已连接", slide === 2 ? "warning" : "success")}
+          </div>
+          <div class="session-row ${slide === 3 ? "active" : ""}">
+            <span class="session-index">03</span>
+            ${compact ? "" : agentIcon("codex")}
+            <div class="session-copy">
+              <strong>数据报表</strong>
+              <span><i class="dot green"></i> Codex · Agent</span>
+            </div>
+            ${pill("已完成", "success")}
+          </div>
+          <div class="session-row ${slide === 4 ? "active" : ""}">
+            <span class="session-index">04</span>
+            ${compact ? "" : agentIcon("claude")}
+            <div class="session-copy">
+              <strong>文档整理</strong>
+              <span><i class="dot green"></i> Claude · Agent</span>
+            </div>
+            ${pill("有新结果", "success")}
+          </div>
+        </div>
+      `;
+
+      const chatOne = () => `
+        <div class="user-bubble">检查首页加载速度，并给出可以直接落地的优化建议</div>
+        <div class="message-meta">
+          ${agentIcon("codex")}
+          <strong>Codex</strong>
+          ${pill("已完成", "success")}
+          ${pill("1:42")}
+        </div>
+        <div class="assistant-copy">
+          <h3>首页性能检查完成</h3>
+          <p>已经定位到三个主要瓶颈，并按影响程度完成排序：</p>
+          <ul>
+            <li><strong>首屏图片过大</strong>：已生成压缩与响应式加载方案。</li>
+            <li><strong>脚本阻塞渲染</strong>：建议拆分非首屏模块并延迟加载。</li>
+            <li><strong>缓存策略缺失</strong>：静态资源增加长期缓存与版本指纹。</li>
+          </ul>
+        </div>
+      `;
+
+      const chatRunning = () => `
+        <div class="user-bubble">构建 iPhone 和 iPad 版本，测试完成后上传 TestFlight</div>
+        <div class="message-meta">
+          ${agentIcon("claude")}
+          <strong>Claude</strong>
+          ${pill("AI 执行中", "progress")}
+          ${pill("6:18")}
+        </div>
+        <div class="assistant-copy">
+          <p>任务已经交给服务器 Agent。你可以切换到其他会话，完成后会自动同步结果。</p>
+          <div class="progress-card">
+            <header>
+              <strong>发布进度</strong>
+              ${pill("后台运行中", "progress")}
+            </header>
+            <div class="progress-row"><span class="check">✓</span><span>检查签名与构建环境</span><span>完成</span></div>
+            <div class="progress-row"><span class="check">✓</span><span>构建 iPhone / iPad Archive</span><span>完成</span></div>
+            <div class="progress-row"><span class="check current">•</span><span>上传 App Store Connect</span><span>进行中</span></div>
+            <div class="progress-row"><span class="check" style="background:#3a414b;color:#8d96a2">○</span><span>等待 Apple 处理</span><span>等待中</span></div>
+          </div>
+        </div>
+      `;
+
+      const filesResult = () => `
+        <div class="user-bubble">整理本周项目进展，生成一份可以分享的总结</div>
+        <div class="message-meta">
+          ${agentIcon("claude")}
+          <strong>Claude</strong>
+          ${pill("已完成", "success")}
+          ${pill("2:08")}
+        </div>
+        <div class="assistant-copy">
+          <h3>项目总结已经生成</h3>
+          <p>内容包含本周完成事项、风险、下周计划，以及一张执行流程图。</p>
+          <div class="file-list">
+            <div class="file-row">
+              <span class="file-icon">MD</span>
+              <span class="file-copy"><strong>本周项目总结.md</strong><span>Markdown · 18 KB</span></span>
+              <span class="file-actions"><b>查看</b><b>下载</b></span>
+            </div>
+            <div class="file-row">
+              <span class="file-icon">PDF</span>
+              <span class="file-copy"><strong>项目进展汇报.pdf</strong><span>PDF · 1.2 MB</span></span>
+              <span class="file-actions"><b>查看</b><b>下载</b></span>
+            </div>
+            <div class="file-row">
+              <span class="file-icon">CSV</span>
+              <span class="file-copy"><strong>任务完成明细.csv</strong><span>CSV · 42 KB</span></span>
+              <span class="file-actions"><b>查看</b><b>下载</b></span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const markdownResult = () => `
+        <div class="user-bubble">把发布流程整理成表格和流程图</div>
+        <div class="message-meta">
+          ${agentIcon("codex")}
+          <strong>Codex</strong>
+          ${pill("已完成", "success")}
+        </div>
+        <div class="assistant-copy">
+          <h3>发布流程</h3>
+          <div class="diagram-card">
+            <div class="diagram-flow">
+              <span class="diagram-node">提交任务</span>
+              <span class="diagram-arrow">→</span>
+              <span class="diagram-node">Agent 执行</span>
+              <span class="diagram-arrow">→</span>
+              <span class="diagram-node">同步结果</span>
+            </div>
+          </div>
+          <div class="table-card">
+            <div class="table-row header"><span>阶段</span><span>负责人</span><span>状态</span></div>
+            <div class="table-row"><span>构建与测试</span><span>Codex</span><span>完成</span></div>
+            <div class="table-row"><span>上传版本</span><span>Agent</span><span>完成</span></div>
+            <div class="table-row"><span>审核提交</span><span>你</span><span>待确认</span></div>
+          </div>
+        </div>
+      `;
+
+      const mobileComposer = () => `
+        <div class="mobile-composer">
+          <div class="placeholder">告诉 AI 你想做什么</div>
+          <div class="composer-tools">
+            <button class="icon-button" aria-label="下载">↓</button>
+            <button class="icon-button" aria-label="添加图片">▧</button>
+            <button class="icon-button" aria-label="语音">●</button>
+            <button class="icon-button send" aria-label="发送">↑</button>
+          </div>
+        </div>
+      `;
+
+      const mobileScreen = () => {
+        if (slide === 3) {
+          return `
+            <div class="mobile-shell">
+              <div class="mobile-topbar">
+                <button class="icon-button">☰</button>
+                <div class="mobile-title"><strong>工作会话</strong><span>4 个项目</span></div>
+                <button class="icon-button">•••</button>
+              </div>
+              <div class="mobile-content">${sessions(false)}</div>
+            </div>
+          `;
+        }
+        return `
+          <div class="mobile-shell">
+            <div class="mobile-topbar">
+              <button class="icon-button">☰</button>
+              <div class="mobile-title">
+                <strong>${slide === 2 ? "移动端发布" : slide === 4 ? "文档整理" : "官网性能优化"}</strong>
+                <span><i class="dot ${slide === 2 ? "amber" : "green"}"></i>${slide === 2 ? "Claude 执行中" : "Agent 已连接"}</span>
+              </div>
+              <button class="icon-button">•••</button>
+            </div>
+            <div class="mobile-content">
+              ${slide === 1 ? chatOne() : slide === 2 ? chatRunning() : filesResult()}
+            </div>
+            ${mobileComposer()}
+          </div>
+        `;
+      };
+
+      const desktopMainContent = () => {
+        if (slide === 1) return chatOne();
+        if (slide === 2) return chatRunning();
+        if (slide === 3) {
+          return `
+            <div class="assistant-copy" style="padding-left:0;max-width:none">
+              <h3>所有工作会话</h3>
+              <p>每个服务器、工作目录和 AI 会话独立保存，状态实时同步。</p>
+              <div class="session-board">
+                <article class="session-tile"><header>${agentIcon("codex")}<strong>官网性能优化</strong>${pill("已连接","success")}</header><p>Codex · Agent<br />远程服务器 · /workspace/web</p></article>
+                <article class="session-tile"><header>${agentIcon("claude")}<strong>移动端发布</strong>${pill("执行中","warning")}</header><p>Claude · Agent<br />远程服务器 · /workspace/app</p></article>
+                <article class="session-tile"><header>${agentIcon("codex")}<strong>数据报表</strong>${pill("已完成","success")}</header><p>Codex · Agent<br />Windows · D:\\projects\\report</p></article>
+                <article class="session-tile"><header>${agentIcon("claude")}<strong>文档整理</strong>${pill("有新结果","success")}</header><p>Claude · Agent<br />远程服务器 · /workspace/docs</p></article>
+              </div>
+            </div>
+          `;
+        }
+        return markdownResult();
+      };
+
+      const desktopScreen = () => `
+        <div class="desktop-shell">
+          <div class="window-bar">
+            <div class="traffic"><i></i><i></i><i></i></div>
+            <div class="window-title">
+              <strong>${slide === 1 ? "官网性能优化" : slide === 2 ? "移动端发布" : slide === 3 ? "工作会话" : "文档整理"}</strong>
+              <span><i class="dot ${slide === 2 ? "amber" : "green"}"></i>${slide === 2 ? "Claude 执行中" : "Agent 已连接"}</span>
+            </div>
+            <div style="text-align:right;color:#9da4ae;font-size:24px">•••</div>
+          </div>
+          <div class="desktop-body">
+            <aside class="sidebar">
+              <div class="sidebar-header"><span>工作会话</span><span class="add-session">+</span></div>
+              ${sessions(true)}
+            </aside>
+            <section class="desktop-main">
+              ${desktopMainContent()}
+              <div class="desktop-composer">
+                <div class="placeholder">告诉 AI 你想做什么</div>
+                <div class="composer-tools">
+                  <button class="icon-button">↓</button>
+                  <button class="icon-button">▧</button>
+                  <button class="icon-button">●</button>
+                  <button class="icon-button send">↑</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      `;
+
+      document.body.className = `platform-${platform}`;
+      document.querySelector("#root").innerHTML = `
+        <section class="store-shot ${story.theme}">
+          <header class="story">
+            <div class="eyebrow"><img src="${iconPath}" alt="" /> AI WORKBENCH</div>
+            <h1>${story.title}</h1>
+            <p>${story.subtitle}</p>
+          </header>
+          <div class="app-stage">
+            <div class="app-frame">
+              ${platform === "iphone" ? mobileScreen() : desktopScreen()}
+            </div>
+          </div>
+        </section>
+      `;
+    </script>
+  </body>
+</html>
