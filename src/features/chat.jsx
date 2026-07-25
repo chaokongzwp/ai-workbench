@@ -458,6 +458,24 @@ function compactAgentMessageTitle(message, agent) {
   return title;
 }
 
+function agentDeliveryStatus(message, liveOutputText = "") {
+  if (message?.backend !== "agent" || message?.status !== "running") return "";
+
+  const remoteStatus = String(message?.remoteTaskStatus || "").trim();
+  if (remoteStatus === "preparing" || !String(message?.remoteTaskId || "").trim()) return "正在发送";
+  if (remoteStatus === "queued") return "Agent 已接收";
+  if (remoteStatus === "running") {
+    if (String(liveOutputText || "").trim()) return "AI 已响应";
+    if (String(message?.remoteTaskRunnerStartedAt || "").trim()) return "AI 已启动";
+    return "Agent 已接收";
+  }
+  if (remoteStatus === "busy") return "会话占用";
+  if (remoteStatus === "sync-lost" || remoteStatus === "sync-timeout" || remoteStatus === "unknown") {
+    return "状态同步中";
+  }
+  return "等待确认";
+}
+
 function CopyButton({
   text,
   label,
@@ -665,10 +683,13 @@ export function MessageBubble({
     : message.status === "idle" && waitingLikeMessage(message)
       ? "unknown"
       : message.status;
-  const statusText = needsResultSync ? "待同步" : statusLabel(statusForHeader);
+  const deliveryStatus = agentDeliveryStatus(message, liveOutputText);
+  const statusText = needsResultSync ? "待同步" : deliveryStatus || statusLabel(statusForHeader);
   const compactTitle = compactAgentMessageTitle(message, agent);
   const headerTitle = hasActualResult && /没有最终答案标记|没有最终内容|没有返回结果/.test(compactTitle)
     ? `${agent.shortName} 回复`
+    : message.status === "running" && !agentFailure
+      ? agent.shortName
     : taskStatusUnconfirmed
       ? "状态待确认"
       : legacyMissingResult
