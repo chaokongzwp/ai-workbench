@@ -1,4 +1,5 @@
 export * from "./foundation.js";
+export * from "./composerState.js";
 export * from "./agent.js";
 export * from "./remoteCommands.js";
 export * from "./remoteFiles.js";

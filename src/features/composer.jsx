@@ -58,6 +58,7 @@ const {
   commandName,
   compactInlineText,
   compactMessageForRouter,
+  composerLockPresentation,
   connectionForAppLaunch,
   connectionIsLive,
   connectionModeForServer,
@@ -355,7 +356,13 @@ export function Composer({
   const fileInputRef = useRef(null);
   const textareaRef = useAutoGrowingTextarea(composer, compact ? 120 : 180);
   const taskLocked = Boolean(runningTask);
-  const disabled = busy || pendingAction || !ready || taskLocked;
+  const inputLock = composerLockPresentation({
+    busy,
+    pendingAction,
+    profileReady: ready,
+    runningTask,
+  });
+  const disabled = inputLock.locked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !ready;
@@ -384,16 +391,8 @@ export function Composer({
             ? "唤醒中"
             : "唤醒";
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
-  const runningRemoteStatus = String(runningTask?.remoteTaskStatus || "").trim();
-  const runningTaskText = runningTask
-    ? runningRemoteStatus === "sync-lost"
-      ? "正在恢复同步，暂时不能输入。"
-      : !String(runningTask?.remoteTaskId || "").trim()
-        ? "正在确认状态，暂时不能输入。"
-        : "执行中，完成后可继续输入。"
-    : "";
   const composerStatusText =
-    runningTaskText ||
+    inputLock.text ||
     (!voiceInputEnabled
       ? ""
       : wakeState === "listening"
@@ -451,6 +450,7 @@ export function Composer({
           ref={textareaRef}
           value={composer}
           disabled={disabled}
+          title={inputLock.text || undefined}
           onChange={(event) => setComposer(event.target.value)}
           onPaste={(event) => {
             const files = filesFromClipboardEvent(event);
@@ -475,13 +475,11 @@ export function Composer({
             if (!disabled && hasPayload) onSend();
           }}
           placeholder={
-            compact
+            inputLock.locked
+              ? inputLock.text
+              : compact
               ? compactPlaceholder
-              : runningTask
-                ? "当前任务完成后继续输入"
-              : pendingAction
-                ? "先完成上面的操作"
-                : voiceState === "listening"
+              : voiceState === "listening"
                   ? "正在听..."
                   : ready
                   ? `告诉 ${activeAgent.shortName} 你想做什么`

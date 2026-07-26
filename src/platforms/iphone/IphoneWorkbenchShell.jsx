@@ -20,6 +20,7 @@ import {
 import { AgentLogo, StatusDot } from "../../features/primitives.jsx";
 import {
   agentById,
+  composerLockPresentation,
   connectionIsLive,
   connectionModeForServer,
   connectionStatusPresentation,
@@ -176,7 +177,13 @@ function IphoneComposer({
   const textareaRef = useAutoGrowingTextarea(composer);
   const repairKeyboardFocus = useIphoneKeyboardFocusGuard(textareaRef);
   const taskLocked = Boolean(runningTask);
-  const disabled = busy || pendingAction || !profileReady || taskLocked;
+  const inputLock = composerLockPresentation({
+    busy,
+    pendingAction,
+    profileReady,
+    runningTask,
+  });
+  const disabled = inputLock.locked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !profileReady;
@@ -191,16 +198,8 @@ function IphoneComposer({
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
   const voiceDisabled = !profileReady || taskLocked || (operationBusy && !voiceActive);
   const wakeDisabled = !profileReady || taskLocked || (operationBusy && !wakeActive);
-  const runningRemoteStatus = String(runningTask?.remoteTaskStatus || "").trim();
-  const runningTaskText = runningTask
-    ? runningRemoteStatus === "sync-lost"
-      ? "正在恢复同步。"
-      : !String(runningTask?.remoteTaskId || "").trim()
-        ? "正在确认状态。"
-        : "执行中，完成后可继续输入。"
-    : "";
-  const statusText = runningTask
-    ? runningTaskText
+  const statusText = inputLock.text
+    ? inputLock.text
     : !voiceInputEnabled
       ? ""
       : wakeState === "listening"
@@ -282,6 +281,7 @@ function IphoneComposer({
           ref={textareaRef}
           value={composer}
           disabled={disabled}
+          title={inputLock.text || undefined}
           onFocus={() => {
             setKeyboardFocus(true);
             repairKeyboardFocus();
@@ -315,10 +315,8 @@ function IphoneComposer({
             if (!disabled && hasPayload) onSend?.();
           }}
           placeholder={
-            pendingAction
-              ? "先完成上面的操作"
-              : runningTask
-                ? "当前任务完成后继续输入"
+            inputLock.locked
+              ? inputLock.text
               : voiceState === "listening"
                 ? "正在听..."
                 : profileReady
