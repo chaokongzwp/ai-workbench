@@ -765,6 +765,10 @@ export function appendBrowserDiagnosticLog(payload = {}) {
   }
 }
 
+function diagnosticErrorText(error) {
+  return String(error?.message || error || "未知错误");
+}
+
 export async function appLog(level, event, fields = {}) {
   try {
     await SSHWorkbench.appendLog({
@@ -774,7 +778,7 @@ export async function appLog(level, event, fields = {}) {
     });
   } catch (error) {
     const method = level === "error" ? "error" : level === "warn" ? "warn" : "info";
-    console[method]?.(`[aiwb:${event}]`, sanitizeDiagnosticValue(fields), shortError(error));
+    console[method]?.(`[aiwb:${event}]`, sanitizeDiagnosticValue(fields), diagnosticErrorText(error));
   }
 }
 
@@ -787,7 +791,7 @@ export function saveWorkspaceMirror(profile) {
   try {
     window.localStorage.setItem(workspaceMirrorStorageKey, JSON.stringify(profile || {}));
   } catch (error) {
-    void appLog("warn", "workspace.mirror.save.failed", { error: shortError(error) });
+    void appLog("warn", "workspace.mirror.save.failed", { error: diagnosticErrorText(error) });
   }
 }
 
@@ -798,7 +802,7 @@ export function loadWorkspaceMirror() {
     const parsed = raw ? JSON.parse(raw) : null;
     return workspaceStoreHasServers(parsed) ? parsed : null;
   } catch (error) {
-    void appLog("warn", "workspace.mirror.load.failed", { error: shortError(error) });
+    void appLog("warn", "workspace.mirror.load.failed", { error: diagnosticErrorText(error) });
     return null;
   }
 }
@@ -2569,7 +2573,7 @@ export async function speakAssistantText(text, shouldContinue = () => true, voic
     return result;
   } catch (error) {
     await appLog("error", "voice.tts.failed", {
-      error: shortError(error),
+      error: diagnosticErrorText(error),
       textLength: cleanText.length,
       voiceName,
       model,
