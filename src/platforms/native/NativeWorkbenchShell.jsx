@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { DotsThree, SidebarSimple } from "@phosphor-icons/react";
-import { dataTransferHasFiles } from "../../core/workbenchCore.js";
+import { connectionStatusPresentation, dataTransferHasFiles } from "../../core/workbenchCore.js";
 
 export function NativeWorkbenchShell({
   components,
@@ -145,7 +145,7 @@ export function NativeWorkbenchShell({
     RemoteDirectoryDialog,
     RemoteDownloadDialog,
   } = components;
-  const modeText = activeConnectionMode?.label || "直接 SSH";
+  const sessionConnectionStatus = connectionStatusPresentation(connection);
   const editingServer = servers.find((server) => server.id === editingServerId) || servers.find((server) => server.id === activeServerId);
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const isIpad = nativeFormFactor === "ipad";
@@ -277,7 +277,9 @@ export function NativeWorkbenchShell({
             tabIndex={isIpad ? -1 : undefined}
           >
             <strong>{activeSessionName}</strong>
-            <span>{modeText}</span>
+            <span className={`native-title-status ${sessionConnectionStatus.tone}`}>
+              {sessionConnectionStatus.label}
+            </span>
           </button>
           <div className="native-nav-actions">
             <button

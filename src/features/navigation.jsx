@@ -70,6 +70,7 @@ const {
   connectionIsLive,
   connectionModeForServer,
   connectionModeFromHealth,
+  connectionStatusPresentation,
   conversationIdSuffix,
   conversationBottomThreshold,
   createConversationId,
@@ -299,19 +300,12 @@ export function TopBar({
   sessionSubtitle = "",
   showSessionName,
   connection,
-  activeTaskRunning,
   busy,
   onOpenNav,
   onRefreshOutput,
   onOpenSettings,
 }) {
-  const status = activeTaskRunning
-    ? { label: "执行中", tone: "testing" }
-    : connectionIsLive(connection)
-      ? { label: "已连接", tone: "connected" }
-      : connection?.state === "error"
-        ? { label: "连接异常", tone: "error" }
-        : { label: "未连接", tone: "idle" };
+  const status = connectionStatusPresentation(connection);
 
   return (
     <header className="topbar">

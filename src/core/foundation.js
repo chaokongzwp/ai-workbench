@@ -1634,6 +1634,14 @@ export function connectionIsLive(connection) {
   return connection?.state === "connected";
 }
 
+export function connectionStatusPresentation(connection) {
+  const state = String(connection?.state || "idle").trim().toLowerCase();
+  if (state === "connected") return { label: "已连接", tone: "connected" };
+  if (state === "testing") return { label: "连接中", tone: "testing" };
+  if (state === "error") return { label: "连接异常", tone: "error" };
+  return { label: "未连接", tone: "idle" };
+}
+
 export function serverDisplayName(server, index = 0) {
   const profile = server?.profile || {};
   return (

@@ -172,7 +172,6 @@ export function MacWorkbenchShell({
         sessionSubtitle={`${activeMachineName} · ${activeAgent.shortName}`}
         showSessionName
         connection={connection}
-        activeTaskRunning={activeTaskRunning}
         busy={busy}
         onOpenNav={() => setMobileNavOpen(true)}
         onOpenSettings={detachedChatMode ? () => onConfigureServer?.(activeServerId) : onOpenGlobalSettings}

@@ -11382,6 +11382,14 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
   background: #30d158;
 }
 
+.iphone-title-button small.testing::before {
+  background: #ffd60a;
+}
+
+.iphone-title-button small.error::before {
+  background: #ff453a;
+}
+
 .iphone-title-button small.running::before {
   background: #ffd60a;
 }

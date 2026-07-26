@@ -22,6 +22,7 @@ import {
   agentById,
   connectionIsLive,
   connectionModeForServer,
+  connectionStatusPresentation,
   conversationIdSuffix,
   dataTransferHasFiles,
   defaultWakeWordPhrases,
@@ -554,11 +555,7 @@ export function IphoneWorkbenchShell({
     RemoteDirectoryDialog,
     RemoteDownloadDialog,
   } = components;
-  const sessionStateText = activeTaskRunning
-    ? `${activeAgent.shortName} 执行中`
-    : connectionIsLive(connection)
-      ? `${activeAgent.shortName} 已连接`
-      : `${activeAgent.shortName} 未连接`;
+  const sessionConnectionStatus = connectionStatusPresentation(connection);
   const hasWorkSession = servers.length > 0 && isProfileReady;
   const editingServer = servers.find((server) => server.id === editingServerId) || servers.find((server) => server.id === activeServerId);
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
@@ -639,8 +636,8 @@ export function IphoneWorkbenchShell({
         </button>
         <button type="button" className="iphone-title-button" onClick={() => setMobileNavOpen(true)}>
           <span>{activeSessionName}</span>
-          <small className={activeTaskRunning ? "running" : connectionIsLive(connection) ? "connected" : "idle"}>
-            {sessionStateText}
+          <small className={sessionConnectionStatus.tone}>
+            {sessionConnectionStatus.label}
           </small>
         </button>
         <button
