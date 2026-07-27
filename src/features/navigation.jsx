@@ -6,6 +6,7 @@ import {
   DotsThree,
   Plus,
   SidebarSimple,
+  TerminalWindow,
 } from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
@@ -303,6 +304,8 @@ export function TopBar({
   busy,
   onOpenNav,
   onRefreshOutput,
+  onToggleTerminal,
+  terminalOpen = false,
   onOpenSettings,
 }) {
   const status = connectionStatusPresentation(connection);
@@ -321,6 +324,18 @@ export function TopBar({
         </span>
       </div>
       <div className="topbar-actions">
+        {onToggleTerminal ? (
+          <button
+            type="button"
+            className={`topbar-terminal-button ${terminalOpen ? "active" : ""}`}
+            aria-label={terminalOpen ? "收起 SSH 终端" : "打开当前会话 SSH 终端"}
+            title={terminalOpen ? "收起 SSH 终端" : "打开当前会话 SSH 终端"}
+            aria-pressed={terminalOpen}
+            onClick={onToggleTerminal}
+          >
+            <TerminalWindow size={17} weight="bold" aria-hidden="true" />
+          </button>
+        ) : null}
         {onRefreshOutput ? (
           <button
             type="button"

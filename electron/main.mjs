@@ -21,6 +21,7 @@ let activeSpeechRun;
 let activeWakeRun;
 let activeSpeechOutputRun;
 let profileSaveChain = Promise.resolve();
+const embeddedTerminals = new Map();
 
 function isBrokenPipeError(error) {
   return error?.code === "EPIPE" || String(error?.message || error || "").includes("EPIPE");
@@ -89,6 +90,7 @@ function createWindow({ chatServerId = "", title = "" } = {}) {
       sandbox: false,
     },
   });
+  const rendererOwnerId = window.webContents.id;
 
   if (detachedChat) chatWindows.set(chatServerId, window);
   else mainWindow = window;
@@ -154,6 +156,7 @@ function createWindow({ chatServerId = "", title = "" } = {}) {
     });
   });
   window.on("closed", () => {
+    closeEmbeddedTerminalsForOwner(rendererOwnerId);
     appendPersistentLogSync("info", "app.window.closed", {
       detachedChat,
       chatServerId,
@@ -568,6 +571,192 @@ function normalizeTerminalRequest(input = {}) {
   if (!username) throw new Error("请先填写登录用户名");
 
   return { host, username, port, platform, wslDistro, workdir, tmuxSession, action, agentId, agentCommand };
+}
+
+function normalizeEmbeddedTerminalRequest(input = {}) {
+  const host = String(input.host || "").trim();
+  const username = String(input.username || "").trim();
+  const password = String(input.password || "");
+  const port = Math.max(1, Number(input.port || 22) || 22);
+  const platform = ["windows", "wsl"].includes(input.platform) ? input.platform : "linux";
+  const wslDistro = String(input.wslDistro || "").trim();
+  const workdir = String(input.workdir || "").trim();
+  const terminalId = String(input.terminalId || randomUUID()).trim();
+  const cols = Math.max(20, Math.min(Number(input.cols || 100) || 100, 500));
+  const rows = Math.max(5, Math.min(Number(input.rows || 28) || 28, 200));
+  const connectTimeoutSeconds = Math.max(3, Math.min(Number(input.connectTimeoutSeconds || 30) || 30, 60));
+
+  if (!host) throw new Error("请先填写服务器 IP 或域名");
+  if (!username) throw new Error("请先填写登录用户名");
+  if (!password) throw new Error("请先在会话设置中保存登录密码");
+
+  return {
+    host,
+    username,
+    password,
+    port,
+    platform,
+    wslDistro,
+    workdir,
+    terminalId,
+    cols,
+    rows,
+    connectTimeoutSeconds,
+  };
+}
+
+function embeddedTerminalBootstrap(record) {
+  const { config, stream } = record;
+  if (!stream || stream.destroyed) return;
+
+  if (config.platform === "windows") {
+    if (!config.workdir) {
+      stream.write("powershell -NoLogo -NoExit -NoProfile\r");
+      return;
+    }
+    const encoded = Buffer.from(`Set-Location -LiteralPath ${powershellLiteral(config.workdir)}`, "utf16le").toString("base64");
+    stream.write(`powershell -NoLogo -NoExit -NoProfile -EncodedCommand ${encoded}\r`);
+    return;
+  }
+
+  if (config.platform === "wsl") {
+    const distro = config.wslDistro ? ` -d "${config.wslDistro.replace(/"/g, '""')}"` : "";
+    stream.write(`wsl.exe${distro} -u root\r`);
+    if (config.workdir) {
+      record.bootstrapTimer = setTimeout(() => {
+        if (!stream.destroyed) stream.write(`cd ${shellLiteral(config.workdir)}\r`);
+      }, 500);
+    }
+    return;
+  }
+
+  if (config.workdir) stream.write(`cd ${shellLiteral(config.workdir)}\r`);
+}
+
+function emitEmbeddedTerminalState(record, state, detail = "") {
+  const sender = record?.sender;
+  if (!sender || sender.isDestroyed()) return;
+  sender.send("aiwb:terminal-state", {
+    terminalId: record.id,
+    state,
+    detail: String(detail || ""),
+  });
+}
+
+function closeEmbeddedTerminalRecord(record, state = "closed", detail = "") {
+  if (!record || record.closed) return;
+  record.closed = true;
+  if (record.bootstrapTimer) clearTimeout(record.bootstrapTimer);
+  embeddedTerminals.delete(record.id);
+  try {
+    record.stream?.end();
+  } catch {
+    // The remote side may already have closed the channel.
+  }
+  try {
+    record.client?.end();
+  } catch {
+    // The SSH client may already be disposed.
+  }
+  emitEmbeddedTerminalState(record, state, detail);
+}
+
+function closeEmbeddedTerminalsForOwner(ownerId) {
+  for (const record of embeddedTerminals.values()) {
+    if (record.ownerId === ownerId) closeEmbeddedTerminalRecord(record);
+  }
+}
+
+function startEmbeddedSshTerminal(event, payload = {}) {
+  const config = normalizeEmbeddedTerminalRequest(payload);
+  const existing = embeddedTerminals.get(config.terminalId);
+  if (existing) closeEmbeddedTerminalRecord(existing);
+
+  return new Promise((resolvePromise, reject) => {
+    const client = new Client();
+    const record = {
+      id: config.terminalId,
+      ownerId: event.sender.id,
+      sender: event.sender,
+      config,
+      client,
+      stream: null,
+      closed: false,
+      settled: false,
+      bootstrapTimer: null,
+    };
+    embeddedTerminals.set(record.id, record);
+    emitEmbeddedTerminalState(record, "connecting");
+
+    const rejectStart = (error) => {
+      if (record.settled) return;
+      record.settled = true;
+      closeEmbeddedTerminalRecord(record, "error", error?.message || String(error));
+      reject(error);
+    };
+
+    client
+      .on("ready", () => {
+        client.shell(
+          {
+            term: "xterm-256color",
+            cols: config.cols,
+            rows: config.rows,
+          },
+          (error, stream) => {
+            if (error) {
+              rejectStart(error);
+              return;
+            }
+
+            record.stream = stream;
+            record.settled = true;
+            stream.on("data", (chunk) => {
+              if (!record.sender.isDestroyed()) {
+                record.sender.send("aiwb:terminal-data", {
+                  terminalId: record.id,
+                  data: chunk.toString("utf8"),
+                });
+              }
+            });
+            stream.stderr?.on("data", (chunk) => {
+              if (!record.sender.isDestroyed()) {
+                record.sender.send("aiwb:terminal-data", {
+                  terminalId: record.id,
+                  data: chunk.toString("utf8"),
+                });
+              }
+            });
+            stream.on("close", () => closeEmbeddedTerminalRecord(record, "closed", "远端 SSH 已断开"));
+            stream.on("error", (streamError) => {
+              closeEmbeddedTerminalRecord(record, "error", streamError?.message || String(streamError));
+            });
+            emitEmbeddedTerminalState(record, "connected");
+            embeddedTerminalBootstrap(record);
+            resolvePromise({ ok: true, terminalId: record.id });
+          },
+        );
+      })
+      .on("error", (error) => {
+        if (!record.settled) {
+          rejectStart(error);
+          return;
+        }
+        closeEmbeddedTerminalRecord(record, "error", error?.message || String(error));
+      })
+      .on("close", () => {
+        if (record.settled) closeEmbeddedTerminalRecord(record, "closed", "SSH 连接已关闭");
+      })
+      .connect({
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        password: config.password,
+        readyTimeout: config.connectTimeoutSeconds * 1000,
+        keepaliveInterval: 10000,
+        keepaliveCountMax: 3,
+      });
+  });
 }
 
 function terminalLoginCommand(config) {
@@ -2290,6 +2479,35 @@ ipcMain.handle("aiwb:open-terminal", async (_event, payload) => {
   return openSshTerminal(payload);
 });
 
+ipcMain.handle("aiwb:terminal-start", async (event, payload) => {
+  return startEmbeddedSshTerminal(event, payload);
+});
+
+ipcMain.handle("aiwb:terminal-write", async (event, payload = {}) => {
+  const record = embeddedTerminals.get(String(payload.terminalId || ""));
+  if (!record || record.ownerId !== event.sender.id || !record.stream || record.stream.destroyed) {
+    return { ok: false, pending: true };
+  }
+  record.stream.write(String(payload.data || ""));
+  return { ok: true };
+});
+
+ipcMain.handle("aiwb:terminal-resize", async (event, payload = {}) => {
+  const record = embeddedTerminals.get(String(payload.terminalId || ""));
+  if (!record || record.ownerId !== event.sender.id) return { ok: false, pending: true };
+  const cols = Math.max(20, Math.min(Number(payload.cols || 100) || 100, 500));
+  const rows = Math.max(5, Math.min(Number(payload.rows || 28) || 28, 200));
+  record.stream?.setWindow(rows, cols, 0, 0);
+  return { ok: true };
+});
+
+ipcMain.handle("aiwb:terminal-close", async (event, payload = {}) => {
+  const record = embeddedTerminals.get(String(payload.terminalId || ""));
+  if (!record || record.ownerId !== event.sender.id) return { ok: true, alreadyClosed: true };
+  closeEmbeddedTerminalRecord(record);
+  return { ok: true };
+});
+
 ipcMain.handle("aiwb:save-file", async (_event, payload) => {
   return saveFile(payload);
 });
@@ -2465,6 +2683,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  for (const record of [...embeddedTerminals.values()]) closeEmbeddedTerminalRecord(record);
   appendPersistentLogSync("info", "app.before_quit", {
     windowCount: BrowserWindow.getAllWindows().length,
   });

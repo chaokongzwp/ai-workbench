@@ -118,8 +118,33 @@
   top: 9px;
   right: 44px;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 3px;
   grid-column: auto;
   justify-self: auto;
+}
+
+.mac-shell .topbar-terminal-button,
+.app-shell[data-theme="dark"].mac-shell .topbar-terminal-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--mac-muted);
+  background: transparent;
+}
+
+.mac-shell .topbar-terminal-button:hover,
+.mac-shell .topbar-terminal-button.active,
+.app-shell[data-theme="dark"].mac-shell .topbar-terminal-button:hover,
+.app-shell[data-theme="dark"].mac-shell .topbar-terminal-button.active {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
 }
 
 .mac-shell .workspace,
@@ -363,6 +388,21 @@
 .mac-shell .conversation,
 .app-shell[data-theme="dark"].mac-shell .conversation {
   background: var(--mac-canvas);
+}
+
+.mac-shell .conversation.ssh-terminal-visible,
+.app-shell[data-theme="dark"].mac-shell .conversation.ssh-terminal-visible {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.mac-shell .conversation.ssh-terminal-visible .conversation-scroll,
+.app-shell[data-theme="dark"].mac-shell .conversation.ssh-terminal-visible .conversation-scroll {
+  padding-bottom: 36px;
+}
+
+.mac-shell .conversation.ssh-terminal-visible .composer.compact,
+.app-shell[data-theme="dark"].mac-shell .conversation.ssh-terminal-visible .composer.compact {
+  margin-bottom: 10px;
 }
 
 .mac-shell .conversation-scroll,
@@ -647,6 +687,195 @@
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button {
   color: #ffffff;
   background: #cf4545;
+}
+
+.mac-shell .mac-ssh-panel {
+  position: relative;
+  display: grid;
+  grid-template-rows: 35px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--mac-line);
+  color: var(--mac-text);
+  background: var(--mac-canvas);
+  overflow: hidden;
+  transition:
+    height 160ms ease,
+    border-color 120ms ease;
+}
+
+.mac-shell .mac-ssh-panel.is-collapsed {
+  border-top-color: transparent;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.mac-shell .mac-ssh-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  width: 100%;
+  height: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+}
+
+.mac-shell .mac-ssh-resize-handle::after {
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  width: 34px;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  content: "";
+  transform: translateX(-50%);
+  transition: background 120ms ease;
+}
+
+.mac-shell .mac-ssh-resize-handle:hover::after,
+body.mac-terminal-resizing .mac-shell .mac-ssh-resize-handle::after {
+  background: var(--mac-muted);
+}
+
+body.mac-terminal-resizing {
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.mac-shell .mac-ssh-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 12px;
+  padding: 4px 10px 3px 12px;
+  border-bottom: 1px solid var(--mac-line-soft);
+  background: var(--mac-sidebar);
+}
+
+.mac-shell .mac-ssh-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  color: var(--mac-muted);
+  font-size: 10.5px;
+}
+
+.mac-shell .mac-ssh-title strong {
+  flex: 0 0 auto;
+  color: var(--mac-text);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.mac-shell .mac-ssh-title > span {
+  flex: 0 0 auto;
+  color: var(--mac-muted);
+}
+
+.mac-shell .mac-ssh-title code {
+  overflow: hidden;
+  min-width: 0;
+  padding: 0;
+  color: var(--mac-subtle);
+  background: transparent;
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-shell .mac-ssh-header-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.mac-shell .mac-ssh-header-actions button {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  min-width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--mac-muted);
+  background: transparent;
+}
+
+.mac-shell .mac-ssh-header-actions button:hover:not(:disabled) {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .mac-ssh-header-actions button:disabled {
+  opacity: 0.35;
+}
+
+.mac-shell .mac-ssh-state {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  gap: 5px;
+  margin-right: 5px;
+  color: var(--mac-muted);
+  font-size: 10px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-shell .mac-ssh-state i {
+  display: block;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mac-subtle);
+}
+
+.mac-shell .mac-ssh-state.connected i {
+  background: #48bb70;
+}
+
+.mac-shell .mac-ssh-state.connecting i {
+  background: #c49a45;
+}
+
+.mac-shell .mac-ssh-state.error {
+  color: #c96767;
+}
+
+.mac-shell .mac-ssh-state.error i {
+  background: #cf5454;
+}
+
+.mac-shell .mac-ssh-terminal {
+  min-width: 0;
+  min-height: 0;
+  padding: 7px 8px 5px 10px;
+  background: var(--mac-canvas);
+  overflow: hidden;
+}
+
+.mac-shell .mac-ssh-terminal .xterm,
+.mac-shell .mac-ssh-terminal .xterm-screen {
+  width: 100%;
+  height: 100%;
+}
+
+.mac-shell .mac-ssh-terminal .xterm-viewport {
+  scrollbar-color: color-mix(in srgb, var(--mac-muted) 42%, transparent) transparent;
+  scrollbar-width: thin;
 }
 
 @media (max-width: 980px) {

@@ -8,6 +8,28 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   openTerminal(payload) {
     return ipcRenderer.invoke("aiwb:open-terminal", payload);
   },
+  startEmbeddedTerminal(payload) {
+    return ipcRenderer.invoke("aiwb:terminal-start", payload);
+  },
+  writeEmbeddedTerminal(payload) {
+    return ipcRenderer.invoke("aiwb:terminal-write", payload);
+  },
+  resizeEmbeddedTerminal(payload) {
+    return ipcRenderer.invoke("aiwb:terminal-resize", payload);
+  },
+  closeEmbeddedTerminal(payload) {
+    return ipcRenderer.invoke("aiwb:terminal-close", payload);
+  },
+  onEmbeddedTerminalData(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("aiwb:terminal-data", listener);
+    return () => ipcRenderer.removeListener("aiwb:terminal-data", listener);
+  },
+  onEmbeddedTerminalState(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("aiwb:terminal-state", listener);
+    return () => ipcRenderer.removeListener("aiwb:terminal-state", listener);
+  },
   openChatWindow(payload) {
     return ipcRenderer.invoke("aiwb:open-chat-window", payload);
   },

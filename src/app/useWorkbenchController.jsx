@@ -6857,6 +6857,7 @@ export function useWorkbenchController() {
     activeServer,
     activeServerId,
     profile,
+    terminalProfile: withKnownPassword(profile),
     connection,
     diagnostics,
     discovery,

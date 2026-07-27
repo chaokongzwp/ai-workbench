@@ -1,5 +1,9 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { dataTransferHasFiles } from "../../core/workbenchCore.js";
+
+const MacSshPanel = lazy(() =>
+  import("./MacSshPanel.jsx").then((module) => ({ default: module.MacSshPanel })),
+);
 
 export function MacWorkbenchShell({
   components,
@@ -15,6 +19,7 @@ export function MacWorkbenchShell({
   activeServer,
   activeServerId,
   profile,
+  terminalProfile,
   connection,
   diagnostics,
   discovery,
@@ -152,6 +157,7 @@ export function MacWorkbenchShell({
   const editingServer = servers.find((server) => server.id === editingServerId) || activeServer;
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const hasWorkSession = servers.length > 0;
   const macSessionTitle = String(activeSessionName || "当前会话")
     .replace(/\s*[·•]\s*(codex|claude|gemini|aider|ollama)\s*$/i, "")
@@ -174,6 +180,8 @@ export function MacWorkbenchShell({
         connection={connection}
         busy={busy}
         onOpenNav={() => setMobileNavOpen(true)}
+        onToggleTerminal={hasWorkSession ? () => setTerminalOpen((value) => !value) : undefined}
+        terminalOpen={terminalOpen}
         onOpenSettings={detachedChatMode ? () => onConfigureServer?.(activeServerId) : onOpenGlobalSettings}
       />
 
@@ -203,7 +211,9 @@ export function MacWorkbenchShell({
         ) : null}
 
         <section
-          className={`${conversationClassName} ${draggingFiles ? "file-drop-active" : ""}`}
+          className={`${conversationClassName} ${draggingFiles ? "file-drop-active" : ""} ${
+            terminalOpen ? "ssh-terminal-visible" : ""
+          }`}
           onDragEnter={(event) => {
             if (!showComposer || !isProfileReady || !dataTransferHasFiles(event.dataTransfer)) return;
             event.preventDefault();
@@ -324,6 +334,15 @@ export function MacWorkbenchShell({
               onCancelRunningTask={onCancelRunningTask}
             />
           ) : null}
+          <Suspense fallback={null}>
+            <MacSshPanel
+              open={terminalOpen && hasWorkSession}
+              profile={terminalProfile || profile}
+              sessionKey={activeServerId}
+              theme={resolvedTheme}
+              onCollapse={() => setTerminalOpen(false)}
+            />
+          </Suspense>
         </section>
       </div>
 
