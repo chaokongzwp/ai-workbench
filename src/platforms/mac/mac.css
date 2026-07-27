@@ -4,34 +4,38 @@
  */
 
 .mac-shell {
-  --mac-sidebar-width: clamp(300px, 22vw, 380px);
-  --mac-canvas: #f8f8fa;
-  --mac-sidebar: #f1f1f4;
+  --mac-sidebar-width: clamp(236px, 19vw, 292px);
+  --mac-canvas: #f7f8fa;
+  --mac-sidebar: #f0f1f4;
   --mac-surface: #ffffff;
-  --mac-surface-raised: #f0f0f3;
-  --mac-surface-selected: #e4e4e8;
+  --mac-surface-raised: #f0f1f4;
+  --mac-surface-selected: #e4e6ea;
   --mac-line: rgba(60, 60, 67, 0.13);
   --mac-line-soft: rgba(60, 60, 67, 0.08);
-  --mac-text: #202124;
-  --mac-muted: #777b84;
-  --mac-subtle: #999da6;
-  --mac-message-width: 960px;
+  --mac-text: #1f2329;
+  --mac-muted: #747b86;
+  --mac-subtle: #9aa0aa;
+  --mac-message-width: 840px;
+  --mac-control-size: var(--aiwb-control-md);
+  --mac-control-radius: var(--aiwb-radius-sm);
+  --mac-row-radius: var(--aiwb-radius-sm);
+  --mac-surface-radius: var(--aiwb-radius-md);
   grid-template-rows: 46px minmax(0, 1fr) auto;
   color: var(--mac-text);
   background: var(--mac-canvas);
 }
 
 .app-shell[data-theme="dark"].mac-shell {
-  --mac-canvas: #0d0f12;
-  --mac-sidebar: #15171b;
-  --mac-surface: #1a1c21;
-  --mac-surface-raised: #22242a;
-  --mac-surface-selected: #292b31;
+  --mac-canvas: #0f1115;
+  --mac-sidebar: #14161a;
+  --mac-surface: #191c22;
+  --mac-surface-raised: #20242b;
+  --mac-surface-selected: #292e37;
   --mac-line: rgba(255, 255, 255, 0.1);
   --mac-line-soft: rgba(255, 255, 255, 0.065);
-  --mac-text: #f1f2f4;
-  --mac-muted: #9297a1;
-  --mac-subtle: #6f7580;
+  --mac-text: #f2f4f7;
+  --mac-muted: #98a0ab;
+  --mac-subtle: #707984;
   background: var(--mac-canvas);
 }
 
@@ -106,8 +110,9 @@
 
 .mac-shell .topbar-logo-button,
 .app-shell[data-theme="dark"].mac-shell .topbar-logo-button {
-  width: 28px;
-  height: 28px;
+  width: var(--mac-control-size);
+  height: var(--mac-control-size);
+  border-radius: var(--mac-control-radius);
   color: var(--mac-muted);
   background: transparent;
 }
@@ -129,14 +134,17 @@
 .app-shell[data-theme="dark"].mac-shell .topbar-terminal-button {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
+  width: var(--mac-control-size);
+  min-width: var(--mac-control-size);
+  height: var(--mac-control-size);
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--mac-control-radius);
   color: var(--mac-muted);
   background: transparent;
+  transition:
+    color var(--aiwb-duration-fast) ease,
+    background var(--aiwb-duration-fast) ease;
 }
 
 .mac-shell .topbar-terminal-button:hover,
@@ -212,7 +220,7 @@
   gap: 6px;
   padding: 4px 6px;
   border: 0 !important;
-  border-radius: 8px;
+  border-radius: var(--mac-row-radius);
   color: var(--mac-text);
   background: transparent;
   box-shadow: none;
@@ -312,7 +320,7 @@
 .app-shell[data-theme="dark"].mac-shell .mac-session-state.running,
 .app-shell[data-theme="dark"].mac-shell .mac-session-state.connected,
 .app-shell[data-theme="dark"].mac-shell .mac-session-state.done {
-  color: #48bb70;
+  color: var(--aiwb-status-success);
 }
 
 .mac-shell .mac-session-row-actions {
@@ -464,7 +472,7 @@
   max-width: min(560px, 68%);
   padding: 11px 15px;
   border: 1px solid var(--mac-line-soft);
-  border-radius: 16px 16px 5px 16px;
+  border-radius: var(--mac-surface-radius) var(--mac-surface-radius) var(--aiwb-radius-xs) var(--mac-surface-radius);
   color: var(--mac-text);
   background: var(--mac-surface-raised);
 }
@@ -558,19 +566,19 @@
 
 .mac-shell .conversation .composer.compact,
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
-  width: min(900px, calc(100% - 64px));
+  width: min(840px, calc(100% - 64px));
   max-height: 236px;
   margin: 0 auto 16px;
   padding: 8px 10px 7px;
   border: 1px solid var(--mac-line);
-  border-radius: 16px;
+  border-radius: var(--mac-surface-radius);
   background: var(--mac-surface);
-  box-shadow: 0 10px 26px rgba(15, 18, 24, 0.12);
+  box-shadow: 0 8px 22px rgba(15, 18, 24, 0.1);
 }
 
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
   background: var(--mac-surface);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
 }
 
 .mac-shell .conversation .composer.compact:focus-within,
@@ -642,12 +650,12 @@
 
 .mac-shell .composer.compact .input-actions .composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .composer-icon-button {
-  width: 29px;
-  min-width: 29px;
-  height: 29px;
+  width: var(--mac-control-size);
+  min-width: var(--mac-control-size);
+  height: var(--mac-control-size);
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--mac-control-radius);
   color: var(--mac-muted);
   background: transparent;
   box-shadow: none;
@@ -661,9 +669,9 @@
 
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
+  width: var(--aiwb-control-lg);
+  min-width: var(--aiwb-control-lg);
+  height: var(--aiwb-control-lg);
   margin-left: auto;
   border-radius: 50%;
   color: #202124;
@@ -686,7 +694,7 @@
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button {
   color: #ffffff;
-  background: #cf4545;
+  background: var(--aiwb-status-danger);
 }
 
 .mac-shell .mac-ssh-panel {
@@ -844,19 +852,19 @@ body.mac-terminal-resizing {
 }
 
 .mac-shell .mac-ssh-state.connected i {
-  background: #48bb70;
+  background: var(--aiwb-status-success);
 }
 
 .mac-shell .mac-ssh-state.connecting i {
-  background: #c49a45;
+  background: var(--aiwb-status-warning);
 }
 
 .mac-shell .mac-ssh-state.error {
-  color: #c96767;
+  color: var(--aiwb-status-danger);
 }
 
 .mac-shell .mac-ssh-state.error i {
-  background: #cf5454;
+  background: var(--aiwb-status-danger);
 }
 
 .mac-shell .mac-ssh-terminal {
@@ -865,6 +873,154 @@ body.mac-terminal-resizing {
   padding: 7px 8px 5px 10px;
   background: var(--mac-canvas);
   overflow: hidden;
+}
+
+/*
+ * Canonical Mac action language.
+ * Icon actions are quiet by default, gain a neutral hover surface, and only
+ * use semantic color when the action communicates a real state.
+ */
+
+.mac-shell :is(button, [role="button"]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-text) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.mac-shell .conversation .message-header-actions {
+  align-items: center;
+  gap: 2px;
+}
+
+.mac-shell .conversation .message-header-actions :is(.refresh-message, .copy-message.copy-assistant-message) {
+  display: inline-grid;
+  place-items: center;
+  width: var(--aiwb-control-sm);
+  min-width: var(--aiwb-control-sm);
+  height: var(--aiwb-control-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--aiwb-radius-xs);
+  color: var(--mac-muted);
+  background: transparent;
+  box-shadow: none;
+  transition:
+    color var(--aiwb-duration-fast) ease,
+    background var(--aiwb-duration-fast) ease;
+}
+
+.mac-shell .conversation .message-header-actions :is(.refresh-message, .copy-message.copy-assistant-message):hover:not(:disabled),
+.mac-shell .conversation .message-header-actions .copy-message.copy-assistant-message.copy-state-copied {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .conversation .message-header-actions .copy-message.copy-assistant-message.copy-state-failed {
+  color: var(--aiwb-status-danger);
+}
+
+.mac-shell .conversation .message-header-actions :is(.refresh-message, .copy-message.copy-assistant-message) svg {
+  width: var(--aiwb-icon-sm);
+  height: var(--aiwb-icon-sm);
+}
+
+.mac-shell .conversation .message-header :is(.message-time, .streaming, .task-timer) {
+  min-height: 20px;
+  border: 0;
+  border-radius: var(--aiwb-radius-xs);
+  color: var(--mac-muted);
+  background: transparent;
+  font-size: var(--aiwb-font-caption);
+  line-height: 20px;
+}
+
+.mac-shell .conversation .message-header :is(.streaming, .task-timer) {
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--mac-surface-selected) 64%, transparent);
+}
+
+.mac-shell .conversation .message-header .streaming.running,
+.mac-shell .conversation .message-header .task-timer.running {
+  color: var(--aiwb-status-warning);
+}
+
+.mac-shell .conversation .message-header .streaming.done {
+  color: var(--aiwb-status-success);
+}
+
+.mac-shell .conversation .message-header .streaming.error {
+  color: var(--aiwb-status-danger);
+}
+
+.mac-shell .conversation .user-prompt .user-message-meta {
+  align-items: center;
+}
+
+.mac-shell .conversation .user-prompt :is(.user-message-time, .copy-message.copy-user-message, .edit-user-message) {
+  height: 20px;
+  line-height: 20px;
+}
+
+.mac-shell .conversation .user-prompt :is(.copy-message.copy-user-message, .edit-user-message) {
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--aiwb-radius-xs);
+  background: transparent;
+}
+
+.mac-shell .conversation .user-prompt :is(.copy-message.copy-user-message, .edit-user-message):hover {
+  color: var(--mac-text) !important;
+  background: var(--mac-surface-selected) !important;
+}
+
+.mac-shell .conversation .file-reference-list {
+  gap: var(--aiwb-space-2);
+  margin-top: var(--aiwb-space-3);
+}
+
+.mac-shell .conversation .file-reference {
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid var(--mac-line-soft);
+  border-radius: var(--mac-surface-radius);
+  background: color-mix(in srgb, var(--mac-surface) 84%, transparent);
+  box-shadow: none;
+}
+
+.mac-shell .conversation .file-reference:hover {
+  border-color: var(--mac-line);
+  background: var(--mac-surface);
+  transform: none;
+}
+
+.mac-shell .conversation .file-reference-actions {
+  gap: 2px;
+}
+
+.mac-shell .conversation .file-reference-actions button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--aiwb-radius-xs);
+  color: var(--mac-muted);
+  background: transparent;
+  font-size: var(--aiwb-font-caption);
+  box-shadow: none;
+}
+
+.mac-shell .conversation .file-reference-actions button:hover:not(:disabled) {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .conversation .file-reference-actions .file-delete-button {
+  color: var(--mac-muted);
+}
+
+.mac-shell .conversation .file-reference-actions .file-delete-button.is-confirming {
+  color: var(--aiwb-status-danger);
+  background: color-mix(in srgb, var(--aiwb-status-danger) 12%, transparent);
 }
 
 .mac-shell .mac-ssh-terminal .xterm,
@@ -880,8 +1036,8 @@ body.mac-terminal-resizing {
 
 @media (max-width: 980px) {
   .mac-shell {
-    --mac-sidebar-width: 280px;
-    --mac-message-width: 760px;
+    --mac-sidebar-width: 224px;
+    --mac-message-width: 720px;
   }
 
   .mac-shell .topbar-session-detail {

@@ -1,0 +1,49 @@
+/*
+ * AI Workbench visual primitives.
+ *
+ * Platform styles own layout and responsive behavior. Shared components use
+ * these semantic values so the same action or state has the same visual
+ * meaning on Mac, iPad, and iPhone.
+ */
+
+:root {
+  --aiwb-space-1: 4px;
+  --aiwb-space-2: 8px;
+  --aiwb-space-3: 12px;
+  --aiwb-space-4: 16px;
+  --aiwb-space-5: 24px;
+  --aiwb-space-6: 32px;
+
+  --aiwb-radius-xs: 6px;
+  --aiwb-radius-sm: 8px;
+  --aiwb-radius-md: 12px;
+  --aiwb-radius-lg: 16px;
+
+  --aiwb-font-caption: 10px;
+  --aiwb-font-meta: 11px;
+  --aiwb-font-control: 12px;
+  --aiwb-font-body-sm: 13px;
+  --aiwb-font-body: 15px;
+  --aiwb-font-title: 16px;
+
+  --aiwb-control-sm: 24px;
+  --aiwb-control-md: 28px;
+  --aiwb-control-lg: 32px;
+  --aiwb-icon-sm: 14px;
+  --aiwb-icon-md: 16px;
+
+  --aiwb-duration-fast: 120ms;
+  --aiwb-duration-normal: 180ms;
+
+  --aiwb-status-success: #3da66a;
+  --aiwb-status-warning: #b78132;
+  --aiwb-status-danger: #c64e52;
+  --aiwb-status-info: #607d9f;
+}
+
+[data-theme="dark"] {
+  --aiwb-status-success: #52bb78;
+  --aiwb-status-warning: #d0a04d;
+  --aiwb-status-danger: #da6669;
+  --aiwb-status-info: #83a2c5;
+}

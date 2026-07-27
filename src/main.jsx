@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.jsx";
 import "./styles.css";
+import "./design-tokens.css";
 import "./settings-redesign.css";
 import "./platforms/ipad/ipad.css";
 import "./utility-controls.css";
