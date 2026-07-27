@@ -230,10 +230,46 @@ export function NativeSshTerminal({
     });
     const observer = new ResizeObserver(fitTerminal);
     observer.observe(containerRef.current);
+    const terminalTextarea = terminal.textarea;
+    const root = document.documentElement;
+    const body = document.body;
+    const repairTimers = [];
+    const repairTerminalViewport = () => {
+      window.requestAnimationFrame(() => {
+        fitTerminal();
+        terminal.scrollToBottom();
+      });
+    };
+    const setKeyboardFocused = (focused) => {
+      if (formFactor !== "iphone") return;
+      root.classList.toggle("aiwb-keyboard-focus", focused);
+      body?.classList.toggle("aiwb-keyboard-focus", focused);
+      repairTerminalViewport();
+      if (focused) {
+        [80, 180, 320, 520].forEach((delay) => {
+          repairTimers.push(window.setTimeout(repairTerminalViewport, delay));
+        });
+      }
+    };
+    const handleTerminalFocus = () => setKeyboardFocused(true);
+    const handleTerminalBlur = () => setKeyboardFocused(false);
+    terminalTextarea?.addEventListener("focus", handleTerminalFocus);
+    terminalTextarea?.addEventListener("blur", handleTerminalBlur);
+    window.visualViewport?.addEventListener("resize", repairTerminalViewport);
+    window.visualViewport?.addEventListener("scroll", repairTerminalViewport);
     setTerminalReady(true);
     window.requestAnimationFrame(fitTerminal);
 
     return () => {
+      repairTimers.forEach((timer) => window.clearTimeout(timer));
+      terminalTextarea?.removeEventListener("focus", handleTerminalFocus);
+      terminalTextarea?.removeEventListener("blur", handleTerminalBlur);
+      window.visualViewport?.removeEventListener("resize", repairTerminalViewport);
+      window.visualViewport?.removeEventListener("scroll", repairTerminalViewport);
+      if (formFactor === "iphone") {
+        root.classList.remove("aiwb-keyboard-focus");
+        body?.classList.remove("aiwb-keyboard-focus");
+      }
       observer.disconnect();
       inputSubscription.dispose();
       resizeSubscription.dispose();
