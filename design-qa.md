@@ -1,205 +1,64 @@
-**2026-07-10 iPhone Redesign QA**
-- Visual source: `/Users/zwp/.codex/generated_images/019f467a-d5c1-75d2-a3a9-405bc7a29b0e/ig_0f240a843e36f84a016a4f9c45e7f0819189ad2447589c5e46.png`
-- User issue screenshot: `/Users/zwp/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/zacao135792_592b/temp/RWTemp/2026-07/9e20f478899dc29eb19741386f9343c8/2f659a79d32b9669485352d7a25f22ce.jpg`
-- Final chat screenshot: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-release-ready-final.png`
-- Final full-screen switcher: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-session-fullscreen-final-search.png`
-- Chat comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-source-vs-final.png`
-- Switcher comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-switcher-source-vs-final-search.png`
-- Device: iPhone 16 Pro simulator, iOS 18.4, portrait only (`402 x 874` CSS points; `1206 x 2622` screenshot pixels).
+**Design QA: Mac Icon Language**
 
-**iPhone Findings**
-- No actionable P0/P1/P2 findings remain.
-- Safe areas: the top bar clears Dynamic Island/status controls and the composer clears the Home Indicator. The page shell itself cannot pan horizontally or vertically; only the conversation region scrolls vertically.
-- Navigation: text pills were replaced by native icon controls. The session switcher is a full-screen iPhone view with search, compact task rows, connection state, add, and close actions.
-- Conversation: dark-mode Markdown now inherits iPhone text tokens, restoring readable contrast. User prompts use a compact blue bubble and assistant responses use a single-column reading measure.
-- Files: standalone Markdown file paths are removed when an actionable file row exists. File rows remain compact with visible preview/download actions.
-- Composer: the input dock has a stable compact height, remains above the home indicator, and keeps download/image/send behavior. Voice controls still appear only when voice input is enabled.
-- Intentional data difference: the source shows six illustrative sessions and an active Claude task; QA uses one real local fixture session with Codex and three file references so no fake production sessions ship in the app.
-- Verification: `npm run build:ios` passed; Capacitor sync passed; `xcodebuild` for the iPhone 16 Pro simulator passed; final simulator install and launch passed.
+- Source visual truth: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/composer-toolbar-preview.png`
+- Rendered implementation: `/var/folders/gx/4y6rm3qs1991_lj8sgm6r5x00000gn/T/com.openai.sky.CUAService/Electron Screenshot 2026-07-27 at 11.14.00 AM.jpeg`
+- Focused comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/qa/icon-comparison.png`
+- Viewport: 1177 x 768 px Electron window
+- Source pixels: 2240 x 1640 px
+- Implementation pixels: 1177 x 768 px
+- Density normalization: focused source and implementation crops were resized to the same 1120 px comparison width; this review evaluates icon geometry, visual weight, control spacing, and hierarchy rather than full-screen layout parity.
+- State: dark mode, populated Claude conversation, input locked while the current conversation operation is being processed.
 
-final result: passed
+**Full-View Comparison Evidence**
 
----
+- The implementation keeps the same quiet dark workbench hierarchy as the source direction: neutral utility actions, one restrained primary action, and semantic color reserved for active or destructive states.
+- Top-bar, sidebar, message, file, and composer actions now use one installed Phosphor icon family. No emoji, text glyph, or hand-drawn Mac-only SVG remains in these visible action surfaces.
+- The source is a component specification board rather than a complete app screen, so its large title, state cards, and blue demonstration controls are not expected in the production window.
 
-**2026-07-23 iPhone Add Session QA**
-- Device: iPhone 16 Pro simulator, iOS 18.5.
-- Before: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/01-add-session-before.png`
-- After: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/02-add-session-after.png`
-- Safe-area comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/04-add-session-comparison.png`
-- Keyboard comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/iphone-audit-2026-07-23/06-keyboard-comparison.png`
+**Focused Region Comparison Evidence**
 
-**Findings And Fixes**
-- The compact add-session header overrode the iPhone safe-area padding, placing the title under the Dynamic Island.
-- Editable controls used text smaller than 16px, which triggered iOS WebView auto-zoom and horizontal panning when the keyboard opened.
-- Added an iPhone-only stylesheet that restores safe-area-aware header sizing, keeps editable controls at the native 16px minimum, and prevents horizontal overscroll.
-- Scope is isolated to `.iphone-shell`; Mac and iPad styles are unchanged.
+- Composer utility icons are 18 px with rounded bold strokes, matching the source's approximately 1.85 px visual weight.
+- Utility controls occupy 32 x 32 px hit areas with transparent default surfaces and neutral hover feedback.
+- Copy, refresh, edit, and file actions remain 16 px regular-weight icons so secondary actions do not compete with the composer.
+- The implementation intentionally uses a white-gray send action instead of the source board's blue sample, following the later product direction to reduce blue dominance.
+- Voice and release controls are absent in the captured state because voice is disabled and the current input lock does not expose release; their icon treatment remains defined by the same component system.
 
-**Verification**
-- Add-session header remains fully visible below the status area: passed.
-- Keyboard opens without horizontal zoom or clipped field labels: passed.
-- Native simulator build: passed.
+**Comparison History**
 
-final result: passed
+1. Initial finding: [P2] Composer icons were visibly lighter and smaller than the source.
+   Evidence: the first implementation used 17 px regular Phosphor icons inside 30 px controls, while the source specifies 18 px icons inside 32 px controls.
+   Fix: changed Mac composer utility icons to 18 px bold Phosphor icons and restored 32 px utility control geometry.
+   Post-fix evidence: `design/qa/icon-comparison.png` shows clear, rounded download, folder, and attachment icons at the intended visual weight.
 
----
-
-**Mac Detached Conversation Window**
-- Trigger: opening a session in its own Mac window left the hidden sidebar grid column active, compressing messages, file cards, and the composer into a narrow strip.
-- Scope: Mac-only CSS in `src/platforms/mac/mac.css`; iPhone and iPad shells were not changed.
-- Fix: detached windows now force a one-column workspace, reset the sidebar width to zero, keep the conversation in column one, and use responsive message/composer gutters.
-
-**Detached Window Evidence**
-- Main window before opening: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/01-main-before.png`
-- Detached window before fix: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/02-detached-before.png`
-- Detached window after fix: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/03-detached-after.png`
-- Combined comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/detached-window-qa-2026-07-23/04-before-after.png`
-
-**Detached Window Verification**
-- Window size: approximately `900 x 750`.
-- Messages use the available width and remain readable.
-- File card actions remain on one row without clipping.
-- Composer stays docked, full-width within stable side gutters.
-- `npm run build`: passed.
-- `npm run test:lifecycle`: passed.
-
-final result: passed
-
----
-
-**2026-07-23 Mac Sidebar Density QA**
-- Selected visual source: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/call_3LdnahDUDZDFwPvTmkneSRgC.png`
-- Captured current state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/01-current-sidebar.png`
-- Final expanded state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/07-final-expanded.png`
-- Final collapsed state: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/05-collapsed-final.png`
-- Before/after comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/sidebar-audit-2026-07-23/03-before-vs-final.png`
-
-**Findings And Fixes**
-- Reduced session-row density from the previous oversized treatment to a compact Mac list with a `48px` minimum row, `22px` AI logo, `12px` title, and `9px` metadata.
-- Softened hover, selection, connection colors, and the four-character session suffix without removing useful state.
-- Reduced toolbar and action controls while preserving add, collapse, detach, settings, connection, and session selection behavior.
-- Verified both expanded and collapsed states. The two-line centered window title remains aligned after sidebar collapse.
-- Scope remains isolated to `.mac-shell`; iPhone and iPad styles were not changed.
-- `npm run build` and `npm run test:lifecycle` passed.
-
-final result: passed
-
----
-
-**2026-07-23 Mac Main Workspace Option 1 QA**
-- Selected visual source: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/call_3LdnahDUDZDFwPvTmkneSRgC.png`
-- Final implementation: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-implementation-final.jpeg`
-- Full side-by-side comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-comparison-final.png`
-- Focused composer comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-composer-comparison.png`
-- Focused sidebar comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-option-1-sidebar-comparison.png`
-- Viewport: `1177 x 768`. The generated source was normalized to the same viewport for direct composition and relative-size review.
-- State: the source contains illustrative running-task content. The implementation uses the user's existing `us` Claude session and its real short local conversation; no fake server or conversation data was introduced.
+2. Initial finding: [P2] Mac action surfaces mixed icon families.
+   Evidence: file references still used a custom attachment SVG while navigation and composer actions used Phosphor.
+   Fix: Mac file references now use Phosphor `FileText`; navigation, copy, refresh, edit, preview, download, and delete actions use matching Phosphor regular-weight icons.
+   Post-fix evidence: the implementation screenshot shows a consistent line language across the sidebar, file list, message actions, and composer.
 
 **Findings**
-- No actionable P0/P1/P2 findings remain.
-- Shell: the Mac workspace now has the selected dark continuous canvas, a stable wide sidebar, a quiet centered title bar, and a reading column aligned with the source.
-- Sidebar: AI logos, task names, connection state, session suffix, neutral selection, compact actions, version, sync, and settings remain readable. The collapsed state keeps one icon per session and preserves expand, sync, and settings access.
-- Conversation: user messages remain compact right-aligned bubbles; assistant output is unframed, uses a readable measure, and keeps copy controls quiet.
-- Composer: the input is a compact two-row surface with a visible contextual placeholder, neutral utility icons, and a circular white-gray send control. Running tasks still switch to the existing stop behavior.
-- Intentional differences: the source shows two sample sessions and a long running response; the implementation keeps the user's five real sessions and a completed two-message exchange. Existing product logos and real connection states are preserved.
 
-**Interaction Verification**
-- Sidebar collapse and expand: passed.
-- Composer focus, text entry, send-enabled state, and clear without dispatching a remote task: passed.
-- Existing settings, add-session, detached-window, sync, file, attachment, and send controls remain wired to their original handlers.
-- Scope check: styles are isolated under `.mac-shell`; iPhone and iPad platform styles were not changed.
-- Production build: `npm run build` passed.
-- Message lifecycle regression: `npm run test:lifecycle` passed.
-
-final result: passed
-
----
-
-**2026-07-10 Mac Workspace Redesign QA**
-- Visual source: `/Users/zwp/.codex/generated_images/019f467a-d5c1-75d2-a3a9-405bc7a29b0e/ig_0b2b9406aadcf9c9016a4f9a67926c8191a22f35b2d603007b.png`
-- Source crop: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/source-ipad-expanded-crop.png`
-- Packaged implementation: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-installed-qa-final-v3.png`
-- Full comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-source-vs-qa-final-v3.png`
-- Focused sidebar comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/mac-sidebar-comparison-final.png`
-- Viewport: implementation `1177 x 768`; source crop normalized to `1085 x 768`.
-- State: source uses illustrative running-task data; implementation uses the user's real connected Claude session and completed Markdown output. The comparison validates the same expanded-sidebar workspace state without replacing real data with mock sessions.
-
-**Mac Findings**
-- No actionable P0/P1/P2 findings remain.
-- Structure: the sidebar, centered session header, conversation canvas, and docked composer follow the selected design direction.
-- Sidebar: sessions now use a two-line hierarchy of task name plus connection state/channel. Repeated AI and directory labels were removed, as was the blue selection rail.
-- Conversation: content is constrained to a readable measure, user prompts remain compact, Markdown is readable, and remote files use a quiet inline card.
-- Composer: the Mac view is a compact single-row surface with icon controls and a stable width; it no longer resembles the old multi-control panel.
-- Intentional differences: Mac window controls replace the iPad status bar; the neutral selected row follows the user's explicit request to avoid blue selected borders/backgrounds; only real sessions are shown.
-- Build: `npm run build` passed. `npm run mac:pack` passed and installed `/Applications/AI Workbench.app`.
-
-final result: passed
-
----
-
-**Build 7 Mobile Polish**
-- Trigger: real iPhone TestFlight screenshot showed status bar/topbar overlap, desktop-like density, raw output taking too much space, and missing SSH password leaking as a native error.
-- Fixed safe-area handling by adding `viewport-fit=cover` and safe-area aware app rows/header/bottom panels.
-- Reworked iPhone first screen into setup summary, guided SSH configuration, clear task composer, and collapsed raw output.
-- Kept iPad as a persistent-sidebar layout instead of stretching the iPhone view.
-- Added front-end profile validation for host, username, and SSH password before running native SSH commands.
-- Made Settings a mobile bottom sheet with sticky actions so `保存并测试` is always reachable.
-
-**Build 7 Verification**
-- iPhone viewport `393 x 852`: passed, no horizontal overflow, raw output collapsed, setup CTA visible.
-- Settings sheet at `393 x 852`: passed, no horizontal overflow, sticky action row visible.
-- iPad viewport `834 x 1194`: passed, sidebar visible, no horizontal overflow.
-- `npm run build`: passed.
-- `npm run ios:sync`: passed.
-- `xcodebuild ... generic/platform=iOS Simulator build`: passed.
-- Release archive `AIWorkbench-1.0.0-7.xcarchive`: passed.
-- App Store Connect upload: passed, delivery UUID `a07c34f9-fade-4a40-b3d0-2dc4b9cf6413`.
-
-**Source Visual Truth**
-- Desktop: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/ig_09d6595a12f38b89016a2956a54f28819a8d75f28dd9cc4899.png`
-- iPad: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/ig_09d6595a12f38b89016a295a36e140819a827d574b2616b44e.png`
-- iPhone: `/Users/zwp/.codex/generated_images/019eaf7f-b106-7cb0-ad59-10fcbdfaad7e/ig_09d6595a12f38b89016a295af61eb4819aa18606903cab5a4d.png`
-
-**Implementation Evidence**
-- Local URL: `http://127.0.0.1:5173/`
-- Desktop screenshot: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/implementation-desktop-1440x1024.png`
-- iPad screenshot: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/implementation-ipad-834x1194.png`
-- iPhone screenshot: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/implementation-iphone-390x844.png`
-- Desktop comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/comparisons/desktop-source-vs-implementation.png`
-- iPad comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/comparisons/ipad-source-vs-implementation.png`
-- iPhone comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/qa-screenshots/comparisons/iphone-source-vs-implementation.png`
-
-**Viewport And State**
-- Desktop: `1440 x 1024`, connected ECS host, `tmux: ai-dev`, `Codex CLI`, raw output open.
-- iPad: `834 x 1194`, connected ECS host, compact sidebar visible, `tmux: ai-dev`, raw output open.
-- iPhone: `390 x 844`, single-column chat, menu drawer available, raw output compact, composer sticky.
-- Interaction checks: mobile drawer opened and closed; composer accepted a new task and inserted it into the current chat.
-
-**Findings**
-- No actionable P0/P1/P2 findings remain.
-- Fonts and typography: system UI plus monospace code styling match the target's product-app feel. Sizes remain legible across desktop, iPad, and iPhone; mobile wrapping is controlled and no text container causes horizontal overflow.
-- Spacing and layout rhythm: desktop preserves sidebar, chat stream, sticky composer, and raw output structure. iPad now keeps a compact persistent sidebar to better match the generated source. iPhone switches to a single-column flow with drawer navigation and compact terminal output.
-- Colors and visual tokens: off-white base, charcoal text, blue focus accents, green SSH/connected state, and dark raw terminal surface are consistent with the selected Chat Workbench direction.
-- Image quality and asset fidelity: the source UI has no photographic or illustration assets to recreate. The implementation uses code-rendered product UI only; no visible product image assets are missing.
-- Copy and content: Chinese product labels, ECS/tmux/Codex/Claude/Custom terminology, local history controls, command progress, code preview, diff preview, and raw terminal output are present and aligned with the brief.
-
-**Patches Made During QA**
-- Fixed mobile width overflow by setting the outer app grid column to `minmax(0, 1fr)`.
-- Tightened iPhone topbar/session pill sizing and composer/raw-output spacing.
-- Restored a compact persistent sidebar for iPad-sized viewports while keeping iPhone navigation in a drawer.
-- Reduced raw terminal height so it does not visually collide with the viewport edge.
+- No actionable P0, P1, or P2 differences remain within the requested Mac icon-language scope.
+- [P3] The disabled send action is intentionally quieter than the source board and may look faint at very low display brightness. This is acceptable because it communicates an unavailable action without adding another status label.
 
 **Implementation Checklist**
-- Desktop responsive check: passed, `overflowingCount: 0`.
-- iPad responsive check: passed, `overflowingCount: 0`.
-- iPhone responsive check: passed, `overflowingCount: 0`.
-- Production build: passed with `npm run build`.
-- Native iOS simulator build: passed with `xcodebuild ... iphonesimulator ... build`.
-- Direct Citadel SSH smoke: passed against a test ECS host.
-- Remote tmux buffer send/capture smoke: passed against `/opt/limpet-workspace`.
 
-**Follow-up Polish**
-- Replace text-based control marks with a real icon library when the production shell dependencies are chosen.
-- Pin the ECS SSH host fingerprint before production release.
-- Replace root password login with a dedicated low-privilege ECS user and SSH key auth.
+- [x] Use one installed icon family for Mac action controls.
+- [x] Match the source's 18 px composer icon scale and rounded visual weight.
+- [x] Keep secondary message and file actions at 16 px regular weight.
+- [x] Preserve neutral default surfaces and semantic state colors.
+- [x] Keep iPhone and iPad rendering unchanged through the Mac-only `iconStyle` variant.
+- [x] Verify production build and message lifecycle regression test.
+
+**Primary Interactions Checked**
+
+- Mac app launch and render
+- Sidebar selection state
+- Top-bar action visibility
+- File action row rendering
+- Composer disabled state
+
+**Console Errors Checked**
+
+- No build or runtime-blocking error was observed during the preview pass.
 
 final result: passed

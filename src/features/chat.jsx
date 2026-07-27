@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, Copy as CopyIcon, DownloadSimple, Eye, PencilSimple, Trash } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  Copy as CopyIcon,
+  DownloadSimple,
+  Eye,
+  FileText,
+  PencilSimple,
+  Trash,
+} from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 import * as FilePreview from "./filePreview.jsx";
@@ -485,6 +493,7 @@ function CopyButton({
   failedLabel = "复制失败",
   className = "",
   icon = true,
+  iconStyle = "default",
   children,
 }) {
   const [copyState, setCopyState] = useState("idle");
@@ -515,7 +524,13 @@ function CopyButton({
     >
       {children || (
         <>
-          {icon ? <CopyIcon size={15} weight="light" aria-hidden="true" /> : null}
+          {icon ? (
+            <CopyIcon
+              size={iconStyle === "mac" ? 16 : 15}
+              weight={iconStyle === "mac" ? "regular" : "light"}
+              aria-hidden="true"
+            />
+          ) : null}
           <span className="copy-message-label">{visibleLabel}</span>
         </>
       )}
@@ -576,6 +591,7 @@ export function MessageBubble({
   onShowDetails,
   onOpenSettings,
   onEditUserMessage,
+  iconStyle = "default",
 }) {
   const agent = agents.find((item) => item.id === message.agentId) ?? activeAgent;
   const bodyText = messageDisplayText(message.body);
@@ -722,6 +738,7 @@ export function MessageBubble({
               onPreviewFile={onPreviewFile}
               onDownloadFile={onDownloadFile}
               onDeleteFile={onDeleteFile}
+              iconStyle={iconStyle}
             />
           ) : null}
         </div>
@@ -731,7 +748,7 @@ export function MessageBubble({
               {timestamp.label}
             </time>
           ) : null}
-          <CopyButton text={copyText} label="复制" className="copy-message copy-user-message" />
+          <CopyButton text={copyText} label="复制" className="copy-message copy-user-message" iconStyle={iconStyle} />
           {typeof onEditUserMessage === "function" && bodyText ? (
             <button
               type="button"
@@ -740,7 +757,7 @@ export function MessageBubble({
               aria-label="编辑这条消息"
               title="编辑这条消息"
             >
-              <PencilSimple size={18} weight="regular" aria-hidden="true" />
+              <PencilSimple size={iconStyle === "mac" ? 16 : 18} weight="regular" aria-hidden="true" />
             </button>
           ) : null}
         </div>
@@ -772,10 +789,15 @@ export function MessageBubble({
               aria-label="刷新状态"
               title="刷新状态"
             >
-              <ArrowClockwise size={15} weight="regular" aria-hidden="true" />
+              <ArrowClockwise size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
             </button>
           ) : null}
-          <CopyButton text={copyText} label="复制回复" className="copy-message copy-assistant-message" />
+          <CopyButton
+            text={copyText}
+            label="复制回复"
+            className="copy-message copy-assistant-message"
+            iconStyle={iconStyle}
+          />
         </div>
       </header>
       {agentFailure ? (
@@ -834,6 +856,7 @@ export function MessageBubble({
           onPreviewFile={onPreviewFile}
           onDownloadFile={onDownloadFile}
           onDeleteFile={onDeleteFile}
+          iconStyle={iconStyle}
         />
       ) : null}
     </article>
@@ -849,6 +872,7 @@ export function FileReferenceList({
   onPreviewFile,
   onDownloadFile,
   onDeleteFile,
+  iconStyle = "default",
 }) {
   const [confirmingDeletePath, setConfirmingDeletePath] = useState("");
   const deleteConfirmationTimerRef = useRef(null);
@@ -889,7 +913,7 @@ export function FileReferenceList({
             <div key={file.path} className={`file-reference ${file.kind} ${deleted ? "deleted" : ""}`}>
               <div className="file-reference-main">
                 <span className="file-reference-icon">
-                  <FileAttachmentIcon />
+                  {iconStyle === "mac" ? <FileText size={18} weight="regular" aria-hidden="true" /> : <FileAttachmentIcon />}
                 </span>
                 <span className="file-reference-copy">
                   <strong>{file.name}</strong>
@@ -901,11 +925,11 @@ export function FileReferenceList({
               </div>
               <div className="file-reference-actions">
                 <button type="button" onClick={() => onPreviewFile?.(file)} disabled={deleted || deleting} title="查看文件">
-                  <Eye size={15} weight="regular" aria-hidden="true" />
+                  <Eye size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
                   <span>查看</span>
                 </button>
                 <button type="button" onClick={() => onDownloadFile?.(file)} disabled={deleted || downloading || deleting} title="下载文件">
-                  <DownloadSimple size={15} weight="regular" aria-hidden="true" />
+                  <DownloadSimple size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
                   <span>{downloading ? "下载中" : "下载"}</span>
                 </button>
                 <button
@@ -915,7 +939,7 @@ export function FileReferenceList({
                   disabled={deleted || deleting || downloading}
                   title={deleted ? "文件已删除" : confirmingDelete ? "再次点击确认删除" : "删除远程文件"}
                 >
-                  <Trash size={15} weight="regular" aria-hidden="true" />
+                  <Trash size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
                   <span>{deleted ? "已删除" : deleting ? "删除中" : confirmingDelete ? "确认删除" : "删除"}</span>
                 </button>
               </div>

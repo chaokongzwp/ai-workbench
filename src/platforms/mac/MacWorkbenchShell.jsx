@@ -287,6 +287,7 @@ export function MacWorkbenchShell({
                 onShowDetails={onShowDetails}
                 onOpenSettings={onOpenSettingsFromMessage}
                 onEditUserMessage={(text) => setComposer(text)}
+                iconStyle="mac"
               />
             )) : null}
           </div>
@@ -332,6 +333,7 @@ export function MacWorkbenchShell({
               onWake={onWake}
               onReleaseRunningTask={onReleaseRunningTask}
               onCancelRunningTask={onCancelRunningTask}
+              iconStyle="mac"
             />
           ) : null}
           <Suspense fallback={null}>

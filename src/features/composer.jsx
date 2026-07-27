@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, DownloadSimple, File as FileIcon, FolderOpen, Lightning, Microphone, Paperclip, Stop, X } from "@phosphor-icons/react";
+import {
+  ArrowUp,
+  DownloadSimple,
+  File as FileIcon,
+  FolderOpen,
+  FolderSimple,
+  Lightning,
+  Microphone,
+  Paperclip,
+  Stop,
+  X,
+} from "@phosphor-icons/react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -352,6 +363,7 @@ export function Composer({
   compactPlaceholder = "",
   showSetupAction = true,
   utilityControls = false,
+  iconStyle = "default",
 }) {
   const fileInputRef = useRef(null);
   const textareaRef = useAutoGrowingTextarea(composer, compact ? 120 : 180);
@@ -391,6 +403,9 @@ export function Composer({
             ? "唤醒中"
             : "唤醒";
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
+  const macIcons = iconStyle === "mac";
+  const toolIconSize = 18;
+  const toolIconWeight = macIcons ? "bold" : "regular";
   const composerStatusText =
     inputLock.text ||
     (!voiceInputEnabled
@@ -500,7 +515,7 @@ export function Composer({
                   aria-label="下载远程文件"
                   title="下载远程文件"
                 >
-                  <DownloadSimple size={18} weight="regular" aria-hidden="true" />
+                  <DownloadSimple size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -510,7 +525,11 @@ export function Composer({
                   aria-label="查看远程文件夹"
                   title="查看远程文件夹"
                 >
-                  <FolderOpen size={18} weight="regular" aria-hidden="true" />
+                  {macIcons ? (
+                    <FolderSimple size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                  ) : (
+                    <FolderOpen size={toolIconSize} weight="regular" aria-hidden="true" />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -520,7 +539,7 @@ export function Composer({
                   aria-label="添加文件"
                   title="添加文件"
                 >
-                  <Paperclip size={18} weight="regular" aria-hidden="true" />
+                  <Paperclip size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
                 </button>
                 {voiceInputEnabled ? (
                   <>
@@ -534,7 +553,7 @@ export function Composer({
                       aria-label={voiceActive ? "停止语音输入" : "语音输入"}
                       title={voiceLabel}
                     >
-                      <Microphone size={18} weight="regular" aria-hidden="true" />
+                      <Microphone size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
                     </button>
                     <button
                       type="button"
@@ -546,7 +565,11 @@ export function Composer({
                       aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}
                       title={wakeLabel}
                     >
-                      <Lightning size={18} weight={wakeActive ? "fill" : "regular"} aria-hidden="true" />
+                      <Lightning
+                        size={toolIconSize}
+                        weight={wakeActive ? "fill" : toolIconWeight}
+                        aria-hidden="true"
+                      />
                     </button>
                   </>
                 ) : null}
@@ -561,7 +584,11 @@ export function Composer({
                   aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
                   title={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
                 >
-                  {stopMode ? <Stop size={18} weight="fill" aria-hidden="true" /> : <ArrowUp size={18} weight="bold" aria-hidden="true" />}
+                  {stopMode ? (
+                    <Stop size={macIcons ? 16 : 18} weight="fill" aria-hidden="true" />
+                  ) : (
+                    <ArrowUp size={toolIconSize} weight="bold" aria-hidden="true" />
+                  )}
                 </button>
               </>
             ) : (

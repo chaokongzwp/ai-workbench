@@ -333,7 +333,7 @@ export function TopBar({
             aria-pressed={terminalOpen}
             onClick={onToggleTerminal}
           >
-            <TerminalWindow size={17} weight="bold" aria-hidden="true" />
+            <TerminalWindow size={17} weight="regular" aria-hidden="true" />
           </button>
         ) : null}
         {onRefreshOutput ? (
@@ -345,7 +345,7 @@ export function TopBar({
             onClick={() => onRefreshOutput()}
             disabled={busy}
           >
-            <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+            <ArrowClockwise size={17} weight="regular" aria-hidden="true" />
           </button>
         ) : null}
         <button
@@ -355,7 +355,7 @@ export function TopBar({
           title="服务器设置"
           onClick={onOpenSettings}
         >
-          <DotsThree className="topbar-more" size={18} weight="bold" aria-hidden="true" />
+          <DotsThree className="topbar-more" size={18} weight="regular" aria-hidden="true" />
         </button>
       </div>
     </header>
@@ -451,7 +451,7 @@ export function NavigationPanel({
             onClick={onAddServer}
             disabled={busy}
           >
-            {macVariant || ipadVariant ? <Plus size={16} weight="bold" aria-hidden="true" /> : "+"}
+            {macVariant || ipadVariant ? <Plus size={16} weight={macVariant ? "regular" : "bold"} aria-hidden="true" /> : "+"}
           </button>
         ) : null}
         {onDuplicateServer && !macVariant && !hideDuplicate ? (
@@ -475,7 +475,12 @@ export function NavigationPanel({
             onClick={onToggleCollapse}
           >
             {macVariant || ipadVariant ? (
-              <SidebarSimple className={collapsed ? "is-collapsed" : ""} size={16} weight="bold" aria-hidden="true" />
+              <SidebarSimple
+                className={collapsed ? "is-collapsed" : ""}
+                size={16}
+                weight={macVariant ? "regular" : "bold"}
+                aria-hidden="true"
+              />
             ) : collapsed ? (
               "›"
             ) : (
@@ -583,7 +588,7 @@ export function NavigationPanel({
                       onOpenChatWindow(server.id);
                     }}
                   >
-                    <ArrowSquareOut size={15} weight="bold" aria-hidden="true" />
+                    <ArrowSquareOut size={15} weight="regular" aria-hidden="true" />
                   </button>
                 ) : null}
                 {onConfigureServer ? (
@@ -598,7 +603,7 @@ export function NavigationPanel({
                       onConfigureServer(server.id);
                     }}
                   >
-                    <DotsThree size={16} weight="bold" aria-hidden="true" />
+                    <DotsThree size={16} weight="regular" aria-hidden="true" />
                   </button>
                 ) : null}
                 </span>

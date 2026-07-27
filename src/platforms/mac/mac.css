@@ -112,9 +112,12 @@
 .app-shell[data-theme="dark"].mac-shell .topbar-logo-button {
   width: var(--mac-control-size);
   height: var(--mac-control-size);
+  padding: 0;
+  border: 0 !important;
   border-radius: var(--mac-control-radius);
   color: var(--mac-muted);
-  background: transparent;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .mac-shell .topbar-actions,
@@ -138,10 +141,11 @@
   min-width: var(--mac-control-size);
   height: var(--mac-control-size);
   padding: 0;
-  border: 0;
+  border: 0 !important;
   border-radius: var(--mac-control-radius);
   color: var(--mac-muted);
-  background: transparent;
+  background: transparent !important;
+  box-shadow: none !important;
   transition:
     color var(--aiwb-duration-fast) ease,
     background var(--aiwb-duration-fast) ease;
@@ -191,9 +195,12 @@
   width: 24px;
   min-width: 24px;
   height: 24px;
+  padding: 0;
+  border: 0 !important;
   border-radius: 7px;
   color: var(--mac-muted);
-  background: transparent;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .mac-shell .sidebar-add:hover,
@@ -332,9 +339,12 @@
 .app-shell[data-theme="dark"].mac-shell .mac-session-more {
   width: 20px;
   height: 20px;
+  padding: 0;
+  border: 0 !important;
   border-radius: 6px;
   color: var(--mac-muted);
-  background: transparent;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .mac-shell .mac-session-more:hover,
@@ -652,9 +662,9 @@
 
 .mac-shell .composer.compact .input-actions .composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .composer-icon-button {
-  width: var(--mac-control-size) !important;
-  min-width: var(--mac-control-size) !important;
-  height: var(--mac-control-size) !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
   padding: 0 !important;
   border: 0 !important;
   border-radius: var(--mac-control-radius) !important;
@@ -896,9 +906,9 @@ body.mac-terminal-resizing {
 .mac-shell .conversation .message-header-actions :is(.refresh-message, .copy-message.copy-assistant-message) {
   display: inline-grid;
   place-items: center;
-  width: var(--aiwb-control-sm);
-  min-width: var(--aiwb-control-sm);
-  height: var(--aiwb-control-sm);
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
   border-radius: var(--aiwb-radius-xs);
@@ -921,8 +931,8 @@ body.mac-terminal-resizing {
 }
 
 .mac-shell .conversation .message-header-actions :is(.refresh-message, .copy-message.copy-assistant-message) svg {
-  width: var(--aiwb-icon-sm);
-  height: var(--aiwb-icon-sm);
+  width: 16px;
+  height: 16px;
 }
 
 .mac-shell .conversation .message-header :is(.message-time, .streaming, .task-timer) {
@@ -958,13 +968,16 @@ body.mac-terminal-resizing {
 }
 
 .mac-shell .conversation .user-prompt :is(.user-message-time, .copy-message.copy-user-message, .edit-user-message) {
-  height: 20px;
-  line-height: 20px;
+  height: 22px;
+  line-height: 22px;
 }
 
 .mac-shell .conversation .user-prompt :is(.copy-message.copy-user-message, .edit-user-message) {
   display: inline-grid;
   place-items: center;
+  width: 22px;
+  min-width: 22px;
+  padding: 0;
   border: 0;
   border-radius: var(--aiwb-radius-xs);
   background: transparent;
@@ -997,6 +1010,24 @@ body.mac-terminal-resizing {
   border-radius: 0;
   background: transparent !important;
   box-shadow: none;
+}
+
+.mac-shell .conversation .file-reference-icon,
+.app-shell[data-theme="dark"].mac-shell .conversation .file-reference-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--mac-muted);
+  background: color-mix(in srgb, var(--mac-surface-selected) 56%, transparent);
+}
+
+.mac-shell .conversation .file-reference-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
 .mac-shell .conversation .file-reference:last-child {
