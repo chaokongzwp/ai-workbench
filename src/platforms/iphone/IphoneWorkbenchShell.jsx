@@ -15,9 +15,11 @@ import {
   Paperclip,
   Plus,
   Stop,
+  TerminalWindow,
   X,
 } from "@phosphor-icons/react";
 import { AgentLogo, StatusDot } from "../../features/primitives.jsx";
+import { NativeSshTerminal } from "../native/NativeSshTerminal.jsx";
 import {
   agentById,
   composerLockPresentation,
@@ -426,6 +428,7 @@ export function IphoneWorkbenchShell({
   servers,
   activeServerId,
   profile,
+  terminalProfile,
   connection,
   diagnostics,
   discovery,
@@ -561,6 +564,7 @@ export function IphoneWorkbenchShell({
   const [sessionQuery, setSessionQuery] = useState("");
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
   const [exportNotice, setExportNotice] = useState(null);
   const visibleSessions = useMemo(() => {
@@ -660,6 +664,18 @@ export function IphoneWorkbenchShell({
               role="menuitem"
               onClick={() => {
                 closeMoreMenu();
+                setTerminalOpen(true);
+              }}
+              disabled={!hasWorkSession}
+            >
+              <TerminalWindow size={18} weight="bold" aria-hidden="true" />
+              <span>SSH 终端</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMoreMenu();
                 onRefreshOutput?.();
               }}
               disabled={!onRefreshOutput || busy}
@@ -692,6 +708,15 @@ export function IphoneWorkbenchShell({
       ) : null}
 
       {exportNotice ? <div className={`iphone-export-notice ${exportNotice.tone || ""}`}>{exportNotice.message}</div> : null}
+
+      <NativeSshTerminal
+        open={terminalOpen && hasWorkSession}
+        profile={terminalProfile || profile}
+        sessionKey={activeServerId}
+        theme={resolvedTheme}
+        formFactor="iphone"
+        onClose={() => setTerminalOpen(false)}
+      />
 
       <section
         className={`iphone-chat ${draggingFiles ? "file-drop-active" : ""}`}

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { DotsThree, SidebarSimple } from "@phosphor-icons/react";
+import { DotsThree, SidebarSimple, TerminalWindow } from "@phosphor-icons/react";
 import { connectionStatusPresentation, dataTransferHasFiles } from "../../core/workbenchCore.js";
+import { NativeSshTerminal } from "./NativeSshTerminal.jsx";
 
 export function NativeWorkbenchShell({
   components,
@@ -13,6 +14,7 @@ export function NativeWorkbenchShell({
   servers,
   activeServerId,
   profile,
+  terminalProfile,
   connection,
   diagnostics,
   discovery,
@@ -150,6 +152,7 @@ export function NativeWorkbenchShell({
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const isIpad = nativeFormFactor === "ipad";
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const hasWorkSession = servers.length > 0;
 
   function handleFileDrop(event) {
@@ -282,6 +285,17 @@ export function NativeWorkbenchShell({
             </span>
           </button>
           <div className="native-nav-actions">
+            {isIpad && hasWorkSession ? (
+              <button
+                type="button"
+                className="native-nav-button native-terminal-button utility-icon-button"
+                onClick={() => setTerminalOpen(true)}
+                aria-label="打开当前会话 SSH 终端"
+                title="SSH 终端"
+              >
+                <TerminalWindow size={17} weight="bold" aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               type="button"
               className={`native-nav-button native-settings-button ${
@@ -294,6 +308,15 @@ export function NativeWorkbenchShell({
             </button>
           </div>
         </header>
+
+        <NativeSshTerminal
+          open={terminalOpen && isIpad && hasWorkSession}
+          profile={terminalProfile || profile}
+          sessionKey={activeServerId}
+          theme={resolvedTheme}
+          formFactor="ipad"
+          onClose={() => setTerminalOpen(false)}
+        />
 
         {taskNotice ? (
           <div className="conversation-task-notice">

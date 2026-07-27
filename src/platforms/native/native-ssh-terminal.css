@@ -1,0 +1,200 @@
+.native-ssh-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 420;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: var(--app-viewport-height, 100dvh);
+  overflow: hidden;
+  color: #eef0f3;
+  background: #0d0f12;
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.native-ssh-screen[data-theme="light"] {
+  color: #1f2328;
+  background: #f7f7f8;
+}
+
+.native-ssh-header {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 58px;
+  padding: 7px max(12px, env(safe-area-inset-right, 0)) 7px max(12px, env(safe-area-inset-left, 0));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.native-ssh-screen[data-theme="light"] .native-ssh-header {
+  border-bottom-color: rgba(31, 35, 40, 0.12);
+}
+
+.native-ssh-close,
+.native-ssh-actions button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: inherit;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.native-ssh-close:active,
+.native-ssh-actions button:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.native-ssh-screen[data-theme="light"] .native-ssh-close:active,
+.native-ssh-screen[data-theme="light"] .native-ssh-actions button:active {
+  background: rgba(31, 35, 40, 0.08);
+}
+
+.native-ssh-actions button:disabled {
+  opacity: 0.3;
+}
+
+.native-ssh-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  padding-left: 5px;
+}
+
+.native-ssh-title strong {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.native-ssh-title span {
+  min-width: 0;
+  overflow: hidden;
+  color: #9da3ad;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.native-ssh-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.native-ssh-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 3px;
+  color: #a6abb4;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.native-ssh-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #727781;
+}
+
+.native-ssh-state.connected i {
+  background: #34c759;
+}
+
+.native-ssh-state.connecting i {
+  background: #e3b341;
+}
+
+.native-ssh-state.error {
+  color: #ee7d83;
+}
+
+.native-ssh-state.error i {
+  background: #ee5a61;
+}
+
+.native-ssh-error {
+  margin: 0;
+  padding: 8px max(14px, env(safe-area-inset-right, 0)) 8px max(14px, env(safe-area-inset-left, 0));
+  color: #f2b3b7;
+  background: rgba(128, 35, 40, 0.22);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.native-ssh-terminal {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px max(10px, env(safe-area-inset-right, 0)) 6px max(10px, env(safe-area-inset-left, 0));
+}
+
+.native-ssh-terminal .xterm,
+.native-ssh-terminal .xterm-screen {
+  width: 100%;
+  height: 100%;
+}
+
+.native-ssh-terminal .xterm-viewport {
+  overscroll-behavior: contain;
+}
+
+.native-ssh-keys {
+  display: flex;
+  gap: 7px;
+  padding: 7px max(12px, env(safe-area-inset-right, 0)) 8px max(12px, env(safe-area-inset-left, 0));
+  overflow-x: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  scrollbar-width: none;
+}
+
+.native-ssh-screen[data-theme="light"] .native-ssh-keys {
+  border-top-color: rgba(31, 35, 40, 0.12);
+}
+
+.native-ssh-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.native-ssh-keys button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 48px;
+  height: 34px;
+  padding: 0 12px;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  font: inherit;
+  font-size: 12px;
+}
+
+.native-ssh-screen[data-theme="light"] .native-ssh-keys button {
+  border-color: rgba(31, 35, 40, 0.12);
+  background: rgba(31, 35, 40, 0.04);
+}
+
+.native-ssh-keys button:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.native-ssh-screen.ipad .native-ssh-header,
+.native-ssh-screen.ipad .native-ssh-keys {
+  padding-right: max(20px, env(safe-area-inset-right, 0));
+  padding-left: max(20px, env(safe-area-inset-left, 0));
+}
+
+.native-ssh-screen.ipad .native-ssh-terminal {
+  padding-right: max(18px, env(safe-area-inset-right, 0));
+  padding-left: max(18px, env(safe-area-inset-left, 0));
+}

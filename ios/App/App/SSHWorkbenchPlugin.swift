@@ -4,6 +4,7 @@ import AVFoundation
 import Capacitor
 import Citadel
 import NIOCore
+@preconcurrency import NIOSSH
 import UIKit
 
 private struct SSHConnectionConfig {
@@ -35,6 +36,89 @@ private struct SSHConnectionConfig {
         self.commandTimeoutSeconds = Int64(max(5, min(call.getInt("commandTimeoutSeconds", 180), 7200)))
         self.stdin = call.getString("stdin") ?? ""
         self.uploadScript = call.getBool("uploadScript", false)
+    }
+}
+
+private enum NativeTerminalError: LocalizedError {
+    case missingSession
+    case sessionNotReady
+
+    var errorDescription: String? {
+        switch self {
+        case .missingSession:
+            return "SSH 终端会话不存在或已经关闭。"
+        case .sessionNotReady:
+            return "SSH 终端仍在连接，请稍后再试。"
+        }
+    }
+}
+
+private actor NativeTerminalSessionStore {
+    private struct Session {
+        var client: SSHClient?
+        var writer: TTYStdinWriter?
+    }
+
+    private var sessions: [String: Session] = [:]
+
+    func prepare(_ terminalId: String) {
+        sessions[terminalId] = Session()
+    }
+
+    func attach(client: SSHClient, terminalId: String) -> Bool {
+        guard var session = sessions[terminalId] else {
+            return false
+        }
+        session.client = client
+        sessions[terminalId] = session
+        return true
+    }
+
+    func attach(writer: TTYStdinWriter, terminalId: String) -> Bool {
+        guard var session = sessions[terminalId] else {
+            return false
+        }
+        session.writer = writer
+        sessions[terminalId] = session
+        return true
+    }
+
+    func write(_ data: Data, terminalId: String) async throws {
+        guard let session = sessions[terminalId] else {
+            throw NativeTerminalError.missingSession
+        }
+        guard let writer = session.writer else {
+            throw NativeTerminalError.sessionNotReady
+        }
+        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+        buffer.writeBytes(data)
+        try await writer.write(buffer)
+    }
+
+    func resize(terminalId: String, cols: Int, rows: Int) async throws {
+        guard let session = sessions[terminalId] else {
+            throw NativeTerminalError.missingSession
+        }
+        guard let writer = session.writer else {
+            throw NativeTerminalError.sessionNotReady
+        }
+        try await writer.changeSize(
+            cols: max(20, cols),
+            rows: max(6, rows),
+            pixelWidth: 0,
+            pixelHeight: 0
+        )
+    }
+
+    func close(_ terminalId: String) async {
+        guard let session = sessions.removeValue(forKey: terminalId) else {
+            return
+        }
+        try? await session.client?.close()
+    }
+
+    func finish(_ terminalId: String) -> Bool {
+        sessions.removeValue(forKey: terminalId) != nil
     }
 }
 
@@ -929,6 +1013,10 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "SSHWorkbench"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "runCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startTerminal", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "writeTerminal", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "resizeTerminal", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "closeTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "routeIntent", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveProfile", returnType: CAPPluginReturnPromise),
@@ -944,6 +1032,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     private let keychainService = "com.beexofficial.aiworkbench.connection"
     private let keychainAccount = "default-profile"
     private let diagnosticLogQueue = DispatchQueue(label: "com.beexofficial.aiworkbench.diagnostics")
+    private let terminalSessions = NativeTerminalSessionStore()
     private static let crc32Table: [UInt32] = {
         (0..<256).map { index in
             var value = UInt32(index)
@@ -1010,6 +1099,182 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                 "error": safeErrorMessage(error)
             ])
             call.reject(safeErrorMessage(error), "SSH_CONFIG_INVALID", error)
+        }
+    }
+
+    @objc func startTerminal(_ call: CAPPluginCall) {
+        let terminalId = (call.getString("terminalId") ?? UUID().uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let workdir = (call.getString("workdir") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let platform = (call.getString("platform") ?? "linux").lowercased()
+        let cols = max(20, call.getInt("cols", 80))
+        let rows = max(6, call.getInt("rows", 24))
+
+        guard !terminalId.isEmpty else {
+            call.reject("Missing required field: terminalId", "SSH_TERMINAL_INVALID")
+            return
+        }
+
+        do {
+            let config = try SSHConnectionConfig(call: call)
+            emitTerminalState(terminalId: terminalId, state: "connecting", detail: "")
+
+            Task {
+                await self.terminalSessions.prepare(terminalId)
+                var settings = SSHClientSettings(
+                    host: config.host,
+                    port: config.port,
+                    authenticationMethod: {
+                        .passwordBased(username: config.username, password: config.password)
+                    },
+                    hostKeyValidator: .acceptAnything()
+                )
+                settings.connectTimeout = .seconds(config.connectTimeoutSeconds)
+                var didResolve = false
+
+                do {
+                    let client = try await SSHClient.connect(to: settings)
+                    guard await self.terminalSessions.attach(client: client, terminalId: terminalId) else {
+                        try? await client.close()
+                        return
+                    }
+
+                    try await client.withPTY(
+                        SSHChannelRequestEvent.PseudoTerminalRequest(
+                            wantReply: true,
+                            term: "xterm-256color",
+                            terminalCharacterWidth: cols,
+                            terminalRowHeight: rows,
+                            terminalPixelWidth: 0,
+                            terminalPixelHeight: 0,
+                            terminalModes: .init([.ECHO: 1])
+                        )
+                    ) { inbound, outbound in
+                        guard await self.terminalSessions.attach(writer: outbound, terminalId: terminalId) else {
+                            return
+                        }
+
+                        didResolve = true
+                        call.resolve(["ok": true, "terminalId": terminalId])
+                        self.emitTerminalState(terminalId: terminalId, state: "connected", detail: "")
+
+                        if !workdir.isEmpty {
+                            let command: String
+                            if platform.contains("windows") && !platform.contains("wsl") {
+                                command = "Set-Location -LiteralPath \(self.powershellLiteral(workdir))\r"
+                            } else {
+                                command = "cd -- \(self.shellLiteral(workdir))\r"
+                            }
+                            try await self.terminalSessions.write(
+                                Data(command.utf8),
+                                terminalId: terminalId
+                            )
+                        }
+
+                        for try await output in inbound {
+                            switch output {
+                            case .stdout(var buffer), .stderr(var buffer):
+                                guard let bytes = buffer.readBytes(length: buffer.readableBytes), !bytes.isEmpty else {
+                                    continue
+                                }
+                                self.emitTerminalData(
+                                    terminalId: terminalId,
+                                    data: Data(bytes)
+                                )
+                            }
+                        }
+                    }
+
+                    let wasActive = await self.terminalSessions.finish(terminalId)
+                    if wasActive {
+                        self.emitTerminalState(
+                            terminalId: terminalId,
+                            state: "closed",
+                            detail: "远端 SSH 已断开"
+                        )
+                    }
+                } catch {
+                    let wasActive = await self.terminalSessions.finish(terminalId)
+                    let message = self.friendlySSHErrorMessage(error, config: config)
+                    if !didResolve {
+                        call.reject(message, "SSH_TERMINAL_FAILED", error)
+                    }
+                    if wasActive {
+                        self.emitTerminalState(
+                            terminalId: terminalId,
+                            state: "error",
+                            detail: message
+                        )
+                    }
+                }
+            }
+        } catch {
+            call.reject(safeErrorMessage(error), "SSH_TERMINAL_INVALID", error)
+        }
+    }
+
+    @objc func writeTerminal(_ call: CAPPluginCall) {
+        let terminalId = (call.getString("terminalId") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = call.getString("data") ?? ""
+        let base64 = call.getString("base64") ?? ""
+        let data = !base64.isEmpty ? Data(base64Encoded: base64) : Data(text.utf8)
+
+        guard !terminalId.isEmpty, let data else {
+            call.reject("SSH 终端输入无效。", "SSH_TERMINAL_WRITE_INVALID")
+            return
+        }
+
+        Task {
+            do {
+                try await self.terminalSessions.write(data, terminalId: terminalId)
+                call.resolve(["ok": true])
+            } catch {
+                call.reject(self.safeErrorMessage(error), "SSH_TERMINAL_WRITE_FAILED", error)
+            }
+        }
+    }
+
+    @objc func resizeTerminal(_ call: CAPPluginCall) {
+        let terminalId = (call.getString("terminalId") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cols = call.getInt("cols", 80)
+        let rows = call.getInt("rows", 24)
+
+        guard !terminalId.isEmpty else {
+            call.reject("SSH 终端会话不存在。", "SSH_TERMINAL_RESIZE_INVALID")
+            return
+        }
+
+        Task {
+            do {
+                try await self.terminalSessions.resize(
+                    terminalId: terminalId,
+                    cols: cols,
+                    rows: rows
+                )
+                call.resolve(["ok": true])
+            } catch {
+                call.reject(self.safeErrorMessage(error), "SSH_TERMINAL_RESIZE_FAILED", error)
+            }
+        }
+    }
+
+    @objc func closeTerminal(_ call: CAPPluginCall) {
+        let terminalId = (call.getString("terminalId") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        Task {
+            if !terminalId.isEmpty {
+                await self.terminalSessions.close(terminalId)
+                self.emitTerminalState(
+                    terminalId: terminalId,
+                    state: "closed",
+                    detail: "SSH 连接已关闭"
+                )
+            }
+            call.resolve(["ok": true])
         }
     }
 
@@ -1515,6 +1780,29 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func powershellLiteral(_ value: String) -> String {
         return "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+    }
+
+    private func shellLiteral(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private func emitTerminalData(terminalId: String, data: Data) {
+        DispatchQueue.main.async {
+            self.notifyListeners("terminalData", data: [
+                "terminalId": terminalId,
+                "base64": data.base64EncodedString()
+            ])
+        }
+    }
+
+    private func emitTerminalState(terminalId: String, state: String, detail: String) {
+        DispatchQueue.main.async {
+            self.notifyListeners("terminalState", data: [
+                "terminalId": terminalId,
+                "state": state,
+                "detail": detail
+            ])
+        }
     }
 
     private struct ZipEntry {
