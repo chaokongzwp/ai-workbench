@@ -1,7 +1,7 @@
-**Design QA: Mac Icon Language**
+**Design QA: Mac Visual Language**
 
 - Source visual truth: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/composer-toolbar-preview.png`
-- Rendered implementation: `/var/folders/gx/4y6rm3qs1991_lj8sgm6r5x00000gn/T/com.openai.sky.CUAService/Electron Screenshot 2026-07-27 at 11.25.13 AM.jpeg`
+- Rendered implementation: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/qa/mac-typography-final.jpeg`
 - Focused comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/qa/icon-comparison.png`
 - Viewport: 1177 x 768 px Electron window
 - Source pixels: 2240 x 1640 px
@@ -22,6 +22,10 @@
 - Copy, refresh, edit, and file actions remain 16 px regular-weight icons so secondary actions do not compete with the composer.
 - The implementation intentionally uses a white-gray send action instead of the source board's blue sample, following the later product direction to reduce blue dominance.
 - Voice and release controls are absent in the captured state because voice is disabled and the current input lock does not expose release; their icon treatment remains defined by the same component system.
+- Mac UI text now explicitly uses the Apple system stack with `SF Pro Text` and `PingFang SC` fallbacks, while compact display labels use the matching display stack.
+- Typography uses supported system-font weights (`400`, `500`, and `600`) instead of interpolated values that rendered Chinese and Latin text with visibly different density.
+- Assistant content is set to 15 px / 1.66 line height, user prompts to 15 px / 1.55, and sidebar metadata to 10 px / 14 px. The result keeps long technical responses readable without the former loose, web-page-like rhythm.
+- File titles, status text, timestamps, and action labels now follow the same weight hierarchy instead of inheriting unrelated global `680` or `720` weights.
 
 **Comparison History**
 
@@ -40,6 +44,11 @@
    Fix: replaced the actual Mac action glyphs with Lucide equivalents and added a Mac-only SVG reset so the legacy `fill: currentColor` rule cannot turn Lucide outlines into solid shapes.
    Post-fix evidence: `design/qa/icon-comparison.png` shows visibly different download, folder, attachment, terminal, sidebar, copy, refresh, edit, and file-action geometry with correct outline rendering.
 
+4. Follow-up finding: [P2] The implemented typography felt less refined than the source direction.
+   Evidence: Mac-specific CSS used interpolated weights such as `450`, `520`, `650`, `660`, and `680`; Chinese glyphs and Latin glyphs therefore landed on different available font faces. The 1.74 assistant line height also made messages feel visually disconnected.
+   Fix: introduced explicit Mac text/display font stacks, normalized roles to `400/500/600`, tightened message rhythm, and calibrated sidebar, file-row, status, and composer typography together.
+   Post-fix evidence: `design/qa/mac-typography-final.jpeg` shows consistent density across the conversation, file rows, top bar, sidebar, and composer.
+
 **Findings**
 
 - No actionable P0, P1, or P2 differences remain within the requested Mac icon-language scope.
@@ -51,6 +60,9 @@
 - [x] Match the source's 18 px composer icon scale and rounded visual weight.
 - [x] Keep secondary message and file actions at 16 px regular weight.
 - [x] Preserve neutral default surfaces and semantic state colors.
+- [x] Use the Apple system text/display stacks with a Chinese system-font fallback.
+- [x] Use supported system-font weights consistently across Latin and Chinese text.
+- [x] Keep message, sidebar, file-row, and composer typography on one role hierarchy.
 - [x] Keep iPhone and iPad rendering unchanged through the Mac-only `iconStyle` variant.
 - [x] Verify production build and message lifecycle regression test.
 

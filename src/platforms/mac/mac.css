@@ -4,6 +4,8 @@
  */
 
 .mac-shell {
+  --mac-font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --mac-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
   --mac-sidebar-width: clamp(232px, 18vw, 260px);
   --mac-canvas: #f6f7f9;
   --mac-sidebar: #e9ebef;
@@ -23,6 +25,18 @@
   grid-template-rows: 46px minmax(0, 1fr) auto;
   color: var(--mac-text);
   background: var(--mac-canvas) !important;
+  font-family: var(--mac-font-text);
+  font-size: 14px;
+  font-kerning: normal;
+  letter-spacing: 0;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.mac-shell :is(button, input, textarea, select) {
+  font-family: inherit;
+  letter-spacing: 0;
 }
 
 .app-shell[data-theme="dark"].mac-shell {
@@ -33,9 +47,9 @@
   --mac-surface-selected: #2a2f37;
   --mac-line: rgba(255, 255, 255, 0.12);
   --mac-line-soft: rgba(255, 255, 255, 0.075);
-  --mac-text: #f4f5f7;
-  --mac-muted: #a0a6b0;
-  --mac-subtle: #777f8a;
+  --mac-text: #f1f2f4;
+  --mac-muted: #a1a7b0;
+  --mac-subtle: #747c87;
   background: var(--mac-canvas) !important;
 }
 
@@ -82,8 +96,9 @@
   width: 100%;
   max-width: 100%;
   color: var(--mac-text);
-  font-size: 13.5px;
-  font-weight: 680;
+  font-family: var(--mac-font-display);
+  font-size: 13px;
+  font-weight: 600;
   line-height: 18px;
   text-align: center;
   text-overflow: ellipsis;
@@ -95,7 +110,8 @@
   overflow: hidden;
   max-width: min(34vw, 340px);
   color: var(--mac-muted);
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 400;
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -104,7 +120,8 @@
 .mac-shell .topbar-session-status,
 .app-shell[data-theme="dark"].mac-shell .topbar-session-status {
   color: var(--mac-muted);
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 400;
   line-height: 15px;
 }
 
@@ -185,7 +202,7 @@
 .app-shell[data-theme="dark"].mac-shell .sidebar-toolbar .section-header {
   color: var(--mac-muted);
   font-size: 11px;
-  font-weight: 680;
+  font-weight: 600;
 }
 
 .mac-shell .sidebar-add,
@@ -276,8 +293,8 @@
 
 .mac-shell .mac-session-copy > strong {
   color: var(--mac-text);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 16px;
 }
 
@@ -294,8 +311,8 @@
 .mac-shell .mac-session-channel,
 .app-shell[data-theme="dark"].mac-shell .mac-session-channel {
   color: var(--mac-muted);
-  font-size: 9px;
-  font-weight: 550;
+  font-size: 10px;
+  font-weight: 400;
   line-height: 14px;
 }
 
@@ -317,8 +334,8 @@
   padding-inline: 4px;
   border: 0;
   background: color-mix(in srgb, var(--mac-surface-selected) 58%, transparent);
-  font-size: 9px;
-  font-weight: 620;
+  font-size: 9.5px;
+  font-weight: 500;
 }
 
 .mac-shell .mac-session-state.running,
@@ -426,7 +443,7 @@
 .mac-shell .conversation-scroll,
 .app-shell[data-theme="dark"].mac-shell .conversation-scroll {
   align-items: center;
-  gap: 26px;
+  gap: 24px;
   padding: 34px clamp(30px, 6vw, 96px) 142px;
   background: transparent;
 }
@@ -451,13 +468,14 @@
 .mac-shell .conversation .message-header {
   min-height: 30px;
   gap: 8px;
-  margin: 0 0 10px;
+  margin: 0 0 9px;
 }
 
 .mac-shell .conversation .message-header strong {
   color: var(--mac-text);
-  font-size: 15.5px;
-  font-weight: 660;
+  font-family: var(--mac-font-display);
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .mac-shell .conversation .assistant-copy,
@@ -467,9 +485,14 @@
   width: 100%;
   max-width: none;
   color: var(--mac-text);
-  font-size: 15.5px;
-  font-weight: 450;
-  line-height: 1.74;
+  font-family: var(--mac-font-text);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.66;
+}
+
+.mac-shell .conversation .rich-message {
+  gap: 12px;
 }
 
 .mac-shell .conversation .rich-message h1,
@@ -477,12 +500,42 @@
 .mac-shell .conversation .rich-message h3,
 .mac-shell .conversation .rich-message h4 {
   color: var(--mac-text);
+  font-family: var(--mac-font-display);
+  font-weight: 600;
   letter-spacing: 0;
+}
+
+.mac-shell .conversation .rich-message h1 {
+  font-size: 21px;
+  line-height: 1.28;
+}
+
+.mac-shell .conversation .rich-message h2 {
+  font-size: 18px;
+  line-height: 1.32;
+}
+
+.mac-shell .conversation .rich-message h3 {
+  font-size: 16px;
+  line-height: 1.36;
+}
+
+.mac-shell .conversation .rich-message h4 {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.mac-shell .conversation .rich-message :is(strong, th) {
+  font-weight: 600;
+}
+
+.mac-shell .conversation .rich-message :is(ul, ol) {
+  gap: 6px;
 }
 
 .mac-shell .conversation .user-prompt .user-message-card {
   max-width: min(560px, 68%);
-  padding: 10px 14px;
+  padding: 9px 13px;
   border: 1px solid var(--mac-line);
   border-radius: var(--mac-surface-radius) var(--mac-surface-radius) var(--aiwb-radius-xs) var(--mac-surface-radius);
   color: var(--mac-text);
@@ -499,7 +552,7 @@
 .app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card > p {
   color: inherit;
   font-size: 15px;
-  font-weight: 520;
+  font-weight: 400;
   line-height: 1.55;
 }
 
@@ -550,11 +603,13 @@
 .mac-shell .task-status-main strong {
   color: var(--mac-muted);
   font-size: 11px;
+  font-weight: 500;
 }
 
 .mac-shell .task-status-main > span {
   color: var(--mac-muted);
   font-size: 10.5px;
+  font-weight: 400;
 }
 
 .mac-shell .task-status-actions {
@@ -581,16 +636,20 @@
   width: min(900px, calc(100% - 64px));
   max-height: 220px;
   margin: 0 auto 14px;
-  padding: 8px 10px 7px;
+  padding: 10px 12px 8px;
   border: 1px solid var(--mac-line) !important;
-  border-radius: 12px !important;
+  border-radius: 16px !important;
   background: var(--mac-surface) !important;
-  box-shadow: 0 8px 24px rgba(15, 18, 24, 0.12) !important;
+  box-shadow:
+    0 10px 28px rgba(15, 18, 24, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
 }
 
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
   background: var(--mac-surface) !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3) !important;
+  box-shadow:
+    0 14px 38px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
 }
 
 .mac-shell .conversation .composer.compact:focus-within,
@@ -621,14 +680,15 @@
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact .input-row textarea {
   grid-column: 1;
   width: 100%;
-  min-height: 34px !important;
+  min-height: 38px !important;
   max-height: min(24vh, 140px);
-  padding: 1px 4px 4px;
+  padding: 1px 4px 5px;
   border: 0;
   color: var(--mac-text) !important;
   background: transparent !important;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 .mac-shell .composer.compact .input-row textarea::placeholder {
@@ -804,7 +864,7 @@ body.mac-terminal-resizing {
   flex: 0 0 auto;
   color: var(--mac-text);
   font-size: 11px;
-  font-weight: 680;
+  font-weight: 600;
 }
 
 .mac-shell .mac-ssh-title > span {
@@ -955,7 +1015,9 @@ body.mac-terminal-resizing {
   color: var(--mac-muted);
   background: transparent;
   font-size: var(--aiwb-font-caption);
+  font-weight: 500;
   line-height: 20px;
+  font-variant-numeric: tabular-nums;
 }
 
 .mac-shell .conversation .message-header :is(.streaming, .task-timer) {
@@ -982,6 +1044,7 @@ body.mac-terminal-resizing {
 
 .mac-shell .conversation .user-prompt :is(.user-message-time, .copy-message.copy-user-message, .edit-user-message) {
   height: 22px;
+  font-weight: 500;
   line-height: 22px;
 }
 
@@ -1053,6 +1116,19 @@ body.mac-terminal-resizing {
   transform: none;
 }
 
+.mac-shell .conversation .file-reference strong {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
+.mac-shell .conversation .file-reference small {
+  color: var(--mac-muted);
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 14px;
+}
+
 .mac-shell .conversation .file-reference-actions {
   gap: 2px;
 }
@@ -1067,7 +1143,8 @@ body.mac-terminal-resizing {
   border-radius: var(--aiwb-radius-xs);
   color: var(--mac-muted);
   background: transparent !important;
-  font-size: var(--aiwb-font-caption);
+  font-size: 11px;
+  font-weight: 500;
   box-shadow: none;
 }
 
