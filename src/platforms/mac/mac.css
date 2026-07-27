@@ -4,18 +4,18 @@
  */
 
 .mac-shell {
-  --mac-sidebar-width: clamp(252px, 20vw, 280px);
-  --mac-canvas: #f7f8fa;
-  --mac-sidebar: #eef0f3;
+  --mac-sidebar-width: clamp(232px, 18vw, 260px);
+  --mac-canvas: #f6f7f9;
+  --mac-sidebar: #e9ebef;
   --mac-surface: #ffffff;
-  --mac-surface-raised: #f0f1f4;
-  --mac-surface-selected: #e4e6ea;
-  --mac-line: rgba(60, 60, 67, 0.13);
-  --mac-line-soft: rgba(60, 60, 67, 0.08);
-  --mac-text: #1f2329;
-  --mac-muted: #747b86;
-  --mac-subtle: #9aa0aa;
-  --mac-message-width: 880px;
+  --mac-surface-raised: #eff1f4;
+  --mac-surface-selected: #dfe3e8;
+  --mac-line: rgba(42, 47, 55, 0.14);
+  --mac-line-soft: rgba(42, 47, 55, 0.09);
+  --mac-text: #20242a;
+  --mac-muted: #6f7680;
+  --mac-subtle: #969da7;
+  --mac-message-width: 900px;
   --mac-control-size: var(--aiwb-control-md);
   --mac-control-radius: var(--aiwb-radius-sm);
   --mac-row-radius: var(--aiwb-radius-sm);
@@ -27,15 +27,15 @@
 
 .app-shell[data-theme="dark"].mac-shell {
   --mac-canvas: #0d0f12;
-  --mac-sidebar: #13161b;
+  --mac-sidebar: #171a1f;
   --mac-surface: #181b20;
   --mac-surface-raised: #20242a;
-  --mac-surface-selected: #292e36;
-  --mac-line: rgba(255, 255, 255, 0.1);
-  --mac-line-soft: rgba(255, 255, 255, 0.065);
-  --mac-text: #f2f4f7;
-  --mac-muted: #98a0ab;
-  --mac-subtle: #707984;
+  --mac-surface-selected: #2a2f37;
+  --mac-line: rgba(255, 255, 255, 0.12);
+  --mac-line-soft: rgba(255, 255, 255, 0.075);
+  --mac-text: #f4f5f7;
+  --mac-muted: #a0a6b0;
+  --mac-subtle: #777f8a;
   background: var(--mac-canvas) !important;
 }
 
@@ -45,8 +45,8 @@
   min-height: 46px;
   grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr) 54px;
   padding: 0 10px 0 0;
-  border-bottom: 1px solid var(--mac-line-soft);
-  background: color-mix(in srgb, var(--mac-canvas) 96%, transparent) !important;
+  border-bottom: 1px solid var(--mac-line);
+  background: var(--mac-canvas) !important;
   box-shadow: none !important;
 }
 
@@ -165,8 +165,8 @@
 .app-shell[data-theme="dark"].mac-shell .desktop-sidebar {
   display: flex;
   min-height: 0;
-  padding: 10px 8px 8px;
-  border-right: 1px solid var(--mac-line-soft);
+  padding: 12px 10px 10px;
+  border-right: 1px solid var(--mac-line);
   background: var(--mac-sidebar) !important;
   overflow: hidden;
 }
@@ -174,14 +174,14 @@
 .mac-shell .sidebar-toolbar {
   flex: 0 0 auto;
   min-height: 26px;
-  margin: 0 4px 5px;
+  margin: 0 3px 9px;
 }
 
 .mac-shell .sidebar-toolbar .section-header,
 .app-shell[data-theme="dark"].mac-shell .sidebar-toolbar .section-header {
   color: var(--mac-muted);
-  font-size: 10.5px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 680;
 }
 
 .mac-shell .sidebar-add,
@@ -209,16 +209,16 @@
   align-content: start;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 1px;
+  gap: 3px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 .mac-shell .mac-session-row {
   grid-template-columns: 17px 24px minmax(0, 1fr) 40px;
-  min-height: 48px;
+  min-height: 52px;
   gap: 6px;
-  padding: 4px 6px;
+  padding: 6px 7px;
   border: 0 !important;
   border-radius: var(--mac-row-radius);
   color: var(--mac-text);
@@ -228,16 +228,14 @@
 
 .mac-shell .mac-session-row:hover,
 .app-shell[data-theme="dark"].mac-shell .mac-session-row:hover {
-  background: color-mix(in srgb, var(--mac-surface-selected) 46%, transparent);
+  background: color-mix(in srgb, var(--mac-surface-selected) 62%, transparent);
 }
 
 .mac-shell .mac-session-row.active,
 .app-shell[data-theme="dark"].mac-shell .mac-session-row.active {
   outline: 0;
-  background: color-mix(in srgb, var(--mac-surface-selected) 82%, transparent);
-  box-shadow:
-    inset 2px 0 0 color-mix(in srgb, var(--mac-text) 48%, transparent),
-    inset 0 0 0 1px var(--mac-line-soft);
+  background: var(--mac-surface-selected);
+  box-shadow: inset 0 0 0 1px var(--mac-line);
 }
 
 .mac-shell .mac-session-row.active::before {
@@ -418,8 +416,8 @@
 .mac-shell .conversation-scroll,
 .app-shell[data-theme="dark"].mac-shell .conversation-scroll {
   align-items: center;
-  gap: 28px;
-  padding: 30px clamp(30px, 6vw, 96px) 158px;
+  gap: 26px;
+  padding: 34px clamp(30px, 6vw, 96px) 142px;
   background: transparent;
 }
 
@@ -441,14 +439,14 @@
 }
 
 .mac-shell .conversation .message-header {
-  min-height: 28px;
+  min-height: 30px;
   gap: 8px;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
 }
 
 .mac-shell .conversation .message-header strong {
   color: var(--mac-text);
-  font-size: 15px;
+  font-size: 15.5px;
   font-weight: 660;
 }
 
@@ -456,10 +454,12 @@
 .mac-shell .conversation .rich-message,
 .app-shell[data-theme="dark"].mac-shell .conversation .assistant-copy,
 .app-shell[data-theme="dark"].mac-shell .conversation .rich-message {
+  width: 100%;
+  max-width: none;
   color: var(--mac-text);
-  font-size: 16px;
+  font-size: 15.5px;
   font-weight: 450;
-  line-height: 1.72;
+  line-height: 1.74;
 }
 
 .mac-shell .conversation .rich-message h1,
@@ -472,8 +472,8 @@
 
 .mac-shell .conversation .user-prompt .user-message-card {
   max-width: min(560px, 68%);
-  padding: 11px 15px;
-  border: 1px solid var(--mac-line-soft);
+  padding: 10px 14px;
+  border: 1px solid var(--mac-line);
   border-radius: var(--mac-surface-radius) var(--mac-surface-radius) var(--aiwb-radius-xs) var(--mac-surface-radius);
   color: var(--mac-text);
   background: var(--mac-surface-raised);
@@ -568,19 +568,19 @@
 
 .mac-shell .conversation .composer.compact,
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
-  width: min(860px, calc(100% - 64px));
-  max-height: 236px;
-  margin: 0 auto 16px;
+  width: min(900px, calc(100% - 64px));
+  max-height: 220px;
+  margin: 0 auto 14px;
   padding: 8px 10px 7px;
   border: 1px solid var(--mac-line) !important;
-  border-radius: var(--mac-surface-radius) !important;
+  border-radius: 12px !important;
   background: var(--mac-surface) !important;
-  box-shadow: 0 8px 22px rgba(15, 18, 24, 0.1) !important;
+  box-shadow: 0 8px 24px rgba(15, 18, 24, 0.12) !important;
 }
 
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
   background: var(--mac-surface) !important;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3) !important;
 }
 
 .mac-shell .conversation .composer.compact:focus-within,
@@ -631,7 +631,7 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 30px !important;
+  min-height: 28px !important;
   gap: 6px;
   padding: 0;
 }
@@ -976,22 +976,36 @@ body.mac-terminal-resizing {
 }
 
 .mac-shell .conversation .file-reference-list {
-  gap: var(--aiwb-space-2);
-  margin-top: var(--aiwb-space-3);
+  display: grid;
+  width: 100%;
+  max-width: none !important;
+  gap: 0;
+  margin-top: var(--aiwb-space-4);
+  border: 1px solid var(--mac-line);
+  border-radius: var(--mac-surface-radius);
+  background: color-mix(in srgb, var(--mac-surface) 88%, transparent);
+  overflow: hidden;
 }
 
 .mac-shell .conversation .file-reference {
+  width: 100%;
+  max-width: none !important;
   min-height: 54px;
   padding: 8px 10px;
-  border: 1px solid var(--mac-line-soft);
-  border-radius: var(--mac-surface-radius);
-  background: color-mix(in srgb, var(--mac-surface) 84%, transparent) !important;
+  border: 0;
+  border-bottom: 1px solid var(--mac-line-soft);
+  border-radius: 0;
+  background: transparent !important;
   box-shadow: none;
 }
 
+.mac-shell .conversation .file-reference:last-child {
+  border-bottom: 0;
+}
+
 .mac-shell .conversation .file-reference:hover {
-  border-color: var(--mac-line);
-  background: var(--mac-surface);
+  border-color: var(--mac-line-soft);
+  background: var(--mac-surface-selected) !important;
   transform: none;
 }
 
@@ -1040,8 +1054,8 @@ body.mac-terminal-resizing {
 
 @media (max-width: 980px) {
   .mac-shell {
-    --mac-sidebar-width: 232px;
-    --mac-message-width: 740px;
+    --mac-sidebar-width: 220px;
+    --mac-message-width: 760px;
   }
 
   .mac-shell .topbar-session-detail {
