@@ -2526,6 +2526,13 @@ export function useWorkbenchController() {
     );
   }
 
+  function showCloudSyncedSessionList(nextServers = []) {
+    if (!Array.isArray(nextServers) || !nextServers.length) return;
+    setSettingsInitialPage("root");
+    setSettingsOpen(false);
+    setMobileNavOpen(true);
+  }
+
   async function pullCloudWorkspaceConfig({ endpoint = cloudSyncDefaultEndpoint, account, password } = {}) {
     setBusy(true);
     try {
@@ -2559,6 +2566,7 @@ export function useWorkbenchController() {
           profileRef.current = nextActive.profile;
           setActiveAgentId(normalizeProfile(nextActive.profile).agentId);
           await saveWorkspace(shared.servers, nextActive.id);
+          showCloudSyncedSessionList(shared.servers);
           return {
             added: shared.addedServers.length,
             skipped: shared.skippedShares.length,
@@ -2611,6 +2619,7 @@ export function useWorkbenchController() {
       profileRef.current = nextActive?.profile || defaultProfile;
       setActiveAgentId(normalizeProfile(nextActive?.profile || defaultProfile).agentId);
       await saveWorkspace(mergedShared.servers, nextActive?.id || "");
+      showCloudSyncedSessionList(mergedShared.servers);
 
       return {
         added: addedCount,
