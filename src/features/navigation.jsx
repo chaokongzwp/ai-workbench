@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowClockwise,
-  ArrowSquareOut,
   CopySimple,
   DotsThree,
   Plus,
   SidebarSimple,
-  TerminalWindow,
 } from "@phosphor-icons/react";
+import {
+  Ellipsis,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus as LucidePlus,
+  RefreshCw,
+  SquareArrowOutUpRight,
+  SquareTerminal,
+} from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -333,7 +339,7 @@ export function TopBar({
             aria-pressed={terminalOpen}
             onClick={onToggleTerminal}
           >
-            <TerminalWindow size={17} weight="regular" aria-hidden="true" />
+            <SquareTerminal size={17} strokeWidth={1.8} aria-hidden="true" />
           </button>
         ) : null}
         {onRefreshOutput ? (
@@ -345,7 +351,7 @@ export function TopBar({
             onClick={() => onRefreshOutput()}
             disabled={busy}
           >
-            <ArrowClockwise size={17} weight="regular" aria-hidden="true" />
+            <RefreshCw size={16} strokeWidth={1.8} aria-hidden="true" />
           </button>
         ) : null}
         <button
@@ -355,7 +361,7 @@ export function TopBar({
           title="服务器设置"
           onClick={onOpenSettings}
         >
-          <DotsThree className="topbar-more" size={18} weight="regular" aria-hidden="true" />
+          <Ellipsis className="topbar-more" size={18} strokeWidth={1.9} aria-hidden="true" />
         </button>
       </div>
     </header>
@@ -451,7 +457,13 @@ export function NavigationPanel({
             onClick={onAddServer}
             disabled={busy}
           >
-            {macVariant || ipadVariant ? <Plus size={16} weight={macVariant ? "regular" : "bold"} aria-hidden="true" /> : "+"}
+            {macVariant ? (
+              <LucidePlus size={16} strokeWidth={1.9} aria-hidden="true" />
+            ) : ipadVariant ? (
+              <Plus size={16} weight="bold" aria-hidden="true" />
+            ) : (
+              "+"
+            )}
           </button>
         ) : null}
         {onDuplicateServer && !macVariant && !hideDuplicate ? (
@@ -474,11 +486,17 @@ export function NavigationPanel({
             title={collapsed ? "展开侧边栏" : "收起侧边栏"}
             onClick={onToggleCollapse}
           >
-            {macVariant || ipadVariant ? (
+            {macVariant ? (
+              collapsed ? (
+                <PanelLeftOpen size={16} strokeWidth={1.8} aria-hidden="true" />
+              ) : (
+                <PanelLeftClose size={16} strokeWidth={1.8} aria-hidden="true" />
+              )
+            ) : ipadVariant ? (
               <SidebarSimple
                 className={collapsed ? "is-collapsed" : ""}
                 size={16}
-                weight={macVariant ? "regular" : "bold"}
+                weight="bold"
                 aria-hidden="true"
               />
             ) : collapsed ? (
@@ -588,7 +606,7 @@ export function NavigationPanel({
                       onOpenChatWindow(server.id);
                     }}
                   >
-                    <ArrowSquareOut size={15} weight="regular" aria-hidden="true" />
+                    <SquareArrowOutUpRight size={15} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 ) : null}
                 {onConfigureServer ? (
@@ -603,7 +621,7 @@ export function NavigationPanel({
                       onConfigureServer(server.id);
                     }}
                   >
-                    <DotsThree size={16} weight="regular" aria-hidden="true" />
+                    <Ellipsis size={16} strokeWidth={1.9} aria-hidden="true" />
                   </button>
                 ) : null}
                 </span>

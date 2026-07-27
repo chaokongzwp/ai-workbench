@@ -1,7 +1,7 @@
 **Design QA: Mac Icon Language**
 
 - Source visual truth: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/composer-toolbar-preview.png`
-- Rendered implementation: `/var/folders/gx/4y6rm3qs1991_lj8sgm6r5x00000gn/T/com.openai.sky.CUAService/Electron Screenshot 2026-07-27 at 11.14.00 AM.jpeg`
+- Rendered implementation: `/var/folders/gx/4y6rm3qs1991_lj8sgm6r5x00000gn/T/com.openai.sky.CUAService/Electron Screenshot 2026-07-27 at 11.25.13 AM.jpeg`
 - Focused comparison: `/Users/zwp/ai_desktop/ecs-ai-workbench/design/qa/icon-comparison.png`
 - Viewport: 1177 x 768 px Electron window
 - Source pixels: 2240 x 1640 px
@@ -12,12 +12,12 @@
 **Full-View Comparison Evidence**
 
 - The implementation keeps the same quiet dark workbench hierarchy as the source direction: neutral utility actions, one restrained primary action, and semantic color reserved for active or destructive states.
-- Top-bar, sidebar, message, file, and composer actions now use one installed Phosphor icon family. No emoji, text glyph, or hand-drawn Mac-only SVG remains in these visible action surfaces.
+- Top-bar, sidebar, message, file, and composer actions now use the installed Lucide icon family. Agent logos remain product assets; no emoji, text glyph, or hand-drawn Mac-only action SVG remains in these visible surfaces.
 - The source is a component specification board rather than a complete app screen, so its large title, state cards, and blue demonstration controls are not expected in the production window.
 
 **Focused Region Comparison Evidence**
 
-- Composer utility icons are 18 px with rounded bold strokes, matching the source's approximately 1.85 px visual weight.
+- Composer utility icons are 18 px Lucide outlines with 1.9 px rounded strokes, matching the source's approximately 1.85 px visual weight.
 - Utility controls occupy 32 x 32 px hit areas with transparent default surfaces and neutral hover feedback.
 - Copy, refresh, edit, and file actions remain 16 px regular-weight icons so secondary actions do not compete with the composer.
 - The implementation intentionally uses a white-gray send action instead of the source board's blue sample, following the later product direction to reduce blue dominance.
@@ -32,8 +32,13 @@
 
 2. Initial finding: [P2] Mac action surfaces mixed icon families.
    Evidence: file references still used a custom attachment SVG while navigation and composer actions used Phosphor.
-   Fix: Mac file references now use Phosphor `FileText`; navigation, copy, refresh, edit, preview, download, and delete actions use matching Phosphor regular-weight icons.
+   Fix: Mac file references, navigation, copy, refresh, edit, preview, download, and delete actions now use matching Lucide outline icons.
    Post-fix evidence: the implementation screenshot shows a consistent line language across the sidebar, file list, message actions, and composer.
+
+3. Follow-up finding: [P2] The first icon pass did not create a perceptible visual change.
+   Evidence: the original app and first pass both used Phosphor glyphs, so changing only their size and weight looked nearly identical.
+   Fix: replaced the actual Mac action glyphs with Lucide equivalents and added a Mac-only SVG reset so the legacy `fill: currentColor` rule cannot turn Lucide outlines into solid shapes.
+   Post-fix evidence: `design/qa/icon-comparison.png` shows visibly different download, folder, attachment, terminal, sidebar, copy, refresh, edit, and file-action geometry with correct outline rendering.
 
 **Findings**
 

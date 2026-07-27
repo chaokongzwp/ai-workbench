@@ -4,10 +4,18 @@ import {
   Copy as CopyIcon,
   DownloadSimple,
   Eye,
-  FileText,
   PencilSimple,
   Trash,
 } from "@phosphor-icons/react";
+import {
+  Copy as LucideCopy,
+  Download as LucideDownload,
+  Eye as LucideEye,
+  FileText as LucideFileText,
+  Pencil as LucidePencil,
+  RefreshCw as LucideRefreshCw,
+  Trash2 as LucideTrash,
+} from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 import * as FilePreview from "./filePreview.jsx";
@@ -525,11 +533,11 @@ function CopyButton({
       {children || (
         <>
           {icon ? (
-            <CopyIcon
-              size={iconStyle === "mac" ? 16 : 15}
-              weight={iconStyle === "mac" ? "regular" : "light"}
-              aria-hidden="true"
-            />
+            iconStyle === "mac" ? (
+              <LucideCopy size={16} strokeWidth={1.8} aria-hidden="true" />
+            ) : (
+              <CopyIcon size={15} weight="light" aria-hidden="true" />
+            )
           ) : null}
           <span className="copy-message-label">{visibleLabel}</span>
         </>
@@ -757,7 +765,11 @@ export function MessageBubble({
               aria-label="编辑这条消息"
               title="编辑这条消息"
             >
-              <PencilSimple size={iconStyle === "mac" ? 16 : 18} weight="regular" aria-hidden="true" />
+              {iconStyle === "mac" ? (
+                <LucidePencil size={16} strokeWidth={1.8} aria-hidden="true" />
+              ) : (
+                <PencilSimple size={18} weight="regular" aria-hidden="true" />
+              )}
             </button>
           ) : null}
         </div>
@@ -789,7 +801,11 @@ export function MessageBubble({
               aria-label="刷新状态"
               title="刷新状态"
             >
-              <ArrowClockwise size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
+              {iconStyle === "mac" ? (
+                <LucideRefreshCw size={16} strokeWidth={1.8} aria-hidden="true" />
+              ) : (
+                <ArrowClockwise size={15} weight="regular" aria-hidden="true" />
+              )}
             </button>
           ) : null}
           <CopyButton
@@ -913,7 +929,11 @@ export function FileReferenceList({
             <div key={file.path} className={`file-reference ${file.kind} ${deleted ? "deleted" : ""}`}>
               <div className="file-reference-main">
                 <span className="file-reference-icon">
-                  {iconStyle === "mac" ? <FileText size={18} weight="regular" aria-hidden="true" /> : <FileAttachmentIcon />}
+                  {iconStyle === "mac" ? (
+                    <LucideFileText size={18} strokeWidth={1.8} aria-hidden="true" />
+                  ) : (
+                    <FileAttachmentIcon />
+                  )}
                 </span>
                 <span className="file-reference-copy">
                   <strong>{file.name}</strong>
@@ -925,11 +945,19 @@ export function FileReferenceList({
               </div>
               <div className="file-reference-actions">
                 <button type="button" onClick={() => onPreviewFile?.(file)} disabled={deleted || deleting} title="查看文件">
-                  <Eye size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
+                  {iconStyle === "mac" ? (
+                    <LucideEye size={16} strokeWidth={1.8} aria-hidden="true" />
+                  ) : (
+                    <Eye size={15} weight="regular" aria-hidden="true" />
+                  )}
                   <span>查看</span>
                 </button>
                 <button type="button" onClick={() => onDownloadFile?.(file)} disabled={deleted || downloading || deleting} title="下载文件">
-                  <DownloadSimple size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
+                  {iconStyle === "mac" ? (
+                    <LucideDownload size={16} strokeWidth={1.8} aria-hidden="true" />
+                  ) : (
+                    <DownloadSimple size={15} weight="regular" aria-hidden="true" />
+                  )}
                   <span>{downloading ? "下载中" : "下载"}</span>
                 </button>
                 <button
@@ -939,7 +967,11 @@ export function FileReferenceList({
                   disabled={deleted || deleting || downloading}
                   title={deleted ? "文件已删除" : confirmingDelete ? "再次点击确认删除" : "删除远程文件"}
                 >
-                  <Trash size={iconStyle === "mac" ? 16 : 15} weight="regular" aria-hidden="true" />
+                  {iconStyle === "mac" ? (
+                    <LucideTrash size={16} strokeWidth={1.8} aria-hidden="true" />
+                  ) : (
+                    <Trash size={15} weight="regular" aria-hidden="true" />
+                  )}
                   <span>{deleted ? "已删除" : deleting ? "删除中" : confirmingDelete ? "确认删除" : "删除"}</span>
                 </button>
               </div>

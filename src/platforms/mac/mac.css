@@ -673,6 +673,19 @@
   box-shadow: none !important;
 }
 
+.mac-shell .composer.compact .input-actions .composer-icon-button .lucide,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .composer-icon-button .lucide {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mac-shell .composer.compact .input-actions .wake-button.listening .lucide-zap,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .wake-button.listening .lucide-zap {
+  fill: currentColor;
+}
+
 .mac-shell .composer.compact .input-actions .composer-icon-button:hover:not(:disabled),
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .composer-icon-button:hover:not(:disabled) {
   color: var(--mac-text) !important;

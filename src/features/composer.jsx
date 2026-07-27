@@ -4,13 +4,21 @@ import {
   DownloadSimple,
   File as FileIcon,
   FolderOpen,
-  FolderSimple,
   Lightning,
   Microphone,
   Paperclip,
   Stop,
   X,
 } from "@phosphor-icons/react";
+import {
+  ArrowUp as LucideArrowUp,
+  Download as LucideDownload,
+  Folder as LucideFolder,
+  Mic as LucideMic,
+  Paperclip as LucidePaperclip,
+  Square as LucideSquare,
+  Zap as LucideZap,
+} from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 
@@ -515,7 +523,11 @@ export function Composer({
                   aria-label="下载远程文件"
                   title="下载远程文件"
                 >
-                  <DownloadSimple size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                  {macIcons ? (
+                    <LucideDownload size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
+                  ) : (
+                    <DownloadSimple size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -526,7 +538,7 @@ export function Composer({
                   title="查看远程文件夹"
                 >
                   {macIcons ? (
-                    <FolderSimple size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                    <LucideFolder size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
                   ) : (
                     <FolderOpen size={toolIconSize} weight="regular" aria-hidden="true" />
                   )}
@@ -539,7 +551,11 @@ export function Composer({
                   aria-label="添加文件"
                   title="添加文件"
                 >
-                  <Paperclip size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                  {macIcons ? (
+                    <LucidePaperclip size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
+                  ) : (
+                    <Paperclip size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                  )}
                 </button>
                 {voiceInputEnabled ? (
                   <>
@@ -553,7 +569,11 @@ export function Composer({
                       aria-label={voiceActive ? "停止语音输入" : "语音输入"}
                       title={voiceLabel}
                     >
-                      <Microphone size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                      {macIcons ? (
+                        <LucideMic size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
+                      ) : (
+                        <Microphone size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                      )}
                     </button>
                     <button
                       type="button"
@@ -565,11 +585,20 @@ export function Composer({
                       aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}
                       title={wakeLabel}
                     >
-                      <Lightning
-                        size={toolIconSize}
-                        weight={wakeActive ? "fill" : toolIconWeight}
-                        aria-hidden="true"
-                      />
+                      {macIcons ? (
+                        <LucideZap
+                          size={toolIconSize}
+                          strokeWidth={1.9}
+                          fill={wakeActive ? "currentColor" : "none"}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Lightning
+                          size={toolIconSize}
+                          weight={wakeActive ? "fill" : toolIconWeight}
+                          aria-hidden="true"
+                        />
+                      )}
                     </button>
                   </>
                 ) : null}
@@ -585,7 +614,13 @@ export function Composer({
                   title={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
                 >
                   {stopMode ? (
-                    <Stop size={macIcons ? 16 : 18} weight="fill" aria-hidden="true" />
+                    macIcons ? (
+                      <LucideSquare size={13} strokeWidth={2.4} aria-hidden="true" />
+                    ) : (
+                      <Stop size={18} weight="fill" aria-hidden="true" />
+                    )
+                  ) : macIcons ? (
+                    <LucideArrowUp size={toolIconSize} strokeWidth={2.1} aria-hidden="true" />
                   ) : (
                     <ArrowUp size={toolIconSize} weight="bold" aria-hidden="true" />
                   )}
