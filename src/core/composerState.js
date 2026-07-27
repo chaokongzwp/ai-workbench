@@ -36,19 +36,19 @@ export function composerLockPresentation({
 
   if (pendingAction) {
     return {
-      locked: true,
+      locked: false,
       sendBlocked: true,
       code: "action-required",
-      text: "请先完成上方的登录或选择",
+      text: "请先完成上方的登录或选择，输入内容会保留",
     };
   }
 
   if (!profileReady) {
     return {
-      locked: true,
+      locked: false,
       sendBlocked: true,
       code: "setup-required",
-      text: "请先完成会话设置",
+      text: "请先完成会话设置，输入内容会保留",
     };
   }
 

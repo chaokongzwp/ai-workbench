@@ -15,12 +15,12 @@ assert.equal(operation.sendBlocked, true);
 assert.equal(operation.code, "operation");
 
 const setup = composerLockPresentation({ busy: true, profileReady: false });
-assert.equal(setup.locked, true);
+assert.equal(setup.locked, false);
 assert.equal(setup.sendBlocked, true);
 assert.equal(setup.code, "setup-required");
 
 const pendingAction = composerLockPresentation({ pendingAction: true });
-assert.equal(pendingAction.locked, true);
+assert.equal(pendingAction.locked, false);
 assert.equal(pendingAction.sendBlocked, true);
 assert.equal(pendingAction.code, "action-required");
 
