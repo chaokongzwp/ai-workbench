@@ -17,6 +17,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
+import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
@@ -37,6 +38,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
@@ -44,8 +46,10 @@ import java.util.Locale;
 import java.util.Properties;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -55,6 +59,17 @@ public class SSHWorkbenchPlugin extends Plugin {
     private static final String PROFILE_KEY = "profile";
     private static final int MAX_RESPONSE_LIMIT = 83_886_080;
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ConcurrentHashMap<String, TerminalSession> terminalSessions = new ConcurrentHashMap<>();
+
+    @Override
+    protected void handleOnDestroy() {
+        for (TerminalSession terminal : terminalSessions.values()) {
+            terminal.close();
+        }
+        terminalSessions.clear();
+        executor.shutdownNow();
+        super.handleOnDestroy();
+    }
 
     @PluginMethod
     public void runCommand(PluginCall call) {
@@ -110,7 +125,189 @@ public class SSHWorkbenchPlugin extends Plugin {
 
     @PluginMethod
     public void openTerminal(PluginCall call) {
-        call.reject("Android 端暂不支持打开系统 SSH 终端，请直接在聊天窗口或设置页执行。", "TERMINAL_UNSUPPORTED");
+        call.reject("请从当前会话右上角打开 SSH 终端。", "TERMINAL_USE_EMBEDDED");
+    }
+
+    @PluginMethod
+    public void startTerminal(PluginCall call) {
+        final TerminalConfig config;
+        try {
+            config = TerminalConfig.from(call);
+        } catch (Exception error) {
+            call.reject(safeError(error), "SSH_TERMINAL_INVALID", error);
+            return;
+        }
+
+        closeTerminalSession(config.terminalId, false);
+        emitTerminalState(config.terminalId, "connecting", "");
+        appendDiagnosticLog("info", "ssh.android.terminal.start", objectOf(
+            "terminalId", config.terminalId,
+            "host", config.host,
+            "port", config.port,
+            "username", config.username,
+            "platform", config.platform
+        ));
+
+        executor.execute(() -> {
+            Session session = null;
+            ChannelShell channel = null;
+            TerminalSession terminal = null;
+            boolean didResolve = false;
+
+            try {
+                JSch jsch = new JSch();
+                session = jsch.getSession(config.username, config.host, config.port);
+                session.setPassword(config.password);
+                Properties props = new Properties();
+                props.put("StrictHostKeyChecking", "no");
+                props.put("PreferredAuthentications", "password,keyboard-interactive");
+                session.setConfig(props);
+                session.setServerAliveInterval(15_000);
+                session.setServerAliveCountMax(3);
+                session.connect(config.connectTimeoutSeconds * 1000);
+
+                channel = (ChannelShell) session.openChannel("shell");
+                channel.setPty(true);
+                channel.setPtyType("xterm-256color", config.cols, config.rows, 0, 0);
+                channel.setEnv("TERM", "xterm-256color");
+                InputStream input = channel.getInputStream();
+                OutputStream output = channel.getOutputStream();
+                channel.connect(config.connectTimeoutSeconds * 1000);
+
+                terminal = new TerminalSession(
+                    config.terminalId,
+                    session,
+                    channel,
+                    input,
+                    output
+                );
+                TerminalSession previous = terminalSessions.put(config.terminalId, terminal);
+                if (previous != null && previous != terminal) previous.close();
+
+                JSObject result = new JSObject();
+                result.put("ok", true);
+                result.put("terminalId", config.terminalId);
+                didResolve = true;
+                call.resolve(result);
+                emitTerminalState(config.terminalId, "connected", "");
+                appendDiagnosticLog("info", "ssh.android.terminal.connected", objectOf(
+                    "terminalId", config.terminalId,
+                    "host", config.host,
+                    "port", config.port
+                ));
+
+                if (!config.workdir.isEmpty()) {
+                    String command = config.platform.contains("windows") && !config.platform.contains("wsl")
+                        ? "Set-Location -LiteralPath " + powershellLiteral(config.workdir) + "\r"
+                        : "cd -- " + shellLiteral(config.workdir) + "\r";
+                    terminal.write(command.getBytes(StandardCharsets.UTF_8));
+                }
+
+                byte[] buffer = new byte[8192];
+                while (!terminal.isClosed()) {
+                    int count = input.read(buffer);
+                    if (count < 0) break;
+                    if (count > 0) emitTerminalData(config.terminalId, buffer, count);
+                }
+
+                if (terminalSessions.remove(config.terminalId, terminal)) {
+                    emitTerminalState(config.terminalId, "closed", "远端 SSH 已断开");
+                    appendDiagnosticLog("warn", "ssh.android.terminal.remote_closed", objectOf(
+                        "terminalId", config.terminalId,
+                        "host", config.host
+                    ));
+                }
+            } catch (Exception error) {
+                boolean wasActive = terminal != null && terminalSessions.remove(config.terminalId, terminal);
+                String message = friendlyTerminalError(error);
+                if (!didResolve) {
+                    call.reject(message, "SSH_TERMINAL_FAILED", error);
+                }
+                if (!didResolve || wasActive) {
+                    emitTerminalState(config.terminalId, "error", message);
+                }
+                appendDiagnosticLog("error", "ssh.android.terminal.failed", objectOf(
+                    "terminalId", config.terminalId,
+                    "host", config.host,
+                    "port", config.port,
+                    "error", message
+                ));
+            } finally {
+                if (terminal != null) {
+                    terminal.close();
+                } else {
+                    if (channel != null && channel.isConnected()) channel.disconnect();
+                    if (session != null && session.isConnected()) session.disconnect();
+                }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void writeTerminal(PluginCall call) {
+        String terminalId = stringValue(call.getString("terminalId")).trim();
+        String text = stringValue(call.getString("data"));
+        String base64 = stringValue(call.getString("base64"));
+        if (terminalId.isEmpty()) {
+            call.reject("SSH 终端输入无效。", "SSH_TERMINAL_WRITE_INVALID");
+            return;
+        }
+
+        final byte[] data;
+        try {
+            data = !base64.isEmpty()
+                ? Base64.decode(base64, Base64.DEFAULT)
+                : text.getBytes(StandardCharsets.UTF_8);
+        } catch (Exception error) {
+            call.reject("SSH 终端输入无效。", "SSH_TERMINAL_WRITE_INVALID", error);
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                TerminalSession terminal = requireTerminalSession(terminalId);
+                terminal.write(data);
+                JSObject result = new JSObject();
+                result.put("ok", true);
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject(friendlyTerminalError(error), "SSH_TERMINAL_WRITE_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void resizeTerminal(PluginCall call) {
+        String terminalId = stringValue(call.getString("terminalId")).trim();
+        int cols = clamp(intValue(call.getInt("cols"), 80), 20, 500);
+        int rows = clamp(intValue(call.getInt("rows"), 24), 6, 300);
+        if (terminalId.isEmpty()) {
+            call.reject("SSH 终端会话不存在。", "SSH_TERMINAL_RESIZE_INVALID");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                TerminalSession terminal = requireTerminalSession(terminalId);
+                terminal.resize(cols, rows);
+                JSObject result = new JSObject();
+                result.put("ok", true);
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject(friendlyTerminalError(error), "SSH_TERMINAL_RESIZE_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void closeTerminal(PluginCall call) {
+        String terminalId = stringValue(call.getString("terminalId")).trim();
+        if (!terminalId.isEmpty()) {
+            closeTerminalSession(terminalId, true);
+        }
+        JSObject result = new JSObject();
+        result.put("ok", true);
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -533,6 +730,67 @@ public class SSHWorkbenchPlugin extends Plugin {
         });
     }
 
+    private TerminalSession requireTerminalSession(String terminalId) throws IOException {
+        TerminalSession terminal = terminalSessions.get(terminalId);
+        if (terminal == null || terminal.isClosed()) {
+            throw new IOException("Connection closed");
+        }
+        return terminal;
+    }
+
+    private void closeTerminalSession(String terminalId, boolean emitState) {
+        TerminalSession terminal = terminalSessions.remove(terminalId);
+        if (terminal != null) terminal.close();
+        if (emitState) emitTerminalState(terminalId, "closed", "SSH 连接已关闭");
+    }
+
+    private void emitTerminalData(String terminalId, byte[] buffer, int length) {
+        JSObject payload = new JSObject();
+        payload.put("terminalId", terminalId);
+        payload.put(
+            "base64",
+            Base64.encodeToString(Arrays.copyOf(buffer, length), Base64.NO_WRAP)
+        );
+        notifyTerminalListeners("terminalData", payload);
+    }
+
+    private void emitTerminalState(String terminalId, String state, String detail) {
+        JSObject payload = new JSObject();
+        payload.put("terminalId", terminalId);
+        payload.put("state", state);
+        payload.put("detail", detail);
+        notifyTerminalListeners("terminalState", payload);
+    }
+
+    private void notifyTerminalListeners(String event, JSObject payload) {
+        if (getActivity() != null) {
+            getActivity().runOnUiThread(() -> notifyListeners(event, payload));
+            return;
+        }
+        notifyListeners(event, payload);
+    }
+
+    private static String friendlyTerminalError(Exception error) {
+        String message = safeError(error);
+        String lower = message.toLowerCase(Locale.ROOT);
+        if (lower.contains("auth fail") || lower.contains("authentication") || lower.contains("permission denied")) {
+            return "Authentication failed：请检查用户名和登录密码。";
+        }
+        if (lower.contains("timed out") || lower.contains("timeout")) {
+            return "Timed out while waiting for handshake";
+        }
+        if (lower.contains("refused")) {
+            return "Connection refused";
+        }
+        if (lower.contains("unknownhost") || lower.contains("unknown host")) {
+            return "getaddrinfo ENOTFOUND";
+        }
+        if (lower.contains("socket closed") || lower.contains("channel closed") || lower.contains("eof")) {
+            return "Connection closed";
+        }
+        return message;
+    }
+
     private File ensureDiagnosticsDir() {
         File directory = new File(getContext().getFilesDir(), "AIWorkbenchDiagnostics");
         if (!directory.exists()) directory.mkdirs();
@@ -658,6 +916,10 @@ public class SSHWorkbenchPlugin extends Plugin {
 
     private static String powershellLiteral(String value) {
         return "'" + stringValue(value).replace("'", "''") + "'";
+    }
+
+    private static String shellLiteral(String value) {
+        return "'" + stringValue(value).replace("'", "'\"'\"'") + "'";
     }
 
     private static byte[] withUtf8Bom(String value) throws IOException {
@@ -799,6 +1061,134 @@ public class SSHWorkbenchPlugin extends Plugin {
                 clamp(intValue(call.getInt("commandTimeoutSeconds"), 180), 5, 7200),
                 clamp(intValue(call.getInt("maxResponseSize"), 1_048_576), 1024, MAX_RESPONSE_LIMIT)
             );
+        }
+    }
+
+    private static class TerminalConfig {
+        final String terminalId;
+        final String host;
+        final String username;
+        final String password;
+        final String platform;
+        final String workdir;
+        final int port;
+        final int connectTimeoutSeconds;
+        final int cols;
+        final int rows;
+
+        private TerminalConfig(
+            String terminalId,
+            String host,
+            String username,
+            String password,
+            String platform,
+            String workdir,
+            int port,
+            int connectTimeoutSeconds,
+            int cols,
+            int rows
+        ) {
+            this.terminalId = terminalId;
+            this.host = host;
+            this.username = username;
+            this.password = password;
+            this.platform = platform;
+            this.workdir = workdir;
+            this.port = port;
+            this.connectTimeoutSeconds = connectTimeoutSeconds;
+            this.cols = cols;
+            this.rows = rows;
+        }
+
+        static TerminalConfig from(PluginCall call) {
+            String terminalId = stringValue(call.getString("terminalId")).trim();
+            String host = stringValue(call.getString("host")).trim();
+            String username = stringValue(call.getString("username")).trim();
+            String password = stringValue(call.getString("password"));
+
+            if (terminalId.isEmpty()) throw new IllegalArgumentException("Missing required field: terminalId");
+            if (host.isEmpty()) throw new IllegalArgumentException("Missing required field: host");
+            if (username.isEmpty()) throw new IllegalArgumentException("Missing required field: username");
+            if (password.isEmpty()) throw new IllegalArgumentException("Missing required field: password");
+
+            return new TerminalConfig(
+                terminalId,
+                host,
+                username,
+                password,
+                stringValue(call.getString("platform", "linux")).trim().toLowerCase(Locale.ROOT),
+                stringValue(call.getString("workdir")).trim(),
+                clamp(intValue(call.getInt("port"), 22), 1, 65_535),
+                clamp(intValue(call.getInt("connectTimeoutSeconds"), 15), 3, 60),
+                clamp(intValue(call.getInt("cols"), 80), 20, 500),
+                clamp(intValue(call.getInt("rows"), 24), 6, 300)
+            );
+        }
+    }
+
+    private static class TerminalSession {
+        final String terminalId;
+        final Session session;
+        final ChannelShell channel;
+        final InputStream input;
+        final OutputStream output;
+        final Object writeLock = new Object();
+        final AtomicBoolean closed = new AtomicBoolean(false);
+
+        TerminalSession(
+            String terminalId,
+            Session session,
+            ChannelShell channel,
+            InputStream input,
+            OutputStream output
+        ) {
+            this.terminalId = terminalId;
+            this.session = session;
+            this.channel = channel;
+            this.input = input;
+            this.output = output;
+        }
+
+        boolean isClosed() {
+            return closed.get() || !channel.isConnected() || channel.isClosed();
+        }
+
+        void write(byte[] data) throws IOException {
+            if (isClosed()) throw new IOException("Connection closed");
+            synchronized (writeLock) {
+                if (isClosed()) throw new IOException("Connection closed");
+                output.write(data);
+                output.flush();
+            }
+        }
+
+        void resize(int cols, int rows) throws IOException {
+            if (isClosed()) throw new IOException("Connection closed");
+            channel.setPtySize(cols, rows, 0, 0);
+        }
+
+        void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            try {
+                channel.disconnect();
+            } catch (Exception ignored) {
+                // Best effort close.
+            }
+            try {
+                session.disconnect();
+            } catch (Exception ignored) {
+                // Best effort close.
+            }
+            try {
+                input.close();
+            } catch (Exception ignored) {
+                // Best effort close.
+            }
+            try {
+                output.close();
+            } catch (Exception ignored) {
+                // Best effort close.
+            }
         }
     }
 

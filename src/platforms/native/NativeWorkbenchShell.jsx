@@ -6,6 +6,7 @@ import { NativeSshTerminal } from "./NativeSshTerminal.jsx";
 export function NativeWorkbenchShell({
   components,
   nativeFormFactor = "phone",
+  embeddedTerminalEnabled = false,
   resolvedTheme,
   appearanceMode,
   platform,
@@ -151,6 +152,7 @@ export function NativeWorkbenchShell({
   const editingServer = servers.find((server) => server.id === editingServerId) || servers.find((server) => server.id === activeServerId);
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const isIpad = nativeFormFactor === "ipad";
+  const terminalEnabled = isIpad || embeddedTerminalEnabled;
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const hasWorkSession = servers.length > 0;
@@ -285,7 +287,7 @@ export function NativeWorkbenchShell({
             </span>
           </button>
           <div className="native-nav-actions">
-            {isIpad && hasWorkSession ? (
+            {terminalEnabled && hasWorkSession ? (
               <button
                 type="button"
                 className="native-nav-button native-terminal-button utility-icon-button"
@@ -310,11 +312,11 @@ export function NativeWorkbenchShell({
         </header>
 
         <NativeSshTerminal
-          open={terminalOpen && isIpad && hasWorkSession}
+          open={terminalOpen && terminalEnabled && hasWorkSession}
           profile={terminalProfile || profile}
           sessionKey={activeServerId}
           theme={resolvedTheme}
-          formFactor="ipad"
+          formFactor={nativeFormFactor}
           onClose={() => setTerminalOpen(false)}
         />
 
