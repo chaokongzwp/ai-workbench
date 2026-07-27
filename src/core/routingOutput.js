@@ -291,7 +291,7 @@ export function serverSidebarMeta(server, index, connected = false) {
   if (task.state === "done" && task.finishedAt && Date.now() - Number(task.finishedAt) < 5 * 60 * 1000) {
     return "刚完成";
   }
-  if (connection.state === "error") return compactInlineText(connection.detail || "连接失败", 32);
+  if (connection.state === "error") return compactInlineText(connection.detail || "连接异常", 32);
 
   const latest = latestServerMessageSummary(server);
   if (latest) return latest;

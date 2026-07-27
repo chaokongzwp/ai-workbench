@@ -156,6 +156,7 @@ const {
   isPendingAgentResponse,
   isSensitiveDiagnosticKey,
   isSpeechStopPhrase,
+  isRetryableSshConnectionError,
   isTransientSshSyncError,
   isUrlLikeFileCandidate,
   isWindowsProfile,
@@ -189,6 +190,7 @@ const {
   maxPersistedMessagesPerServer,
   maxPersistedTextLength,
   maxPreviewFileBytes,
+  maxSshReconnectAttempts,
   mergeAgentConversationsIntoDiscovery,
   mergeCloudSharedSessions,
   mergeCloudDownloadedServers,
@@ -255,6 +257,7 @@ const {
   remoteFilePayloadOverhead,
   remoteFileResponseSizeForBytes,
   resultAudioModeOptions,
+  runWithSshReconnect,
   sameWorkdir,
   sanitizeDiagnosticValue,
   sanitizeId,
@@ -1103,8 +1106,10 @@ export function useWorkbenchController() {
   function connectionStateForRemoteError(message, agent, mode = "ssh") {
     const detail = shortError(message);
     const isConnectionFailure =
-      /SSH 登录失败|连接被拒绝|找不到这台机器|Authentication failed|ECONNREFUSED|ENOTFOUND|getaddrinfo|Connection refused/i.test(detail);
-    if (isConnectionFailure) return { state: "error", label: "连接失败", detail, mode };
+      message?.code === "AIWB_SSH_CONNECTION_FAILED" ||
+      isRetryableSshConnectionError(message) ||
+      /SSH 登录失败|连接断开|连接异常|Authentication failed|ECONNREFUSED|ENOTFOUND|getaddrinfo|Connection refused/i.test(detail);
+    if (isConnectionFailure) return { state: "error", label: "连接异常", detail, mode };
     return { state: "connected", label: "已连接", detail: agent?.shortName || "任务失败", mode };
   }
 
@@ -2971,7 +2976,26 @@ export function useWorkbenchController() {
     });
 
     try {
-      const stdout = await runRemoteCommandForProfile(targetProfile, buildHealthCommand(targetProfile), 512_000, 60);
+      const stdout = await runWithSshReconnect(
+        () => runRemoteCommandForProfile(targetProfile, buildHealthCommand(targetProfile), 512_000, 60),
+        {
+          onRetry: ({ error, reconnectAttempt }) => {
+            setServerConnection(target.id, {
+              state: "testing",
+              label: "连接断开",
+              detail: `正在自动重连 ${reconnectAttempt}/${maxSshReconnectAttempts}`,
+              mode: target.connection?.mode || "ssh",
+            });
+            void appLog("warn", "connection.reconnect", {
+              serverId: target.id,
+              host: targetProfile.host,
+              attempt: reconnectAttempt,
+              maxAttempts: maxSshReconnectAttempts,
+              error: String(error?.message || error || ""),
+            });
+          },
+        },
+      );
       const parsed = parseHealth(stdout);
       const detectedProfile = profileWithDetectedTools(targetProfile, parsed);
       profileRef.current = detectedProfile;
@@ -3024,15 +3048,20 @@ export function useWorkbenchController() {
       }
     } catch (error) {
       const message = shortError(error);
-      setRawOpen(true);
+      void appLog("error", "connection.failed", {
+        serverId: target.id,
+        host: targetProfile.host,
+        attempts: error?.reconnectAttempts || 0,
+        error: String(error?.cause?.message || error?.message || error || ""),
+      });
       setServers((items) => {
         const nextItems = items.map((server) =>
           server.id === target.id
             ? {
                 ...server,
-                connection: { state: "error", label: "连接失败", detail: message },
+                connection: { state: "error", label: "连接异常", detail: message },
                 discovery: null,
-                rawOutput: message,
+                rawOutput: "连接异常",
               }
             : server,
         );
@@ -4011,7 +4040,24 @@ export function useWorkbenchController() {
     });
 
     try {
-      const stdout = await runRemoteCommand(buildHealthCommand(nextProfile), 512_000, 60);
+      const stdout = await runWithSshReconnect(
+        () => runRemoteCommand(buildHealthCommand(nextProfile), 512_000, 60),
+        {
+          onRetry: ({ error, reconnectAttempt }) => {
+            setConnection({
+              state: "testing",
+              label: "连接断开",
+              detail: `正在自动重连 ${reconnectAttempt}/${maxSshReconnectAttempts}`,
+            });
+            void appLog("warn", "connection.test.reconnect", {
+              host: nextProfile.host,
+              attempt: reconnectAttempt,
+              maxAttempts: maxSshReconnectAttempts,
+              error: String(error?.message || error || ""),
+            });
+          },
+        },
+      );
       const parsed = parseHealth(stdout);
       const detectedProfile = profileWithDetectedTools(nextProfile, parsed);
       profileRef.current = detectedProfile;
@@ -4105,9 +4151,13 @@ export function useWorkbenchController() {
       }
     } catch (error) {
       const message = shortError(error);
-      setRawOpen(true);
-      setRawOutput(message);
-      setConnection({ state: "error", label: "连接失败", detail: message });
+      void appLog("error", "connection.test.failed", {
+        host: nextProfile.host,
+        attempts: error?.reconnectAttempts || 0,
+        error: String(error?.cause?.message || error?.message || error || ""),
+      });
+      setRawOutput("连接异常");
+      setConnection({ state: "error", label: "连接异常", detail: message });
     } finally {
       setBusy(false);
     }
@@ -4595,26 +4645,51 @@ export function useWorkbenchController() {
           let statusOutput = "";
           const remainingWaitSeconds = Math.max(5, Math.min(agentLongPollTimeoutSeconds, Math.ceil((synchronousWaitDeadlineAt - Date.now()) / 1000)));
           try {
-            statusOutput = await runRemoteCommandForProfile(
-              currentProfile,
-              buildWorkbenchAgentWaitTaskCommand(currentProfile, remoteTaskId, lastEventFingerprint, {
-                timeoutSeconds: remainingWaitSeconds,
-              }),
-              2_097_152,
-              remainingWaitSeconds + 20,
+            statusOutput = await runWithSshReconnect(
+              () =>
+                runRemoteCommandForProfile(
+                  currentProfile,
+                  buildWorkbenchAgentWaitTaskCommand(currentProfile, remoteTaskId, lastEventFingerprint, {
+                    timeoutSeconds: remainingWaitSeconds,
+                  }),
+                  2_097_152,
+                  remainingWaitSeconds + 20,
+                ),
+              {
+                shouldRetry: (error) =>
+                  isRetryableSshConnectionError(error) ||
+                  (isTransientSshSyncError(error) && error?.code !== "AIWB_CLIENT_COMMAND_TIMEOUT"),
+                onRetry: ({ error, reconnectAttempt }) => {
+                  setServerConnection(serverId, {
+                    state: "testing",
+                    label: "连接断开",
+                    detail: `正在自动重连 ${reconnectAttempt}/${maxSshReconnectAttempts}`,
+                    mode: "agent",
+                  });
+                  void appLog("warn", "agent.status.reconnect", {
+                    serverId,
+                    agentId: agent.id,
+                    remoteTaskId,
+                    attempt: reconnectAttempt,
+                    maxAttempts: maxSshReconnectAttempts,
+                    error: String(error?.message || error || ""),
+                  });
+                },
+              },
             );
           } catch (error) {
-            if (!isTransientSshSyncError(error)) throw error;
+            if (error?.code !== "AIWB_SSH_CONNECTION_FAILED" && !isTransientSshSyncError(error)) throw error;
             const detail = shortError(error);
-            void appLog("warn", "agent.status.transient_disconnect", {
+            void appLog("error", "agent.status.connection_failed", {
               serverId,
               agentId: agent.id,
               remoteTaskId,
-              error: detail,
+              attempts: error?.reconnectAttempts || 0,
+              error: String(error?.cause?.message || error?.message || error || ""),
             });
-	            updateAssistantMessageInServer(serverId, assistantMessageId, {
-	              title: "恢复同步中",
-	              body: "App 暂时连不上服务器，任务可能仍在远端执行。恢复连接后会继续同步结果。",
+            updateAssistantMessageInServer(serverId, assistantMessageId, {
+              title: "连接异常",
+              body: "暂时无法连接服务器。远端任务可能仍在运行，重新连接后会继续同步。",
               status: "running",
               backend: "agent",
               conversationId,
@@ -4626,12 +4701,12 @@ export function useWorkbenchController() {
               remoteSyncError: detail,
             });
             setServerConnection(serverId, {
-              state: "testing",
-              label: "等待恢复",
-              detail: "同步连接中断，自动重试",
+              state: "error",
+              label: "连接异常",
+              detail: "自动重连 3 次仍未恢复",
               mode: "agent",
             });
-            continue;
+            return { used: true, ok: false, pending: true };
           }
           const status = parseWorkbenchAgentOutput(statusOutput);
           if (status.eventFingerprint) lastEventFingerprint = status.eventFingerprint;
@@ -4971,13 +5046,37 @@ export function useWorkbenchController() {
     try {
       const waitTimeoutSeconds =
         serverId === activeServerIdRef.current && message.status === "running" ? agentLongPollTimeoutSeconds : 20;
-      const statusOutput = await runRemoteCommandForProfile(
-        currentProfile,
-        buildWorkbenchAgentWaitTaskCommand(currentProfile, message.remoteTaskId, message.remoteEventFingerprint || "", {
-          timeoutSeconds: waitTimeoutSeconds,
-        }),
-        2_097_152,
-        waitTimeoutSeconds + 20,
+      const statusOutput = await runWithSshReconnect(
+        () =>
+          runRemoteCommandForProfile(
+            currentProfile,
+            buildWorkbenchAgentWaitTaskCommand(currentProfile, message.remoteTaskId, message.remoteEventFingerprint || "", {
+              timeoutSeconds: waitTimeoutSeconds,
+            }),
+            2_097_152,
+            waitTimeoutSeconds + 20,
+          ),
+        {
+          shouldRetry: (error) =>
+            isRetryableSshConnectionError(error) ||
+            (isTransientSshSyncError(error) && error?.code !== "AIWB_CLIENT_COMMAND_TIMEOUT"),
+          onRetry: ({ error, reconnectAttempt }) => {
+            setServerConnection(serverId, {
+              ...(server.connection || {}),
+              state: "testing",
+              label: "连接断开",
+              detail: `正在自动重连 ${reconnectAttempt}/${maxSshReconnectAttempts}`,
+              mode: "agent",
+            });
+            void appLog("warn", "agent.sync.reconnect", {
+              serverId,
+              remoteTaskId: message.remoteTaskId,
+              attempt: reconnectAttempt,
+              maxAttempts: maxSshReconnectAttempts,
+              error: String(error?.message || error || ""),
+            });
+          },
+        },
       );
       const status = parseWorkbenchAgentOutput(statusOutput);
       const taskStatus = status.taskStatus || "unknown";
@@ -5191,11 +5290,11 @@ export function useWorkbenchController() {
       notifyTaskFinished(serverId, agent, false);
       return true;
     } catch (error) {
-      if (isTransientSshSyncError(error)) {
+      if (error?.code === "AIWB_SSH_CONNECTION_FAILED" || isTransientSshSyncError(error)) {
         const detail = shortError(error);
-	        updateAssistantMessageInServer(serverId, message.id, {
-	          title: "恢复同步中",
-		          body: "App 暂时连不上服务器，任务可能仍在远端执行。恢复连接后会继续同步结果。",
+        updateAssistantMessageInServer(serverId, message.id, {
+          title: "连接异常",
+          body: "暂时无法连接服务器。远端任务可能仍在运行，重新连接后会继续同步。",
           status: "running",
           backend: "agent",
           remoteTaskId: message.remoteTaskId,
@@ -5215,15 +5314,16 @@ export function useWorkbenchController() {
         });
         setServerConnection(serverId, {
           ...(server.connection || {}),
-          state: "testing",
-          label: "等待恢复",
-          detail: "同步连接中断，自动重试",
+          state: "error",
+          label: "连接异常",
+          detail: "自动重连 3 次仍未恢复",
           mode: "agent",
         });
-        void appLog("warn", "agent.sync.transient_disconnect", {
+        void appLog("error", "agent.sync.connection_failed", {
           serverId,
           remoteTaskId: message.remoteTaskId,
-          error: detail,
+          attempts: error?.reconnectAttempts || 0,
+          error: String(error?.cause?.message || error?.message || error || ""),
         });
         return false;
       }
@@ -5880,7 +5980,7 @@ export function useWorkbenchController() {
       sourceServer = serverById(serverId) || sourceServer;
       currentProfile = withKnownPassword(sourceServer.profile);
       if (!connectionIsLive(sourceServer.connection)) {
-        enqueueTaskNotice({ serverId, title: "会话连接失败，消息没有发送", tone: "error" });
+        enqueueTaskNotice({ serverId, title: "连接异常，消息没有发送", tone: "error" });
         return;
       }
     }
@@ -6090,19 +6190,19 @@ export function useWorkbenchController() {
         error: message,
         transientAgentDisconnect,
       });
-      if (serverId === activeServerIdRef.current) setRawOpen(true);
-      setServerRawOutput(serverId, message);
+      if (!transientAgentDisconnect && serverId === activeServerIdRef.current) setRawOpen(true);
+      setServerRawOutput(serverId, transientAgentDisconnect ? "连接断开" : message);
       if (transientAgentDisconnect) {
         const currentMessage = (serverById(serverId)?.messages || []).find((item) => item.id === assistantMessageId) || {};
         const remoteTaskId = String(currentMessage.remoteTaskId || "").trim();
         const conversationId = String(currentMessage.conversationId || "").trim() || ensureServerConversationId(serverId, currentProfile, finalAgent.id);
         pendingRemoteTask = true;
         ranRemote = true;
-	        updateAssistantMessageInServer(serverId, assistantMessageId, {
-	          title: remoteTaskId ? "恢复同步中" : "状态待确认",
-	          body: remoteTaskId
-	            ? "App 暂时连不上服务器，任务可能仍在远端执行。网络恢复后会继续同步结果。"
-	            : "任务可能已经提交到服务器，但 App 没有拿到任务 ID。为避免重复提交，输入框会先保持锁定；请点「检查状态」确认。",
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: remoteTaskId ? "连接断开" : "连接异常",
+          body: remoteTaskId
+            ? "正在自动重新连接。远端任务可能仍在运行，连接恢复后会继续同步。"
+            : "没有确认任务是否成功提交。为避免重复执行，请重新连接后检查状态。",
           status: "running",
           backend: "agent",
           conversationId,
@@ -6128,16 +6228,16 @@ export function useWorkbenchController() {
           label: remoteTaskId ? `等待同步 ${finalAgent.shortName}` : "状态待确认",
         });
         setServerConnection(serverId, {
-          state: "testing",
-          label: remoteTaskId ? "等待恢复" : "待确认",
-          detail: remoteTaskId ? "网络恢复后自动同步最后任务" : "缺少任务 ID，先避免重复提交",
+          state: remoteTaskId ? "testing" : "error",
+          label: remoteTaskId ? "连接断开" : "连接异常",
+          detail: remoteTaskId ? "正在自动重新连接" : "无法确认远端任务状态",
           mode: "agent",
         });
-	        enqueueTaskNotice({
-	          serverId,
-	          title: remoteTaskId ? "网络异常，正在恢复同步" : "状态待确认，已避免重复提交",
-	          tone: "warning",
-	        });
+        enqueueTaskNotice({
+          serverId,
+          title: remoteTaskId ? "连接断开，正在重连" : "连接异常",
+          tone: "warning",
+        });
       } else {
         updateAssistantMessageInServer(serverId, assistantMessageId, {
           title: "远端执行失败",

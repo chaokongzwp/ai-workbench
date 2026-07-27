@@ -48,7 +48,8 @@
     "agent:publish": "node scripts/release-agent.mjs",
     "agent:publish:oss": "node scripts/publish-agent-oss.mjs",
     "voice:configure-local": "node scripts/configure-local-voice.mjs",
-    "test:lifecycle": "node scripts/test-message-lifecycle.mjs"
+    "test:lifecycle": "node scripts/test-message-lifecycle.mjs",
+    "test:ssh-reconnect": "node scripts/test-ssh-reconnect.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

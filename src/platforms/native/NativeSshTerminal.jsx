@@ -12,7 +12,12 @@ import {
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { SSHWorkbench } from "../../core/workbenchCore.js";
+import {
+  SSHWorkbench,
+  isRetryableSshConnectionError,
+  maxSshReconnectAttempts,
+  runWithSshReconnect,
+} from "../../core/workbenchCore.js";
 import "./native-ssh-terminal.css";
 
 function createTerminalId(sessionKey) {
@@ -83,10 +88,15 @@ function decodeBase64Bytes(value) {
   return bytes;
 }
 
-function statusPresentation(status) {
-  if (status === "connecting") return { label: "连接中", tone: "connecting" };
+function statusPresentation(status, detail) {
+  if (status === "connecting") {
+    return {
+      label: String(detail || "").startsWith("连接断开") ? "连接断开" : "连接中",
+      tone: "connecting",
+    };
+  }
   if (status === "connected") return { label: "已连接", tone: "connected" };
-  if (status === "error") return { label: "连接失败", tone: "error" };
+  if (status === "error") return { label: "连接异常", tone: "error" };
   return { label: "已断开", tone: "closed" };
 }
 
@@ -103,8 +113,9 @@ export function NativeSshTerminal({
   const fitAddonRef = useRef(null);
   const terminalIdRef = useRef("");
   const connectRunRef = useRef(0);
+  const connectRef = useRef(null);
+  const reconnectInFlightRef = useRef(false);
   const manualDisconnectRef = useRef(false);
-  const statusRef = useRef("closed");
   const [terminalReady, setTerminalReady] = useState(false);
   const [listenersReady, setListenersReady] = useState(false);
   const [status, setStatus] = useState("closed");
@@ -113,8 +124,7 @@ export function NativeSshTerminal({
     () => `${String(profile?.username || "").trim() || "user"}@${String(profile?.host || "").trim() || "server"}`,
     [profile?.host, profile?.username],
   );
-  const statusCopy = statusPresentation(status);
-  statusRef.current = status;
+  const statusCopy = statusPresentation(status, detail);
 
   const fitTerminal = useCallback(() => {
     if (!open || !terminalRef.current || !fitAddonRef.current || !containerRef.current) return;
@@ -128,6 +138,7 @@ export function NativeSshTerminal({
   const closeConnection = useCallback(async ({ manual = false } = {}) => {
     manualDisconnectRef.current = manual;
     connectRunRef.current += 1;
+    reconnectInFlightRef.current = false;
     const terminalId = terminalIdRef.current;
     terminalIdRef.current = "";
     if (terminalId) {
@@ -141,8 +152,8 @@ export function NativeSshTerminal({
     setDetail("");
   }, []);
 
-  const connect = useCallback(async () => {
-    if (!open || terminalIdRef.current || statusRef.current === "connecting") return;
+  const connect = useCallback(async ({ afterDisconnect = false } = {}) => {
+    if (!open || terminalIdRef.current || reconnectInFlightRef.current) return;
     const host = String(profile?.host || "").trim();
     const username = String(profile?.username || "").trim();
     const password = String(profile?.password || "");
@@ -153,52 +164,91 @@ export function NativeSshTerminal({
     }
 
     manualDisconnectRef.current = false;
+    reconnectInFlightRef.current = true;
     const runId = connectRunRef.current + 1;
     connectRunRef.current = runId;
-    const terminalId = createTerminalId(sessionKey);
-    terminalIdRef.current = terminalId;
     setStatus("connecting");
-    setDetail("");
-    terminalRef.current?.reset();
-    terminalRef.current?.writeln(`\x1b[2m正在连接 ${username}@${host}…\x1b[0m`);
+    setDetail(afterDisconnect ? `连接断开，正在自动重连 1/${maxSshReconnectAttempts}` : "");
+    if (!afterDisconnect) {
+      terminalRef.current?.reset();
+      terminalRef.current?.writeln(`\x1b[2m正在连接 ${username}@${host}…\x1b[0m`);
+    } else {
+      terminalRef.current?.writeln(`\r\n\x1b[2m连接断开，正在自动重连…\x1b[0m`);
+    }
     fitTerminal();
 
     try {
-      await SSHWorkbench.startTerminal({
-        terminalId,
-        host,
-        port: profile?.port,
-        username,
-        password,
-        platform: profile?.platform,
-        wslDistro: profile?.wslDistro,
-        workdir: profile?.workdir,
-        connectTimeoutSeconds: profile?.connectTimeoutSeconds,
-        commandTimeoutSeconds: profile?.commandTimeoutSeconds,
-        cols: terminalRef.current?.cols || 80,
-        rows: terminalRef.current?.rows || 24,
-      });
-      if (connectRunRef.current !== runId) {
-        await SSHWorkbench.closeTerminal({ terminalId }).catch(() => {});
-        return;
-      }
+      await runWithSshReconnect(
+        async () => {
+          if (connectRunRef.current !== runId) {
+            const cancelled = new Error("Terminal connection cancelled");
+            cancelled.code = "AIWB_TERMINAL_CONNECT_CANCELLED";
+            throw cancelled;
+          }
+          const terminalId = createTerminalId(sessionKey);
+          terminalIdRef.current = terminalId;
+          try {
+            await SSHWorkbench.startTerminal({
+              terminalId,
+              host,
+              port: profile?.port,
+              username,
+              password,
+              platform: profile?.platform,
+              wslDistro: profile?.wslDistro,
+              workdir: profile?.workdir,
+              connectTimeoutSeconds: profile?.connectTimeoutSeconds,
+              commandTimeoutSeconds: profile?.commandTimeoutSeconds,
+              cols: terminalRef.current?.cols || 80,
+              rows: terminalRef.current?.rows || 24,
+            });
+          } catch (error) {
+            if (terminalIdRef.current === terminalId) terminalIdRef.current = "";
+            throw error;
+          }
+          if (connectRunRef.current !== runId) {
+            await SSHWorkbench.closeTerminal({ terminalId }).catch(() => {});
+            const cancelled = new Error("Terminal connection cancelled");
+            cancelled.code = "AIWB_TERMINAL_CONNECT_CANCELLED";
+            throw cancelled;
+          }
+        },
+        {
+          maxReconnectAttempts: afterDisconnect ? maxSshReconnectAttempts - 1 : maxSshReconnectAttempts,
+          onRetry: ({ reconnectAttempt }) => {
+            const visibleAttempt = afterDisconnect ? reconnectAttempt + 1 : reconnectAttempt;
+            setStatus("connecting");
+            setDetail(`连接断开，正在自动重连 ${visibleAttempt}/${maxSshReconnectAttempts}`);
+          },
+        },
+      );
       setStatus("connected");
+      setDetail("");
     } catch (error) {
       if (connectRunRef.current !== runId) return;
       terminalIdRef.current = "";
-      const message = error?.message || String(error || "SSH 连接失败");
       setStatus("error");
-      setDetail(message);
-      terminalRef.current?.writeln(`\r\n\x1b[31m${message}\x1b[0m`);
+      setDetail("连接异常");
+      terminalRef.current?.writeln(`\r\n\x1b[31m连接异常\x1b[0m`);
+    } finally {
+      if (connectRunRef.current === runId) reconnectInFlightRef.current = false;
     }
   }, [fitTerminal, open, profile, sessionKey]);
+  connectRef.current = connect;
 
   const writeData = useCallback((data) => {
     const terminalId = terminalIdRef.current;
     if (!terminalId) return;
     void SSHWorkbench.writeTerminal({ terminalId, data }).catch((error) => {
+      terminalIdRef.current = "";
+      if (isRetryableSshConnectionError(error) && !manualDisconnectRef.current) {
+        setStatus("connecting");
+        setDetail(`连接断开，正在自动重连 1/${maxSshReconnectAttempts}`);
+        void connectRef.current?.({ afterDisconnect: true });
+        return;
+      }
       setStatus("error");
-      setDetail(error?.message || String(error));
+      setDetail("连接异常");
     });
   }, []);
 
@@ -308,8 +358,15 @@ export function NativeSshTerminal({
         }
         if (nextState === "error" || nextState === "closed") {
           terminalIdRef.current = "";
-          setStatus(nextState);
-          setDetail(String(payload.detail || ""));
+          if (manualDisconnectRef.current) {
+            setStatus("closed");
+            setDetail("");
+            return;
+          }
+          if (reconnectInFlightRef.current) return;
+          setStatus("connecting");
+          setDetail(`连接断开，正在自动重连 1/${maxSshReconnectAttempts}`);
+          void connectRef.current?.({ afterDisconnect: true });
         }
       }),
     ]).then(([nextDataHandle, nextStateHandle]) => {
@@ -373,7 +430,7 @@ export function NativeSshTerminal({
             {statusCopy.label}
           </span>
           {status !== "connected" ? (
-            <button type="button" onClick={() => void connect()} aria-label="重新连接">
+            <button type="button" onClick={() => void connect({ afterDisconnect: false })} aria-label="重新连接">
               <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
             </button>
           ) : null}
@@ -391,7 +448,6 @@ export function NativeSshTerminal({
         </div>
       </header>
 
-      {status === "error" && detail ? <p className="native-ssh-error">{detail}</p> : null}
       <div className="native-ssh-terminal" ref={containerRef} />
       <footer className="native-ssh-keys" aria-label="终端快捷键">
         <button type="button" onClick={() => writeData("\u001b")}>Esc</button>

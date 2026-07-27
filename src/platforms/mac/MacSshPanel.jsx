@@ -9,6 +9,11 @@ import {
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import {
+  isRetryableSshConnectionError,
+  maxSshReconnectAttempts,
+  runWithSshReconnect,
+} from "../../core/workbenchCore.js";
 
 const terminalMinHeight = 190;
 
@@ -65,9 +70,14 @@ function terminalTheme(theme) {
 }
 
 function connectionCopy(status, detail) {
-  if (status === "connecting") return { label: "连接中", tone: "connecting" };
+  if (status === "connecting") {
+    return {
+      label: String(detail || "").startsWith("连接断开") ? "连接断开" : "连接中",
+      tone: "connecting",
+    };
+  }
   if (status === "connected") return { label: "已连接", tone: "connected" };
-  if (status === "error") return { label: detail || "连接失败", tone: "error" };
+  if (status === "error") return { label: "连接异常", tone: "error" };
   return { label: "已断开", tone: "closed" };
 }
 
@@ -94,7 +104,8 @@ export function MacSshPanel({
   const activeSessionKeyRef = useRef("");
   const manualDisconnectRef = useRef(false);
   const connectionRunRef = useRef(0);
-  const statusRef = useRef("closed");
+  const connectRef = useRef(null);
+  const reconnectInFlightRef = useRef(false);
   const resizeStartRef = useRef(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [status, setStatus] = useState("closed");
@@ -107,7 +118,6 @@ export function MacSshPanel({
   const workdir = String(profile?.workdir || "").trim();
   const statusCopy = connectionCopy(status, detail);
   openRef.current = open;
-  statusRef.current = status;
 
   const fitTerminal = useCallback(() => {
     if (!openRef.current || !terminalRef.current || !fitAddonRef.current || !containerRef.current) return;
@@ -122,6 +132,7 @@ export function MacSshPanel({
     async ({ manual = false, clear = false } = {}) => {
       manualDisconnectRef.current = manual;
       connectionRunRef.current += 1;
+      reconnectInFlightRef.current = false;
       const terminalId = terminalIdRef.current;
       terminalIdRef.current = "";
       if (terminalId && bridge?.closeEmbeddedTerminal) {
@@ -138,8 +149,8 @@ export function MacSshPanel({
     [bridge],
   );
 
-  const connect = useCallback(async () => {
-    if (!bridge?.startEmbeddedTerminal || terminalIdRef.current || statusRef.current === "connecting") return;
+  const connect = useCallback(async ({ afterDisconnect = false } = {}) => {
+    if (!bridge?.startEmbeddedTerminal || terminalIdRef.current || reconnectInFlightRef.current) return;
     const host = String(profile?.host || "").trim();
     const username = String(profile?.username || "").trim();
     const password = String(profile?.password || "");
@@ -150,44 +161,76 @@ export function MacSshPanel({
     }
 
     manualDisconnectRef.current = false;
+    reconnectInFlightRef.current = true;
     const runId = connectionRunRef.current + 1;
     connectionRunRef.current = runId;
-    const terminalId = createTerminalId(sessionKey);
-    terminalIdRef.current = terminalId;
     setStatus("connecting");
-    setDetail("");
-    terminalRef.current?.reset();
-    terminalRef.current?.writeln(`\x1b[2m正在连接 ${username}@${host}…\x1b[0m`);
+    setDetail(afterDisconnect ? `连接断开，正在自动重连 1/${maxSshReconnectAttempts}` : "");
+    if (!afterDisconnect) {
+      terminalRef.current?.reset();
+      terminalRef.current?.writeln(`\x1b[2m正在连接 ${username}@${host}…\x1b[0m`);
+    } else {
+      terminalRef.current?.writeln(`\r\n\x1b[2m连接断开，正在自动重连…\x1b[0m`);
+    }
     fitTerminal();
 
     try {
-      await bridge.startEmbeddedTerminal({
-        terminalId,
-        host,
-        port: profile?.port,
-        username,
-        password,
-        platform: profile?.platform,
-        wslDistro: profile?.wslDistro,
-        workdir,
-        connectTimeoutSeconds: profile?.connectTimeoutSeconds,
-        cols: terminalRef.current?.cols || 100,
-        rows: terminalRef.current?.rows || 24,
-      });
-      if (connectionRunRef.current !== runId) {
-        await bridge.closeEmbeddedTerminal({ terminalId }).catch(() => {});
-        return;
-      }
+      await runWithSshReconnect(
+        async () => {
+          if (connectionRunRef.current !== runId) {
+            const cancelled = new Error("Terminal connection cancelled");
+            cancelled.code = "AIWB_TERMINAL_CONNECT_CANCELLED";
+            throw cancelled;
+          }
+          const terminalId = createTerminalId(sessionKey);
+          terminalIdRef.current = terminalId;
+          try {
+            await bridge.startEmbeddedTerminal({
+              terminalId,
+              host,
+              port: profile?.port,
+              username,
+              password,
+              platform: profile?.platform,
+              wslDistro: profile?.wslDistro,
+              workdir,
+              connectTimeoutSeconds: profile?.connectTimeoutSeconds,
+              cols: terminalRef.current?.cols || 100,
+              rows: terminalRef.current?.rows || 24,
+            });
+          } catch (error) {
+            if (terminalIdRef.current === terminalId) terminalIdRef.current = "";
+            throw error;
+          }
+          if (connectionRunRef.current !== runId) {
+            await bridge.closeEmbeddedTerminal({ terminalId }).catch(() => {});
+            const cancelled = new Error("Terminal connection cancelled");
+            cancelled.code = "AIWB_TERMINAL_CONNECT_CANCELLED";
+            throw cancelled;
+          }
+        },
+        {
+          maxReconnectAttempts: afterDisconnect ? maxSshReconnectAttempts - 1 : maxSshReconnectAttempts,
+          onRetry: ({ reconnectAttempt }) => {
+            const visibleAttempt = afterDisconnect ? reconnectAttempt + 1 : reconnectAttempt;
+            setStatus("connecting");
+            setDetail(`连接断开，正在自动重连 ${visibleAttempt}/${maxSshReconnectAttempts}`);
+          },
+        },
+      );
       setStatus("connected");
+      setDetail("");
     } catch (error) {
       if (connectionRunRef.current !== runId) return;
       terminalIdRef.current = "";
-      const message = error?.message || String(error || "SSH 连接失败");
       setStatus("error");
-      setDetail(message);
-      terminalRef.current?.writeln(`\r\n\x1b[31m${message}\x1b[0m`);
+      setDetail("连接异常");
+      terminalRef.current?.writeln(`\r\n\x1b[31m连接异常\x1b[0m`);
+    } finally {
+      if (connectionRunRef.current === runId) reconnectInFlightRef.current = false;
     }
   }, [bridge, fitTerminal, profile, sessionKey, workdir]);
+  connectRef.current = connect;
 
   useEffect(() => {
     if (terminalRef.current || !containerRef.current) return;
@@ -213,8 +256,15 @@ export function MacSshPanel({
       const terminalId = terminalIdRef.current;
       if (!terminalId || !bridge?.writeEmbeddedTerminal) return;
       void bridge.writeEmbeddedTerminal({ terminalId, data }).catch((error) => {
+        terminalIdRef.current = "";
+        if (isRetryableSshConnectionError(error) && !manualDisconnectRef.current) {
+          setStatus("connecting");
+          setDetail(`连接断开，正在自动重连 1/${maxSshReconnectAttempts}`);
+          void connectRef.current?.({ afterDisconnect: true });
+          return;
+        }
         setStatus("error");
-        setDetail(error?.message || String(error));
+        setDetail("连接异常");
       });
     });
     const resizeSubscription = terminal.onResize(({ cols, rows }) => {
@@ -258,8 +308,15 @@ export function MacSshPanel({
       }
       if (nextState === "error" || nextState === "closed") {
         terminalIdRef.current = "";
-        setStatus(nextState === "error" ? "error" : "closed");
-        setDetail(String(payload.detail || ""));
+        if (manualDisconnectRef.current) {
+          setStatus("closed");
+          setDetail("");
+          return;
+        }
+        if (reconnectInFlightRef.current) return;
+        setStatus("connecting");
+        setDetail(`连接断开，正在自动重连 1/${maxSshReconnectAttempts}`);
+        void connectRef.current?.({ afterDisconnect: true });
       }
     });
     return () => {
@@ -341,7 +398,12 @@ export function MacSshPanel({
             {statusCopy.label}
           </span>
           {status !== "connected" ? (
-            <button type="button" onClick={() => void connect()} title="重新连接" aria-label="重新连接">
+            <button
+              type="button"
+              onClick={() => void connect({ afterDisconnect: false })}
+              title="重新连接"
+              aria-label="重新连接"
+            >
               <ArrowClockwise size={15} weight="bold" aria-hidden="true" />
             </button>
           ) : null}

@@ -235,6 +235,9 @@ export function shortError(error) {
     /^Error invoking remote method '[^']+': Error:\s*/i,
     "",
   );
+  if (error?.code === "AIWB_SSH_CONNECTION_FAILED" || /^连接异常[。.]?$/i.test(message)) {
+    return "连接异常";
+  }
   if (/ENOSPC|no space left on device|not enough space/i.test(message)) {
     return "远端磁盘空间不足：CLI 没有完成安装。请先清理 Windows 磁盘空间后再重试。";
   }
@@ -256,19 +259,19 @@ export function shortError(error) {
     return "SSH 已连上，但远端系统拒绝执行命令。Windows 机器请确认 OpenSSH Server 可执行 PowerShell，或改用 Windows + WSL 模式。";
   }
   if (/Timed out while waiting for handshake|Keepalive timeout|Connection lost before handshake/i.test(message)) {
-    return "SSH 状态连接暂时中断：远端任务不一定失败，App 会保留任务并在连接恢复后继续同步。";
+    return "连接断开";
   }
   if (/SSH command timed out|timed out/i.test(message)) {
     return "远端任务执行时间太长，App 暂时没有等到结果。任务可能仍在机器上运行，可以稍后刷新或重试。";
   }
   if (/Connection lost before handshake|Handshake failed|Connection lost|Connection closed|ECONNRESET|EPIPE|Socket closed/i.test(message)) {
-    return "SSH 同步连接临时中断：后台任务可能仍在服务器运行，网络恢复后会自动同步结果。";
+    return "连接断开";
   }
   if (/ECONNREFUSED|Connection refused/i.test(message)) {
-    return "连接被拒绝：请确认这台机器已开启 SSH，并且端口没有被防火墙拦截。";
+    return "连接断开";
   }
   if (/ENOTFOUND|getaddrinfo/i.test(message)) {
-    return "找不到这台机器：请检查 IP 或域名是否正确。";
+    return "连接断开";
   }
   if (/Permission denied/i.test(message)) {
     return "远端权限不足：当前账号没有权限访问这个目录或执行这个命令。";
