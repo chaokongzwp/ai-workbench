@@ -677,9 +677,9 @@ export function useWorkbenchController() {
   const discovery = activeServer.discovery;
   const rawOutput = activeServer.rawOutput;
   const messages = activeServer.messages;
-  const activeTaskRunning = serverTaskRunning(activeServer);
-  const activeBusy = busy || activeTaskRunning;
   const activeRunningMessage = useMemo(() => lastIncompleteAgentResponse(activeServer), [activeServer]);
+  const activeTaskRunning = serverTaskRunning(activeServer) && Boolean(activeRunningMessage);
+  const activeBusy = busy || activeTaskRunning;
   const isProfileReady = useMemo(() => profileReady(profile), [profile]);
   const voiceInputEnabled = profile.voiceInputEnabled === true;
   const hasSelectedWorkdir = Boolean(String(profile.workdir || "").trim());
