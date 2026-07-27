@@ -4095,7 +4095,14 @@ export function useWorkbenchController() {
       );
       setServers(nextServers);
       serversRef.current = nextServers;
-      await saveWorkspace(nextServers, activeServerIdRef.current);
+      try {
+        await saveWorkspace(nextServers, activeServerIdRef.current);
+      } catch (persistenceError) {
+        void appLog("warn", "connection.profile_persistence.failed", {
+          host: detectedProfile.host,
+          error: shortError(persistenceError),
+        });
+      }
     } catch (error) {
       const message = shortError(error);
       setRawOpen(true);

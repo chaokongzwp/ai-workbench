@@ -1031,6 +1031,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private let keychainService = "com.beexofficial.aiworkbench.connection"
     private let keychainAccount = "default-profile"
+    private let simulatorProfileFallbackKey = "com.beexofficial.aiworkbench.simulator-profile"
     private let diagnosticLogQueue = DispatchQueue(label: "com.beexofficial.aiworkbench.diagnostics")
     private let terminalSessions = NativeTerminalSessionStore()
     private static let crc32Table: [UInt32] = {
@@ -1404,7 +1405,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             appendDiagnosticLog("info", "profile.native.save.start", fields: profileSummary(profile).merging([
                 "bytes": data.count
             ]) { current, _ in current })
-            try saveKeychainData(data)
+            try savePersistedProfileData(data)
             appendDiagnosticLog("info", "profile.native.save.success", fields: profileSummary(profile).merging([
                 "bytes": data.count
             ]) { current, _ in current })
@@ -1419,7 +1420,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func loadProfile(_ call: CAPPluginCall) {
         do {
-            guard let data = try loadKeychainData() else {
+            guard let data = try loadPersistedProfileData() else {
                 appendDiagnosticLog("warn", "profile.native.load.missing", fields: [:])
                 call.resolve(["profile": [:]])
                 return
@@ -1479,7 +1480,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func clearProfile(_ call: CAPPluginCall) {
         do {
-            try deleteKeychainData()
+            try deletePersistedProfileData()
             appendDiagnosticLog("warn", "profile.native.clear", fields: [:])
             call.resolve(["ok": true])
         } catch {
@@ -2148,6 +2149,21 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    private func savePersistedProfileData(_ data: Data) throws {
+        do {
+            try saveKeychainData(data)
+            UserDefaults.standard.removeObject(forKey: simulatorProfileFallbackKey)
+        } catch {
+            guard shouldUseSimulatorProfileFallback(error) else {
+                throw error
+            }
+            UserDefaults.standard.set(data, forKey: simulatorProfileFallbackKey)
+            appendDiagnosticLog("warn", "profile.native.save.simulator_fallback", fields: [
+                "bytes": data.count
+            ])
+        }
+    }
+
     private func loadKeychainData() throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -2171,6 +2187,20 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         return result as? Data
     }
 
+    private func loadPersistedProfileData() throws -> Data? {
+        do {
+            if let data = try loadKeychainData() {
+                return data
+            }
+        } catch {
+            guard shouldUseSimulatorProfileFallback(error) else {
+                throw error
+            }
+            appendDiagnosticLog("warn", "profile.native.load.simulator_fallback", fields: [:])
+        }
+        return UserDefaults.standard.data(forKey: simulatorProfileFallbackKey)
+    }
+
     private func deleteKeychainData(ignoreMissing: Bool = false) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -2186,6 +2216,29 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw SSHWorkbenchError.keychainStatus(status)
         }
+    }
+
+    private func deletePersistedProfileData() throws {
+        do {
+            try deleteKeychainData()
+        } catch {
+            guard shouldUseSimulatorProfileFallback(error) else {
+                throw error
+            }
+            appendDiagnosticLog("warn", "profile.native.clear.simulator_fallback", fields: [:])
+        }
+        UserDefaults.standard.removeObject(forKey: simulatorProfileFallbackKey)
+    }
+
+    private func shouldUseSimulatorProfileFallback(_ error: Error) -> Bool {
+        #if targetEnvironment(simulator)
+        guard case SSHWorkbenchError.keychainStatus(let status) = error else {
+            return false
+        }
+        return status == errSecMissingEntitlement
+        #else
+        return false
+        #endif
     }
 
     private func safeErrorMessage(_ error: Error) -> String {
