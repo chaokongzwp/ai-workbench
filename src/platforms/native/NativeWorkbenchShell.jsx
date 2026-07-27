@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { App as CapacitorApp } from "@capacitor/app";
 import { DotsThree, SidebarSimple, TerminalWindow } from "@phosphor-icons/react";
 import { connectionStatusPresentation, dataTransferHasFiles } from "../../core/workbenchCore.js";
 import { NativeSshTerminal } from "./NativeSshTerminal.jsx";
@@ -156,6 +157,39 @@ export function NativeWorkbenchShell({
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const hasWorkSession = servers.length > 0;
+
+  useEffect(() => {
+    if (platform !== "android") return undefined;
+
+    let listenerHandle;
+    let disposed = false;
+    void CapacitorApp.addListener("backButton", () => {
+      if (settingsOpen) {
+        onCloseSettings?.();
+        return;
+      }
+      if (terminalOpen) {
+        setTerminalOpen(false);
+        return;
+      }
+      if (mobileNavOpen) {
+        setMobileNavOpen?.(false);
+        return;
+      }
+      void CapacitorApp.minimizeApp();
+    }).then((handle) => {
+      if (disposed) {
+        void handle.remove();
+        return;
+      }
+      listenerHandle = handle;
+    });
+
+    return () => {
+      disposed = true;
+      void listenerHandle?.remove();
+    };
+  }, [mobileNavOpen, onCloseSettings, platform, setMobileNavOpen, settingsOpen, terminalOpen]);
 
   function handleFileDrop(event) {
     event.preventDefault();
@@ -497,6 +531,7 @@ export function NativeWorkbenchShell({
           onCloudClearConfig={onCloudClearConfig}
           onShareSession={onShareSession}
           onTest={onScanSettings}
+          allowCloseWhileBusy={platform === "android"}
         />
       ) : null}
 

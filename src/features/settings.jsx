@@ -584,6 +584,7 @@ export function SettingsPanel({
   onShareSession,
   onTest,
   initialPage = "root",
+  allowCloseWhileBusy = false,
 }) {
   const [migrationBusy, setMigrationBusy] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState(null);
@@ -1143,7 +1144,13 @@ export function SettingsPanel({
             <strong>{panelTitle}</strong>
             <span>{panelSubtitle}</span>
           </div>
-          <button type="button" className="settings-close-button" onClick={onClose} disabled={busy} aria-label="关闭设置">
+          <button
+            type="button"
+            className="settings-close-button"
+            onClick={onClose}
+            disabled={busy && !allowCloseWhileBusy}
+            aria-label="关闭设置"
+          >
             <X size={19} weight="bold" aria-hidden="true" />
           </button>
         </header>
