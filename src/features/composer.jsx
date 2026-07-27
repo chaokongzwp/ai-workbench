@@ -386,7 +386,7 @@ export function Composer({
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !ready;
-  const sendDisabled = disabled || !hasPayload;
+  const sendDisabled = inputLock.sendBlocked || !hasPayload;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const downloadDisabled = !ready;
   const voiceDisabled = !voiceInputEnabled || !ready || taskLocked || (operationBusy && !voiceActive);
@@ -415,7 +415,7 @@ export function Composer({
   const toolIconSize = 18;
   const toolIconWeight = macIcons ? "bold" : "regular";
   const composerStatusText =
-    inputLock.text ||
+    (!inputLock.locked && inputLock.sendBlocked ? inputLock.text : "") ||
     (!voiceInputEnabled
       ? ""
       : wakeState === "listening"
@@ -495,7 +495,7 @@ export function Composer({
             if (event.shiftKey) return;
 
             event.preventDefault();
-            if (!disabled && hasPayload) onSend();
+            if (!sendDisabled) onSend();
           }}
           placeholder={
             inputLock.locked
@@ -610,8 +610,8 @@ export function Composer({
                     else onSend();
                   }}
                   disabled={stopMode ? stopDisabled : sendDisabled}
-                  aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
-                  title={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
+                  aria-label={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
+                  title={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
                 >
                   {stopMode ? (
                     macIcons ? (

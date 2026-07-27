@@ -187,7 +187,7 @@ function IphoneComposer({
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !profileReady;
-  const sendDisabled = disabled || !hasPayload;
+  const sendDisabled = inputLock.sendBlocked || !hasPayload;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const wakeActive =
     wakeState === "listening" ||
@@ -198,7 +198,7 @@ function IphoneComposer({
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
   const voiceDisabled = !profileReady || taskLocked || (operationBusy && !voiceActive);
   const wakeDisabled = !profileReady || taskLocked || (operationBusy && !wakeActive);
-  const statusText = inputLock.text
+  const statusText = !inputLock.locked && inputLock.sendBlocked
     ? inputLock.text
     : !voiceInputEnabled
       ? ""
@@ -312,7 +312,7 @@ function IphoneComposer({
             if (event.shiftKey) return;
 
             event.preventDefault();
-            if (!disabled && hasPayload) onSend?.();
+            if (!sendDisabled) onSend?.();
           }}
           placeholder={
             inputLock.locked
@@ -395,7 +395,8 @@ function IphoneComposer({
                   else onSend?.();
                 }}
                 disabled={stopMode ? stopDisabled : sendDisabled}
-                aria-label={stopMode ? "停止当前任务" : busy ? "等待回复" : "发送"}
+                aria-label={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
+                title={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
               >
                 {stopMode ? <Stop size={17} weight="fill" aria-hidden="true" /> : <ArrowUp size={17} weight="bold" aria-hidden="true" />}
               </button>
