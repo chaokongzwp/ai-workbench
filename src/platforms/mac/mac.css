@@ -4,9 +4,9 @@
  */
 
 .mac-shell {
-  --mac-sidebar-width: clamp(236px, 19vw, 292px);
+  --mac-sidebar-width: clamp(252px, 20vw, 280px);
   --mac-canvas: #f7f8fa;
-  --mac-sidebar: #f0f1f4;
+  --mac-sidebar: #eef0f3;
   --mac-surface: #ffffff;
   --mac-surface-raised: #f0f1f4;
   --mac-surface-selected: #e4e6ea;
@@ -15,28 +15,28 @@
   --mac-text: #1f2329;
   --mac-muted: #747b86;
   --mac-subtle: #9aa0aa;
-  --mac-message-width: 840px;
+  --mac-message-width: 880px;
   --mac-control-size: var(--aiwb-control-md);
   --mac-control-radius: var(--aiwb-radius-sm);
   --mac-row-radius: var(--aiwb-radius-sm);
   --mac-surface-radius: var(--aiwb-radius-md);
   grid-template-rows: 46px minmax(0, 1fr) auto;
   color: var(--mac-text);
-  background: var(--mac-canvas);
+  background: var(--mac-canvas) !important;
 }
 
 .app-shell[data-theme="dark"].mac-shell {
-  --mac-canvas: #0f1115;
-  --mac-sidebar: #14161a;
-  --mac-surface: #191c22;
-  --mac-surface-raised: #20242b;
-  --mac-surface-selected: #292e37;
+  --mac-canvas: #0d0f12;
+  --mac-sidebar: #13161b;
+  --mac-surface: #181b20;
+  --mac-surface-raised: #20242a;
+  --mac-surface-selected: #292e36;
   --mac-line: rgba(255, 255, 255, 0.1);
   --mac-line-soft: rgba(255, 255, 255, 0.065);
   --mac-text: #f2f4f7;
   --mac-muted: #98a0ab;
   --mac-subtle: #707984;
-  background: var(--mac-canvas);
+  background: var(--mac-canvas) !important;
 }
 
 .mac-shell .topbar,
@@ -46,8 +46,8 @@
   grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr) 54px;
   padding: 0 10px 0 0;
   border-bottom: 1px solid var(--mac-line-soft);
-  background: color-mix(in srgb, var(--mac-canvas) 96%, transparent);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--mac-canvas) 96%, transparent) !important;
+  box-shadow: none !important;
 }
 
 .mac-shell .topbar-session,
@@ -157,7 +157,7 @@
 
 .mac-shell .workspace,
 .app-shell[data-theme="dark"].mac-shell .workspace {
-  grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr);
+  grid-template-columns: var(--mac-sidebar-width) minmax(0, 1fr) !important;
   background: var(--mac-canvas);
 }
 
@@ -167,7 +167,7 @@
   min-height: 0;
   padding: 10px 8px 8px;
   border-right: 1px solid var(--mac-line-soft);
-  background: var(--mac-sidebar);
+  background: var(--mac-sidebar) !important;
   overflow: hidden;
 }
 
@@ -235,7 +235,9 @@
 .app-shell[data-theme="dark"].mac-shell .mac-session-row.active {
   outline: 0;
   background: color-mix(in srgb, var(--mac-surface-selected) 82%, transparent);
-  box-shadow: inset 0 0 0 1px var(--mac-line-soft);
+  box-shadow:
+    inset 2px 0 0 color-mix(in srgb, var(--mac-text) 48%, transparent),
+    inset 0 0 0 1px var(--mac-line-soft);
 }
 
 .mac-shell .mac-session-row.active::before {
@@ -395,7 +397,7 @@
 
 .mac-shell .conversation,
 .app-shell[data-theme="dark"].mac-shell .conversation {
-  background: var(--mac-canvas);
+  background: var(--mac-canvas) !important;
 }
 
 .mac-shell .conversation.ssh-terminal-visible,
@@ -566,26 +568,26 @@
 
 .mac-shell .conversation .composer.compact,
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
-  width: min(840px, calc(100% - 64px));
+  width: min(860px, calc(100% - 64px));
   max-height: 236px;
   margin: 0 auto 16px;
   padding: 8px 10px 7px;
-  border: 1px solid var(--mac-line);
-  border-radius: var(--mac-surface-radius);
-  background: var(--mac-surface);
-  box-shadow: 0 8px 22px rgba(15, 18, 24, 0.1);
+  border: 1px solid var(--mac-line) !important;
+  border-radius: var(--mac-surface-radius) !important;
+  background: var(--mac-surface) !important;
+  box-shadow: 0 8px 22px rgba(15, 18, 24, 0.1) !important;
 }
 
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact {
-  background: var(--mac-surface);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  background: var(--mac-surface) !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26) !important;
 }
 
 .mac-shell .conversation .composer.compact:focus-within,
 .app-shell[data-theme="dark"].mac-shell .conversation .composer.compact:focus-within {
-  border-color: color-mix(in srgb, var(--mac-line) 76%, var(--mac-text));
-  background: var(--mac-surface);
-  box-shadow: 0 12px 30px rgba(15, 18, 24, 0.15);
+  border-color: color-mix(in srgb, var(--mac-line) 72%, var(--mac-text)) !important;
+  background: var(--mac-surface) !important;
+  box-shadow: 0 12px 30px rgba(15, 18, 24, 0.14) !important;
 }
 
 .mac-shell .composer.compact .composer-topline {
@@ -613,8 +615,8 @@
   max-height: min(24vh, 140px);
   padding: 1px 4px 4px;
   border: 0;
-  color: var(--mac-text);
-  background: transparent;
+  color: var(--mac-text) !important;
+  background: transparent !important;
   font-size: 14px;
   line-height: 1.55;
 }
@@ -650,51 +652,51 @@
 
 .mac-shell .composer.compact .input-actions .composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .composer-icon-button {
-  width: var(--mac-control-size);
-  min-width: var(--mac-control-size);
-  height: var(--mac-control-size);
-  padding: 0;
-  border: 0;
-  border-radius: var(--mac-control-radius);
-  color: var(--mac-muted);
-  background: transparent;
-  box-shadow: none;
+  width: var(--mac-control-size) !important;
+  min-width: var(--mac-control-size) !important;
+  height: var(--mac-control-size) !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: var(--mac-control-radius) !important;
+  color: var(--mac-muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .mac-shell .composer.compact .input-actions .composer-icon-button:hover:not(:disabled),
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .composer-icon-button:hover:not(:disabled) {
-  color: var(--mac-text);
-  background: var(--mac-surface-selected);
+  color: var(--mac-text) !important;
+  background: var(--mac-surface-selected) !important;
 }
 
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button {
-  width: var(--aiwb-control-lg);
-  min-width: var(--aiwb-control-lg);
-  height: var(--aiwb-control-lg);
-  margin-left: auto;
-  border-radius: 50%;
-  color: #202124;
-  background: #ececef;
+  width: var(--aiwb-control-lg) !important;
+  min-width: var(--aiwb-control-lg) !important;
+  height: var(--aiwb-control-lg) !important;
+  margin-left: auto !important;
+  border-radius: 50% !important;
+  color: #202124 !important;
+  background: #ececef !important;
 }
 
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button:hover:not(:disabled),
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button:hover:not(:disabled) {
-  color: #111216;
-  background: #f6f6f7;
+  color: #111216 !important;
+  background: #f6f6f7 !important;
 }
 
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button:disabled,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button:disabled {
-  color: var(--mac-subtle);
-  background: color-mix(in srgb, var(--mac-surface-raised) 72%, transparent);
+  color: var(--mac-subtle) !important;
+  background: color-mix(in srgb, var(--mac-surface-raised) 72%, transparent) !important;
   opacity: 0.58;
 }
 
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button {
-  color: #ffffff;
-  background: var(--aiwb-status-danger);
+  color: #ffffff !important;
+  background: var(--aiwb-status-danger) !important;
 }
 
 .mac-shell .mac-ssh-panel {
@@ -983,7 +985,7 @@ body.mac-terminal-resizing {
   padding: 8px 10px;
   border: 1px solid var(--mac-line-soft);
   border-radius: var(--mac-surface-radius);
-  background: color-mix(in srgb, var(--mac-surface) 84%, transparent);
+  background: color-mix(in srgb, var(--mac-surface) 84%, transparent) !important;
   box-shadow: none;
 }
 
@@ -998,20 +1000,22 @@ body.mac-terminal-resizing {
 }
 
 .mac-shell .conversation .file-reference-actions button {
-  min-width: 26px;
-  min-height: 26px;
-  padding: 0 6px;
+  width: auto !important;
+  min-width: 26px !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 6px !important;
   border: 0;
   border-radius: var(--aiwb-radius-xs);
   color: var(--mac-muted);
-  background: transparent;
+  background: transparent !important;
   font-size: var(--aiwb-font-caption);
   box-shadow: none;
 }
 
 .mac-shell .conversation .file-reference-actions button:hover:not(:disabled) {
   color: var(--mac-text);
-  background: var(--mac-surface-selected);
+  background: var(--mac-surface-selected) !important;
 }
 
 .mac-shell .conversation .file-reference-actions .file-delete-button {
@@ -1036,8 +1040,8 @@ body.mac-terminal-resizing {
 
 @media (max-width: 980px) {
   .mac-shell {
-    --mac-sidebar-width: 224px;
-    --mac-message-width: 720px;
+    --mac-sidebar-width: 232px;
+    --mac-message-width: 740px;
   }
 
   .mac-shell .topbar-session-detail {
