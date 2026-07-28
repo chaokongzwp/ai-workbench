@@ -824,7 +824,8 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers, .defaultToSpeaker, .allowBluetooth])
         try AVAudioSession.sharedInstance().setActive(true, options: [])
 
-        let player = try AVAudioPlayer(data: data)
+        let playableData = try normalizedAliyunAudioData(data)
+        let player = try AVAudioPlayer(data: playableData)
         player.delegate = self
         player.prepareToPlay()
         audioPlayer = player
@@ -835,6 +836,62 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
             audioPlayer = nil
             throw NSError(domain: "AIWorkbenchAliyunTTS", code: -2, userInfo: [NSLocalizedDescriptionKey: "阿里云 TTS 播放启动失败。"])
         }
+    }
+
+    private func normalizedAliyunAudioData(_ data: Data) throws -> Data {
+        guard data.count >= 12 else {
+            throw NSError(
+                domain: "AIWorkbenchAliyunTTS",
+                code: -4,
+                userInfo: [NSLocalizedDescriptionKey: "阿里云 TTS 返回的音频不完整（\(data.count) bytes）。"]
+            )
+        }
+
+        guard String(data: data.prefix(4), encoding: .ascii) == "RIFF",
+              String(data: data[8..<12], encoding: .ascii) == "WAVE" else {
+            return data
+        }
+
+        var repaired = data
+        writeLittleEndianUInt32(UInt32(clamping: repaired.count - 8), to: &repaired, at: 4)
+
+        var offset = 12
+        while offset + 8 <= repaired.count {
+            let chunkId = String(data: repaired[offset..<(offset + 4)], encoding: .ascii) ?? ""
+            let declaredSize = Int(readLittleEndianUInt32(from: repaired, at: offset + 4))
+
+            if chunkId == "data" {
+                let actualSize = repaired.count - offset - 8
+                writeLittleEndianUInt32(UInt32(clamping: actualSize), to: &repaired, at: offset + 4)
+                return repaired
+            }
+
+            let nextOffset = offset + 8 + declaredSize + (declaredSize % 2)
+            guard nextOffset > offset, nextOffset <= repaired.count else {
+                break
+            }
+            offset = nextOffset
+        }
+
+        throw NSError(
+            domain: "AIWorkbenchAliyunTTS",
+            code: -5,
+            userInfo: [NSLocalizedDescriptionKey: "阿里云 TTS 返回的 WAV 缺少音频数据块（\(data.count) bytes）。"]
+        )
+    }
+
+    private func readLittleEndianUInt32(from data: Data, at offset: Int) -> UInt32 {
+        UInt32(data[offset])
+            | (UInt32(data[offset + 1]) << 8)
+            | (UInt32(data[offset + 2]) << 16)
+            | (UInt32(data[offset + 3]) << 24)
+    }
+
+    private func writeLittleEndianUInt32(_ value: UInt32, to data: inout Data, at offset: Int) {
+        data[offset] = UInt8(truncatingIfNeeded: value)
+        data[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
+        data[offset + 2] = UInt8(truncatingIfNeeded: value >> 16)
+        data[offset + 3] = UInt8(truncatingIfNeeded: value >> 24)
     }
 
     private func finishRecognition(error: Error?, fallbackMessage: String? = nil) {
