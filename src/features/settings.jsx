@@ -2503,7 +2503,7 @@ export function ConfigSelect({ label, value, options, onChange }) {
   const copyValue = selectedOption?.label || value;
 
   return (
-    <label className="config-field">
+    <label className="config-field config-select-field">
       <span>{label}</span>
       <div className="config-control">
         <select value={value} onChange={(event) => onChange(event.target.value)}>
@@ -2513,6 +2513,7 @@ export function ConfigSelect({ label, value, options, onChange }) {
             </option>
           ))}
         </select>
+        <CaretRight className="config-select-chevron" size={15} weight="bold" aria-hidden="true" />
         <ConfigCopyButton value={copyValue} />
       </div>
     </label>

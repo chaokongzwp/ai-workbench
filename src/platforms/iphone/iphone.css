@@ -214,3 +214,283 @@
 .iphone-shell .iphone-composer-actions .iphone-wake-button:disabled {
   opacity: 0.36;
 }
+
+/*
+ * iPhone settings refinement.
+ * Keep the phone on a compact grouped-list rhythm while leaving iPad and Mac
+ * settings untouched.
+ */
+.iphone-shell .settings-panel:not(.add-session-mode) {
+  --settings-bg: #f3f3f7;
+  --settings-group: #ffffff;
+  --settings-control: rgba(118, 118, 128, 0.11);
+  --settings-separator: rgba(60, 60, 67, 0.13);
+  --settings-accent: #3478f6;
+}
+
+.iphone-shell[data-theme="dark"] .settings-panel:not(.add-session-mode) {
+  --settings-bg: #0f1014;
+  --settings-group: #1a1b20;
+  --settings-control: rgba(255, 255, 255, 0.075);
+  --settings-separator: rgba(255, 255, 255, 0.085);
+  --settings-accent: #8ab4ff;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) > header.settings-navigation {
+  min-height: calc(54px + var(--safe-top));
+  padding:
+    calc(5px + var(--safe-top))
+    max(13px, var(--safe-right))
+    5px
+    max(13px, var(--safe-left));
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode).settings-subpage-mode
+  > header.settings-navigation
+  .settings-title-block
+  strong {
+  font-size: 17px;
+  font-weight: 680;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode).settings-subpage-mode
+  > header.settings-navigation
+  .settings-title-block
+  span {
+  margin-top: 0;
+  font-size: 10.5px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode):not(.settings-subpage-mode)
+  > header.settings-navigation
+  .settings-title-block
+  strong {
+  font-size: 24px;
+  font-weight: 720;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode):not(.settings-subpage-mode)
+  > header.settings-navigation
+  .settings-title-block
+  span {
+  margin-top: 1px;
+  font-size: 11.5px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-navigation-spacer,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-back-button,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-close-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-back-button {
+  color: var(--settings-text);
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-close-button {
+  position: relative;
+  color: var(--settings-secondary);
+  background: transparent;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-close-button::before {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--settings-control);
+  content: "";
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-close-button svg {
+  position: relative;
+  z-index: 1;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-root-page,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-page-content {
+  padding:
+    14px
+    max(15px, var(--safe-right))
+    calc(22px + var(--safe-bottom))
+    max(15px, var(--safe-left));
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-section {
+  margin-bottom: 18px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-section-title {
+  margin: 0 9px 6px;
+  color: var(--settings-secondary);
+  font-size: 11.5px;
+  font-weight: 590;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-section-group {
+  border-color: var(--settings-separator);
+  border-radius: 12px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-section-footer {
+  margin: 6px 9px 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-menu-row,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-action-row {
+  min-height: 54px;
+  gap: 9px;
+  padding: 7px 11px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-menu-icon,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-action-row-icon,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-status-icon {
+  width: 27px;
+  min-width: 27px;
+  height: 27px;
+  border-radius: 7px;
+  color: var(--settings-secondary);
+  background: var(--settings-control) !important;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-menu-icon svg,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-action-row-icon svg,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-status-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-menu-copy strong,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-action-row strong,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-status-copy strong {
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-menu-copy small,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-action-row small,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-status-copy small {
+  font-size: 11.5px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-menu-value,
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-status-value {
+  font-size: 11.5px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode)
+  .settings-page-content
+  .settings-section-group
+  > .config-field {
+  grid-template-columns: minmax(92px, 0.36fr) minmax(0, 1fr);
+  min-height: 52px;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-field > span {
+  font-size: 13.5px;
+  font-weight: 540;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-field :is(input, select) {
+  height: 36px;
+  padding: 0 4px;
+  font-size: 15px !important;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-copy-button {
+  color: var(--settings-secondary);
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-select-field .config-control {
+  grid-template-columns: minmax(0, 1fr) 16px;
+  gap: 6px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-select-field select {
+  padding-right: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-select-field .config-select-chevron {
+  display: block;
+  color: var(--settings-tertiary);
+  pointer-events: none;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-select-field .config-copy-button {
+  display: none;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .config-toggle {
+  grid-template-columns: minmax(0, 1fr) 51px !important;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-page-content .wake-word-field {
+  display: block;
+  min-height: 0;
+  padding: 12px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-page-content .wake-word-field > span {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-page-content .wake-word-control textarea {
+  min-height: 76px;
+  padding: 10px 11px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 10px;
+  background: var(--settings-control);
+  font-size: 16px !important;
+  line-height: 1.4;
+  resize: none;
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) .settings-font-preview {
+  margin-bottom: 18px;
+  padding: 14px 15px;
+  border-color: var(--settings-separator);
+  border-radius: 12px;
+  background: var(--settings-group);
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) > .settings-actions {
+  justify-content: flex-end;
+  min-height: calc(58px + var(--safe-bottom));
+  padding:
+    8px
+    max(15px, var(--safe-right))
+    calc(8px + var(--safe-bottom))
+    max(15px, var(--safe-left));
+  background: var(--settings-bg);
+}
+
+.iphone-shell .settings-panel:not(.add-session-mode) > .settings-actions .send-button {
+  width: auto;
+  min-width: 104px;
+  height: 44px;
+  padding: 0 16px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 20px;
+  color: var(--settings-bg);
+  background: var(--settings-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.iphone-shell[data-theme="dark"]
+  .settings-panel:not(.add-session-mode)
+  > .settings-actions
+  .send-button {
+  color: #111216;
+  background: #f0f1f4;
+}

@@ -2230,6 +2230,12 @@
   background: color-mix(in srgb, var(--settings-accent) 12%, transparent);
 }
 
+.app-shell .settings-panel .config-select-chevron,
+.native-app-shell .settings-panel .config-select-chevron,
+.iphone-shell .settings-panel .config-select-chevron {
+  display: none;
+}
+
 /* Phone settings are a true full-screen page with a readable large title. */
 .iphone-shell .settings-panel:not(.settings-subpage-mode) > header.settings-navigation {
   grid-template-columns: 0 minmax(0, 1fr) 36px;
