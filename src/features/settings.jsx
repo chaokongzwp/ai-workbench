@@ -1274,13 +1274,17 @@ export function SettingsPanel({
         ) : null}
 
         {editingSession && settingsPage === "session-general" ? (
-          <div className="settings-page-content">
-            <SettingsSection title="会话与模型" footer="名称用于会话列表和语音切换，工作目录决定 AI 可以访问的工程范围。">
+          <div className="settings-page-content session-connection-page">
+            <SettingsSection
+              title="会话"
+              footer="名称用于会话列表和语音切换，工作目录决定 AI 可以访问的范围。"
+              className="session-profile-panel"
+            >
               <ConfigField label="名称" value={draftProfile.name} onChange={(value) => updateField("name", value)} />
               <SettingsStatusRow
                 icon={Robot}
                 title="AI 类型"
-                detail="创建会话后不可修改；要换 AI 类型，请重新创建一个新会话。"
+                detail="创建后固定；切换 AI 请新建会话。"
                 value={currentAgent.shortName}
               />
               <AgentModelField
@@ -1290,7 +1294,11 @@ export function SettingsPanel({
               />
               <ConfigField label="工作目录" value={draftProfile.workdir} onChange={(value) => updateField("workdir", value)} />
             </SettingsSection>
-            <SettingsSection title="连接信息" footer="服务器账号和密码保存在当前设备，用于建立 SSH 连接和远端操作。">
+            <SettingsSection
+              title="服务器"
+              footer="账号和密码仅保存在当前设备。"
+              className="session-server-panel"
+            >
               <ConfigSelect
                 label="服务器类型"
                 value={normalizeServerPlatform(draftProfile.platform)}
@@ -1320,8 +1328,8 @@ export function SettingsPanel({
             </SettingsSection>
             <SettingsSection
               title="命令行工具"
-              footer="Codex 和 Claude CLI 与 Agent 相互独立。安装或升级其中一个，不会安装、升级或卸载另一个。"
-              className="cli-management-panel"
+              footer="CLI 与 Agent 相互独立，可以分别维护。"
+              className="cli-management-panel session-cli-panel"
             >
               {cliTools.map((tool) => (
                 <SettingsStatusRow
@@ -1339,16 +1347,16 @@ export function SettingsPanel({
                       disabled={busy || !editingServer?.id || !onInstallCli}
                     >
                       <Wrench size={17} weight="bold" />
-                      {tool.available ? "重新安装" : "安装"}
+                      {tool.available ? "重装" : "安装"}
                     </button>
                   }
                 />
               ))}
             </SettingsSection>
             <SettingsSection
-              title="执行方式"
-              footer="Agent 安装在当前会话连接的这台机器上。同一台机器的多个会话会共享它；未安装或异常时，会自动使用 SSH 直连。"
-              className="agent-mode-panel"
+              title="运行方式"
+              footer="Agent 异常时会自动改用 SSH 直连。"
+              className="agent-mode-panel session-agent-panel"
             >
               <ConfigToggle
                 label="使用 Agent"

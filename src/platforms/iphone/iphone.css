@@ -494,3 +494,182 @@
   color: #111216;
   background: #f0f1f4;
 }
+
+/* Session connection is a compact iPhone settings flow, not an operations dashboard. */
+.iphone-shell .session-connection-page {
+  padding-top: 12px !important;
+  padding-bottom: 20px !important;
+}
+
+.iphone-shell .session-connection-page .settings-section {
+  margin-bottom: 16px !important;
+}
+
+.iphone-shell .session-connection-page .settings-section-title {
+  margin: 0 10px 6px !important;
+  font-size: 11.5px !important;
+  font-weight: 590 !important;
+}
+
+.iphone-shell .session-connection-page .settings-section-footer {
+  margin: 6px 10px 0 !important;
+  font-size: 11px !important;
+  line-height: 1.38 !important;
+}
+
+.iphone-shell
+  .session-connection-page
+  .settings-section-group
+  > .config-field {
+  grid-template-columns: minmax(88px, 0.34fr) minmax(0, 1fr);
+  min-height: 48px !important;
+  padding: 0 11px !important;
+}
+
+.iphone-shell .session-connection-page .config-field > span {
+  font-size: 13px !important;
+  font-weight: 540 !important;
+}
+
+.iphone-shell .session-connection-page .config-field :is(input, select) {
+  height: 34px !important;
+  font-size: 14px !important;
+}
+
+.iphone-shell .session-connection-page .settings-status-row {
+  min-height: 52px !important;
+  gap: 8px;
+  padding: 7px 11px !important;
+}
+
+.iphone-shell .session-connection-page .settings-status-icon {
+  width: 26px !important;
+  min-width: 26px !important;
+  height: 26px !important;
+  border-radius: 7px !important;
+  color: var(--settings-secondary) !important;
+  background: var(--settings-control) !important;
+}
+
+.iphone-shell .session-connection-page .settings-status-icon svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+.iphone-shell .session-connection-page .settings-status-copy strong {
+  font-size: 13.5px !important;
+  font-weight: 620 !important;
+}
+
+.iphone-shell .session-connection-page .settings-status-copy small {
+  font-size: 10.5px !important;
+  line-height: 1.32 !important;
+}
+
+.iphone-shell .session-connection-page .settings-status-value {
+  padding: 2px 7px !important;
+  font-size: 10.5px !important;
+}
+
+.iphone-shell .session-cli-panel .settings-status-row {
+  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  min-height: 56px !important;
+}
+
+.iphone-shell .session-cli-panel .settings-inline-button,
+.iphone-shell .session-cli-panel .settings-inline-button.primary {
+  min-width: 0;
+  height: 30px;
+  padding: 0 5px;
+  border: 0;
+  color: var(--settings-secondary);
+  background: transparent;
+  font-size: 11.5px;
+}
+
+.iphone-shell .session-cli-panel .settings-inline-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.iphone-shell .session-agent-panel .config-toggle {
+  min-height: 48px !important;
+}
+
+.iphone-shell .session-agent-panel .settings-button-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 44px;
+  gap: 0;
+  padding: 0 4px;
+}
+
+.iphone-shell .session-agent-panel .settings-inline-button,
+.iphone-shell .session-agent-panel .settings-inline-button.primary,
+.iphone-shell .session-agent-panel .settings-inline-button.danger {
+  min-width: 0;
+  height: 44px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 0;
+  color: var(--settings-secondary);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 590;
+}
+
+.iphone-shell .session-agent-panel .settings-inline-button + .settings-inline-button {
+  border-left: 0.5px solid var(--settings-separator);
+}
+
+.iphone-shell .session-agent-panel .settings-inline-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.iphone-shell .session-agent-panel .agent-task-list {
+  gap: 6px;
+  margin: 0;
+  padding: 9px 11px 10px;
+  border: 0;
+  border-top: 0.5px solid var(--settings-separator);
+  border-radius: 0;
+  background: transparent;
+}
+
+.iphone-shell .session-agent-panel .agent-task-list-head strong {
+  color: var(--settings-text);
+  font-size: 11.5px;
+}
+
+.iphone-shell .session-agent-panel .agent-task-list-head span,
+.iphone-shell .session-agent-panel .agent-task-empty,
+.iphone-shell .session-agent-panel .agent-task-item span,
+.iphone-shell .session-agent-panel .agent-task-item small {
+  color: var(--settings-secondary);
+  font-size: 10.5px;
+}
+
+.iphone-shell .session-agent-panel .agent-task-item {
+  padding: 7px 8px;
+  background: var(--settings-control);
+}
+
+.iphone-shell .session-agent-panel .agent-task-item strong {
+  color: var(--settings-text);
+  font-size: 11.5px;
+}
+
+.iphone-shell .session-agent-panel .agent-task-item em {
+  font-size: 10px;
+}
+
+.iphone-shell
+  .settings-panel:not(.add-session-mode)
+  > .settings-actions
+  .send-button {
+  min-width: 96px;
+  height: 40px;
+  padding: 0 15px;
+  border-radius: 12px;
+}
