@@ -332,7 +332,7 @@ function IphoneComposer({
 
         <div className="iphone-composer-bottom">
           <div className="iphone-composer-leading">
-            <p className="iphone-composer-status">{statusText}</p>
+            {statusText ? <p className="iphone-composer-status">{statusText}</p> : null}
             <div className="iphone-composer-actions">
               {profileReady ? (
                 <>
