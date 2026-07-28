@@ -703,6 +703,7 @@ export function useWorkbenchController() {
   const wakeStateRef = useRef(wakeState);
   const wakeEnabledRef = useRef(false);
   const wakeLoopIdRef = useRef(0);
+  const wakeListeningSignatureRef = useRef("");
   const wakeManuallyDisabledRef = useRef(false);
   const voiceSessionActiveRef = useRef(false);
   const assistantSpeechActiveRef = useRef(false);
@@ -950,6 +951,7 @@ export function useWorkbenchController() {
 
     wakeManuallyDisabledRef.current = true;
     wakeEnabledRef.current = false;
+    wakeListeningSignatureRef.current = "";
     voiceSessionActiveRef.current = false;
     wakeLoopIdRef.current += 1;
     applyWakeState("idle");
@@ -968,15 +970,62 @@ export function useWorkbenchController() {
   useEffect(() => {
     if (!voiceInputEnabled || !isProfileReady || !wakeEnabledRef.current || wakeManuallyDisabledRef.current) return;
     if (wakeStateRef.current !== "listening") return;
+    if (wakeListeningSignatureRef.current === wakePhraseSignature) return;
 
-    wakeLoopIdRef.current += 1;
-    VoiceWorkbench.stopWakeWord?.().catch(() => {});
-    startWakeMode();
+    wakeEnabledRef.current = false;
+    wakeListeningSignatureRef.current = "";
+    const restartLoopId = wakeLoopIdRef.current + 1;
+    wakeLoopIdRef.current = restartLoopId;
+    VoiceWorkbench.stopWakeWord?.()
+      .catch(() => {})
+      .finally(() => {
+        if (
+          wakeLoopIdRef.current !== restartLoopId ||
+          wakeManuallyDisabledRef.current ||
+          normalizeProfile(profileRef.current).voiceInputEnabled !== true ||
+          busyRef.current ||
+          pendingActionRef.current ||
+          !profileReadyRef.current
+        ) {
+          return;
+        }
+        startWakeMode();
+      });
   }, [wakePhraseSignature, voiceInputEnabled, isProfileReady]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (!wakeEnabledRef.current) return;
+        wakeEnabledRef.current = false;
+        wakeListeningSignatureRef.current = "";
+        wakeLoopIdRef.current += 1;
+        applyWakeState("idle");
+        VoiceWorkbench.stopWakeWord?.().catch(() => {});
+        return;
+      }
+
+      if (
+        normalizeProfile(profileRef.current).voiceInputEnabled === true &&
+        !wakeManuallyDisabledRef.current &&
+        !busyRef.current &&
+        !pendingActionRef.current &&
+        profileReadyRef.current
+      ) {
+        startWakeMode();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
   useEffect(() => {
     return () => {
       wakeEnabledRef.current = false;
+      wakeListeningSignatureRef.current = "";
       voiceSessionActiveRef.current = false;
       assistantSpeechActiveRef.current = false;
       wakeLoopIdRef.current += 1;
@@ -6367,6 +6416,7 @@ export function useWorkbenchController() {
       applyWakeState("listening");
       try {
         const wakeContext = wakeContextForServers(serversRef.current, activeServerIdRef.current, profileRef.current);
+        wakeListeningSignatureRef.current = wakeContext.phrases.join("\n");
         const result = await VoiceWorkbench.startWakeWord({
           locale: "zh-CN",
           phrases: wakeContext.phrases,
@@ -6426,6 +6476,7 @@ export function useWorkbenchController() {
 
     if (wakeLoopIdRef.current === loopId) {
       wakeEnabledRef.current = false;
+      wakeListeningSignatureRef.current = "";
       applyWakeState("idle");
     }
   }
@@ -6452,6 +6503,7 @@ export function useWorkbenchController() {
   async function toggleWakeWord() {
     if (wakeEnabledRef.current) {
       wakeEnabledRef.current = false;
+      wakeListeningSignatureRef.current = "";
       wakeManuallyDisabledRef.current = true;
       voiceSessionActiveRef.current = false;
       assistantSpeechActiveRef.current = false;
