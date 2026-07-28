@@ -76,37 +76,73 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
 }
 
+.iphone-shell .iphone-composer-wrap {
+  padding:
+    6px
+    max(8px, var(--safe-right))
+    calc(7px + var(--safe-bottom))
+    max(8px, var(--safe-left));
+  border-top: 0.5px solid var(--iphone-line);
+  background: var(--iphone-bg);
+}
+
+.iphone-shell .iphone-composer {
+  gap: 2px;
+  max-height: min(34dvh, 240px);
+  padding: 8px 7px 6px 10px;
+  border: 0.5px solid var(--iphone-line);
+  border-radius: 16px;
+  background: var(--iphone-surface-solid);
+  box-shadow: none;
+}
+
+.iphone-shell[data-theme="dark"] .iphone-composer {
+  box-shadow: none;
+}
+
+.iphone-shell .iphone-composer textarea {
+  min-height: 30px;
+  max-height: min(20dvh, 120px);
+  padding: 2px 3px 0;
+  font-size: 16px;
+  line-height: 1.42;
+}
+
 .iphone-shell .iphone-composer-actions {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 3px;
   width: auto;
-  height: 32px;
-  min-height: 32px;
+  height: 36px;
+  min-height: 36px;
 }
 
 .iphone-shell .iphone-composer-bottom {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: end;
-  gap: 6px;
-  margin-top: 4px;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  margin-top: 1px;
 }
 
 .iphone-shell .iphone-composer-leading {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-auto-rows: auto;
-  align-items: end;
+  align-items: center;
   min-width: 0;
-  gap: 5px;
+  gap: 1px;
 }
 
 .iphone-shell .iphone-composer-leading .iphone-composer-status {
   width: 100%;
   min-width: 0;
+  padding: 0 4px;
+  font-size: 10.5px;
+  line-height: 1.25;
 }
 
 .iphone-shell .iphone-composer-leading .iphone-composer-actions {
@@ -114,20 +150,41 @@
 }
 
 .iphone-shell .iphone-composer-primary-action {
-  align-self: end;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
+  align-self: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
   transform: none;
 }
 
-.iphone-shell .iphone-send-button,
-.iphone-shell .iphone-send-button.stop {
+.iphone-shell .iphone-send-button:not(.stop) {
   align-self: center;
-  width: 32px;
-  height: 32px;
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
   margin: 0;
   border-radius: 50%;
+  color: #292b30 !important;
+  background: #eceef1 !important;
+}
+
+.iphone-shell[data-theme="dark"] .iphone-send-button:not(.stop) {
+  color: #24262b !important;
+  background: #eef0f3 !important;
+}
+
+.iphone-shell .iphone-send-button:not(.stop):disabled {
+  color: var(--iphone-muted) !important;
+  background: var(--iphone-soft) !important;
+}
+
+.iphone-shell .iphone-send-button.stop {
+  align-self: center;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  margin: 2px;
+  border-radius: 50% !important;
 }
 
 .iphone-shell .iphone-composer-actions > button {
@@ -136,13 +193,28 @@
   margin-bottom: 0;
 }
 
+.iphone-shell .iphone-composer-actions > .iphone-icon-button {
+  flex: 0 0 36px;
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+}
+
+.iphone-shell .iphone-composer-actions > .iphone-icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+
 .iphone-shell .iphone-send-button:not(.stop) svg {
+  width: 18px;
+  height: 18px;
   transform: translateY(-1px);
 }
 
 .iphone-shell .iphone-send-button.stop svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   transform: none;
 }
 
@@ -153,16 +225,16 @@
   justify-content: stretch !important;
   flex: 0 0 auto !important;
   width: auto !important;
-  min-width: 62px !important;
-  height: 32px !important;
+  min-width: 58px !important;
+  height: 36px !important;
   gap: 4px;
-  padding: 0 8px !important;
-  border: 0.5px solid var(--iphone-line) !important;
+  padding: 0 6px !important;
+  border: 0 !important;
   border-radius: 10px !important;
   color: var(--iphone-muted) !important;
   background: transparent !important;
-  font-size: 11.5px !important;
-  font-weight: 620;
+  font-size: 11px !important;
+  font-weight: 590;
   line-height: 1;
   letter-spacing: 0;
   white-space: nowrap;
@@ -180,21 +252,20 @@
 }
 
 .iphone-shell .iphone-composer-actions .iphone-wake-button.active {
-  border-color: var(--iphone-line) !important;
   color: var(--iphone-text) !important;
-  background: var(--iphone-soft) !important;
+  background: transparent !important;
 }
 
 .iphone-shell .iphone-composer-actions .iphone-wake-button.muted {
   color: var(--iphone-muted) !important;
   background: transparent !important;
-  opacity: 0.72;
+  opacity: 0.58;
 }
 
 .iphone-shell .iphone-composer-actions .iphone-wake-button .wake-ear-icon {
   flex: 0 0 auto;
-  width: 16px !important;
-  height: 16px !important;
+  width: 17px !important;
+  height: 17px !important;
 }
 
 .iphone-shell .iphone-composer-actions .iphone-wake-button .wake-status-dot {
