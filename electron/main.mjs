@@ -96,7 +96,12 @@ function createWindow({ chatServerId = "", title = "" } = {}) {
   else mainWindow = window;
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    void shell.openExternal(url).catch((error) => {
+      appendPersistentLogSync("warn", "app.external_url.open_failed", {
+        url: String(url || "").slice(0, 240),
+        error: String(error?.message || error || ""),
+      });
+    });
     return { action: "deny" };
   });
 
@@ -2356,6 +2361,22 @@ async function saveFile(payload = {}) {
   return { ok: true, path: filePath };
 }
 
+async function openExternalFile(payload = {}) {
+  const name = safeDownloadFileName(payload.name);
+  const rawBase64 = String(payload.base64 || "");
+  const base64 = rawBase64.includes(",") ? rawBase64.split(",").pop() : rawBase64;
+  if (!base64) throw new Error("Missing required field: base64");
+
+  const previewDirectory = join(app.getPath("temp"), "AI Workbench", "previews");
+  await mkdir(previewDirectory, { recursive: true });
+  const previewPath = join(previewDirectory, `${Date.now()}-${randomUUID().slice(0, 8)}-${name}`);
+  await writeFile(previewPath, Buffer.from(base64, "base64"));
+
+  const openError = await shell.openPath(previewPath);
+  if (openError) throw new Error(openError);
+  return { ok: true, path: previewPath };
+}
+
 const maxClipboardAttachmentBytes = 20 * 1024 * 1024;
 
 function clipboardMimeForPath(filePath) {
@@ -2510,6 +2531,10 @@ ipcMain.handle("aiwb:terminal-close", async (event, payload = {}) => {
 
 ipcMain.handle("aiwb:save-file", async (_event, payload) => {
   return saveFile(payload);
+});
+
+ipcMain.handle("aiwb:open-external-file", async (_event, payload) => {
+  return openExternalFile(payload);
 });
 
 ipcMain.handle("aiwb:read-clipboard-attachments", async () => {

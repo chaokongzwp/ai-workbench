@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   saveFile(payload) {
     return ipcRenderer.invoke("aiwb:save-file", payload);
   },
+  openExternalFile(payload) {
+    return ipcRenderer.invoke("aiwb:open-external-file", payload);
+  },
   readClipboardAttachments() {
     return ipcRenderer.invoke("aiwb:read-clipboard-attachments");
   },

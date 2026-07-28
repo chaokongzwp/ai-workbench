@@ -367,6 +367,7 @@ function ambiguousFileChoicesFromError(error, request = {}) {
 
 export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDownloadFile, onDeleteFile, onClose }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [externalOpenState, setExternalOpenState] = useState({ state: "idle", message: "" });
   const deleteConfirmationTimerRef = useRef(null);
   const file = preview?.file;
   const dataUrl = useMemo(() => fileDataUrl(file), [file]);
@@ -389,6 +390,7 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
 
   useEffect(() => {
     setConfirmingDelete(false);
+    setExternalOpenState({ state: "idle", message: "" });
     if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
     deleteConfirmationTimerRef.current = null;
   }, [path]);
@@ -411,6 +413,28 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
     deleteConfirmationTimerRef.current = null;
     setConfirmingDelete(false);
     onDeleteFile?.(file);
+  }
+
+  async function openInExternalApp() {
+    if (!file?.base64) return;
+    setExternalOpenState({ state: "loading", message: "正在交给系统打开…" });
+    try {
+      const bridge = desktopBridge();
+      if (bridge?.openExternalFile) {
+        await bridge.openExternalFile({
+          name: file.name || remoteBasename(path) || "preview.html",
+          mime: file.mime || previewMimeFromExtension(file.extension),
+          base64: file.base64,
+        });
+      } else {
+        const opened = window.open(dataUrl, "_blank");
+        if (!opened) throw new Error("系统阻止了新窗口，请允许 App 打开外部页面。");
+        opened.opener = null;
+      }
+      setExternalOpenState({ state: "done", message: "已交给系统打开。" });
+    } catch (error) {
+      setExternalOpenState({ state: "error", message: `打开失败：${shortError(error)}` });
+    }
   }
 
   return (
@@ -471,12 +495,20 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
                 >
                   {deleting ? "删除中" : confirmingDelete ? "确认删除" : "删除"}
                 </button>
-                <button type="button" className="send-button" onClick={() => window.open(dataUrl, "_blank", "noopener")}>
-                  浏览器打开
+                <button
+                  type="button"
+                  className="send-button"
+                  onClick={openInExternalApp}
+                  disabled={!file?.base64 || externalOpenState.state === "loading"}
+                >
+                  {externalOpenState.state === "loading" ? "打开中" : "浏览器打开"}
                 </button>
               </div>
             </div>
             {downloadMessage ? <p className={`file-download-status ${downloadState?.state || ""}`}>{downloadMessage}</p> : null}
+            {externalOpenState.message ? (
+              <p className={`file-download-status ${externalOpenState.state}`}>{externalOpenState.message}</p>
+            ) : null}
             <FilePreviewContent file={file} dataUrl={dataUrl} textContent={textContent} csvRows={csvRows} />
           </>
         ) : null}
