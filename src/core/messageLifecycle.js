@@ -13,7 +13,12 @@ const pendingRemoteTaskStatuses = new Set([
   "sync-timeout",
 ]);
 const successfulRemoteTaskStatuses = new Set(["done"]);
-const failedRemoteTaskStatuses = new Set(["error", "missing", "deferred-waiting-answer"]);
+const failedRemoteTaskStatuses = new Set([
+  "error",
+  "missing",
+  "deferred-waiting-answer",
+  "sync-lost-no-task-id",
+]);
 const cancelledRemoteTaskStatuses = new Set(["cancelled"]);
 
 function text(value) {

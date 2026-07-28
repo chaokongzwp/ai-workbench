@@ -6268,23 +6268,26 @@ export function useWorkbenchController() {
       if (transientAgentDisconnect) {
         const currentMessage = (serverById(serverId)?.messages || []).find((item) => item.id === assistantMessageId) || {};
         const remoteTaskId = String(currentMessage.remoteTaskId || "").trim();
+        const taskWasAccepted = Boolean(remoteTaskId);
         const conversationId = String(currentMessage.conversationId || "").trim() || ensureServerConversationId(serverId, currentProfile, finalAgent.id);
-        pendingRemoteTask = true;
+        pendingRemoteTask = taskWasAccepted;
         ranRemote = true;
         updateAssistantMessageInServer(serverId, assistantMessageId, {
-          title: remoteTaskId ? "连接断开" : "连接异常",
-          body: remoteTaskId
+          title: taskWasAccepted ? "连接断开" : "提交状态未知",
+          body: taskWasAccepted
             ? "正在自动重新连接。远端任务可能仍在运行，连接恢复后会继续同步。"
             : "没有确认任务是否成功提交。为避免重复执行，请重新连接后检查状态。",
-          status: "running",
+          status: taskWasAccepted ? "running" : "error",
           backend: "agent",
           conversationId,
           remoteTaskId: remoteTaskId || undefined,
           agentId: finalAgent.id,
           promptText: taskTextFromValue(currentMessage.promptText || text),
-          remoteTaskStatus: remoteTaskId ? "sync-lost" : "sync-lost-no-task-id",
+          remoteTaskStatus: taskWasAccepted ? "sync-lost" : "sync-lost-no-task-id",
           remoteTaskCheckedAt: Date.now(),
           remoteSyncError: message,
+          resultMissing: taskWasAccepted ? undefined : true,
+          completedAt: taskWasAccepted ? undefined : Date.now(),
           agentFailure: undefined,
           technicalDetail: undefined,
           loginAction: undefined,
@@ -6292,23 +6295,24 @@ export function useWorkbenchController() {
           forceUpdate: true,
         });
         setServerTask(serverId, {
-          state: "running",
+          state: taskWasAccepted ? "running" : "idle",
           backend: "agent",
           conversationId,
           remoteTaskId: remoteTaskId || "",
           agentId: finalAgent.id,
           startedAt: Number(currentMessage.startedAt || currentMessage.createdAtMs || Date.now()),
-          label: remoteTaskId ? `等待同步 ${finalAgent.shortName}` : "状态待确认",
+          finishedAt: taskWasAccepted ? undefined : Date.now(),
+          label: taskWasAccepted ? `等待同步 ${finalAgent.shortName}` : "提交状态未知",
         });
         setServerConnection(serverId, {
-          state: remoteTaskId ? "testing" : "error",
-          label: remoteTaskId ? "连接断开" : "连接异常",
-          detail: remoteTaskId ? "正在自动重新连接" : "无法确认远端任务状态",
+          state: taskWasAccepted ? "testing" : "error",
+          label: taskWasAccepted ? "连接断开" : "连接异常",
+          detail: taskWasAccepted ? "正在自动重新连接" : "无法确认远端任务状态",
           mode: "agent",
         });
         enqueueTaskNotice({
           serverId,
-          title: remoteTaskId ? "连接断开，正在重连" : "连接异常",
+          title: taskWasAccepted ? "连接断开，正在重连" : "提交状态未知",
           tone: "warning",
         });
       } else {

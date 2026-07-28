@@ -52,6 +52,19 @@ const transportTimeout = normalizeMessageLifecycle({
 assert.equal(transportTimeout.responsePhase, responsePhasePending);
 assert.equal(isPendingAgentResponse(transportTimeout), true);
 
+const unconfirmedSubmission = normalizeMessageLifecycle({
+  ...pending,
+  remoteTaskId: "",
+  status: "running",
+  remoteTaskStatus: "sync-lost-no-task-id",
+  resultMissing: true,
+  body: "没有确认任务是否成功提交。",
+});
+assert.equal(unconfirmedSubmission.responsePhase, responsePhaseCompleted);
+assert.equal(unconfirmedSubmission.responseOutcome, "error");
+assert.equal(unconfirmedSubmission.status, "error");
+assert.equal(isPendingAgentResponse(unconfirmedSubmission), false);
+
 const stalePending = {
   ...pending,
   body: "旧缓存仍显示等待。",
