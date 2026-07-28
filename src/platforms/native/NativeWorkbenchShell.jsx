@@ -99,6 +99,7 @@ export function NativeWorkbenchShell({
   onSend,
   onVoice,
   onWake,
+  onOpenVoiceSettings,
   onReleaseRunningTask,
   onCancelRunningTask,
   onToggleRaw,
@@ -449,6 +450,8 @@ export function NativeWorkbenchShell({
               onSend={onSend}
               onVoice={onVoice}
               onWake={onWake}
+              onOpenVoiceSettings={onOpenVoiceSettings}
+              showVoiceControlsWhenDisabled={platform === "android"}
               onReleaseRunningTask={onReleaseRunningTask}
               onCancelRunningTask={onCancelRunningTask}
             />

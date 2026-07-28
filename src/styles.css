@@ -10864,6 +10864,15 @@ body {
   text-align: left;
 }
 
+.native-app-shell[data-platform="android"] .composer .input-actions .composer-icon-button.muted {
+  color: rgba(60, 60, 67, 0.58);
+  background: transparent;
+}
+
+.native-app-shell[data-platform="android"][data-theme="dark"] .composer .input-actions .composer-icon-button.muted {
+  color: rgba(235, 235, 245, 0.58);
+}
+
 .native-app-shell:is([data-platform="ios"], [data-platform="android"]) .wake-word-control small,
 .native-app-shell:is([data-platform="ios"], [data-platform="android"]) .migration-settings-card span {
   color: rgba(60, 60, 67, 0.58);

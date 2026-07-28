@@ -368,10 +368,12 @@ export function Composer({
   onSend,
   onVoice,
   onWake,
+  onOpenVoiceSettings,
   onCancelRunningTask,
   compact = false,
   compactPlaceholder = "",
   showSetupAction = true,
+  showVoiceControlsWhenDisabled = false,
   utilityControls = false,
   iconStyle = "default",
 }) {
@@ -389,9 +391,10 @@ export function Composer({
   const stopMode = taskLocked;
   const stopDisabled = !ready;
   const sendDisabled = inputLock.sendBlocked || !hasPayload;
+  const showVoiceControls = voiceInputEnabled || showVoiceControlsWhenDisabled;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const downloadDisabled = !ready;
-  const voiceDisabled = !voiceInputEnabled || !ready || taskLocked || (operationBusy && !voiceActive);
+  const voiceDisabled = !ready || taskLocked || (operationBusy && !voiceActive);
   const voiceLabel = voiceState === "listening" ? "停止" : voiceState === "stopping" ? "停止中" : "语音";
   const wakeActive =
     wakeState === "listening" ||
@@ -399,7 +402,7 @@ export function Composer({
     wakeState === "dictating" ||
     wakeState === "speaking" ||
     wakeState === "stopping";
-  const wakeDisabled = !voiceInputEnabled || !ready || taskLocked || (operationBusy && !wakeActive);
+  const wakeDisabled = !ready || taskLocked || (operationBusy && !wakeActive);
   const wakeLabel =
     wakeState === "stopping"
       ? "关闭中"
@@ -430,6 +433,22 @@ export function Composer({
           : voiceActive
             ? "正在听..."
             : "");
+
+  function handleVoiceClick() {
+    if (!voiceInputEnabled) {
+      onOpenVoiceSettings?.();
+      return;
+    }
+    onVoice?.();
+  }
+
+  function handleWakeClick() {
+    if (!voiceInputEnabled) {
+      onOpenVoiceSettings?.();
+      return;
+    }
+    onWake?.();
+  }
 
   return (
     <footer
@@ -518,16 +537,18 @@ export function Composer({
           <div className="input-actions">
             {ready || !showSetupAction ? (
               <>
-                {voiceInputEnabled ? (
+                {showVoiceControls ? (
                   <button
                     type="button"
                     className={`wake-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
                       wakeActive ? "listening" : ""
-                    }`}
-                    onClick={onWake}
+                    } ${!voiceInputEnabled ? "muted" : ""}`}
+                    onClick={handleWakeClick}
                     disabled={wakeDisabled}
-                    aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}
-                    title={wakeLabel}
+                    aria-label={
+                      !voiceInputEnabled ? "打开语音与播放设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
+                    }
+                    title={!voiceInputEnabled ? "开启语音能力" : wakeLabel}
                   >
                     {macIcons ? (
                       <LucideEar
@@ -596,16 +617,18 @@ export function Composer({
                     <Paperclip size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
                   )}
                 </button>
-                {voiceInputEnabled ? (
+                {showVoiceControls ? (
                   <button
                     type="button"
                     className={`voice-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
                       voiceActive ? "listening" : ""
-                    }`}
-                    onClick={onVoice}
+                    } ${!voiceInputEnabled ? "muted" : ""}`}
+                    onClick={handleVoiceClick}
                     disabled={voiceDisabled}
-                    aria-label={voiceActive ? "停止语音输入" : "语音输入"}
-                    title={voiceLabel}
+                    aria-label={
+                      !voiceInputEnabled ? "语音未开启，打开语音设置" : voiceActive ? "停止语音输入" : "语音输入"
+                    }
+                    title={!voiceInputEnabled ? "开启语音能力" : voiceLabel}
                   >
                     {macIcons ? (
                       <LucideMic size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
