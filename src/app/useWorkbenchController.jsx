@@ -704,7 +704,7 @@ export function useWorkbenchController() {
   const wakeEnabledRef = useRef(false);
   const wakeLoopIdRef = useRef(0);
   const wakeListeningSignatureRef = useRef("");
-  const wakeManuallyDisabledRef = useRef(false);
+  const wakeManuallyDisabledRef = useRef(true);
   const voiceSessionActiveRef = useRef(false);
   const assistantSpeechActiveRef = useRef(false);
   const assistantSpeechRunIdRef = useRef(0);
@@ -944,10 +944,7 @@ export function useWorkbenchController() {
   }, [activeServerId, messages, workspaceLoaded]);
 
   useEffect(() => {
-    if (voiceInputEnabled) {
-      wakeManuallyDisabledRef.current = false;
-      return;
-    }
+    if (voiceInputEnabled) return;
 
     wakeManuallyDisabledRef.current = true;
     wakeEnabledRef.current = false;
