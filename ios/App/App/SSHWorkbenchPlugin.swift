@@ -186,6 +186,7 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
     private var activeCall: CAPPluginCall?
     private var timeoutTimer: Timer?
     private var silenceTimer: Timer?
+    private var recognitionFinishTimer: Timer?
     private var lastTranscript = ""
     private var lastTranscriptChangedAt: Date?
     private var activeSilenceSeconds: TimeInterval = 3
@@ -444,15 +445,22 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
         engine.prepare()
         try engine.start()
 
-        timeoutTimer = Timer.scheduledTimer(withTimeInterval: timeoutSeconds, repeats: false) { [weak self] _ in
+        let recognitionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: timeoutSeconds, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if self.aliyunMode == .wake {
+                if mode == .wake {
                     self.finishWakeWord(detected: false, phrase: "", text: self.wakeTranscript)
-                } else {
+                } else if self.lastTranscript.isEmpty {
                     self.finishRecognition(error: nil)
+                } else {
+                    self.requestRecognitionFinish()
                 }
             }
+        }
+        if mode == .wake {
+            wakeTimeoutTimer = recognitionTimeoutTimer
+        } else {
+            timeoutTimer = recognitionTimeoutTimer
         }
 
         if mode == .dictation {
@@ -482,7 +490,10 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
                     "disfluency_removal_enabled": false,
                     "language_hints": ["zh"],
                     "semantic_punctuation_enabled": false,
-                    "max_sentence_silence": 3000,
+                    // Keep server-side sentence finalization quick. The app's
+                    // separate silence timer still controls the 3-second end
+                    // of dictation window.
+                    "max_sentence_silence": 1000,
                     "punctuation_prediction_enabled": true,
                     "inverse_text_normalization_enabled": true
                 ],
@@ -618,14 +629,21 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard !joined.isEmpty else { return }
+            let isFinal = sentence["sentence_end"] as? Bool == true
+            let previousTranscript = lastTranscript
             lastTranscript = joined
-            lastTranscriptChangedAt = Date()
+            // Interim events follow actual speech closely. A final event can
+            // arrive after the server-side silence timeout, so do not restart
+            // the app's 3-second silence window for the same sentence.
+            if !isFinal || previousTranscript.isEmpty {
+                lastTranscriptChangedAt = Date()
+            }
             if aliyunMode == .wake {
                 wakeTranscript = joined
             }
             notifyListeners("voiceTranscript", data: [
                 "text": joined,
-                "isFinal": sentence["sentence_end"] as? Bool == true,
+                "isFinal": isFinal,
                 "provider": "pisen-dashscope-asr"
             ])
 
@@ -827,6 +845,8 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
         timeoutTimer = nil
         silenceTimer?.invalidate()
         silenceTimer = nil
+        recognitionFinishTimer?.invalidate()
+        recognitionFinishTimer = nil
 
         if let engine = audioEngine {
             if engine.isRunning {
@@ -868,7 +888,32 @@ public class VoiceWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, AVAudioPlayerDel
         }
 
         if Date().timeIntervalSince(lastTranscriptChangedAt) >= activeSilenceSeconds {
-            finishRecognition(error: nil)
+            requestRecognitionFinish()
+        }
+    }
+
+    private func requestRecognitionFinish() {
+        guard activeCall != nil else { return }
+        guard recognitionFinishTimer == nil else { return }
+
+        timeoutTimer?.invalidate()
+        timeoutTimer = nil
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+
+        if let engine = audioEngine {
+            if engine.isRunning {
+                engine.stop()
+            }
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        audioEngine = nil
+
+        sendAliyunFinishTask()
+        recognitionFinishTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.finishRecognition(error: nil)
+            }
         }
     }
 
