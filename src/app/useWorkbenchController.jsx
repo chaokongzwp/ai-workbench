@@ -3049,10 +3049,10 @@ export function useWorkbenchController() {
       serversRef.current = nextServers;
       await saveWorkspace(nextServers, target.id);
       const connectedServer = nextServers.find((server) => server.id === target.id);
-      if (agentSetup.available && connectedServer?.conversationId) {
+      if (agentSetup.available && serverNeedsAgentConversationRecovery(connectedServer)) {
         await syncAgentConversationForServer(connectedServer, {
           limit: 1,
-          reason: "session-connect-latest",
+          reason: "session-connect-pending-task",
         });
       }
     } catch (error) {
@@ -5935,13 +5935,13 @@ export function useWorkbenchController() {
       activeServerId: activeServerIdRef.current,
     });
 
-	    if (busyRef.current || pendingActionRef.current) {
-	      const title = "上一条操作还在处理";
+	    if (pendingActionRef.current) {
+	      const title = "请先完成上方的登录或选择";
 	      setVoiceError(title);
       enqueueTaskNotice({ serverId, title, tone: "error" });
       void appLog("warn", "send.blocked", {
         serverId,
-        reason: busyRef.current ? "ui_busy" : "pending_action",
+        reason: "pending_action",
       });
       return;
     }

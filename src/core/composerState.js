@@ -55,9 +55,9 @@ export function composerLockPresentation({
   if (busy) {
     return {
       locked: false,
-      sendBlocked: true,
+      sendBlocked: false,
       code: "operation",
-      text: "会话处理中，可以继续编辑",
+      text: "",
     };
   }
 

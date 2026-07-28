@@ -11,8 +11,9 @@ assert.deepEqual(ready, {
 
 const operation = composerLockPresentation({ busy: true });
 assert.equal(operation.locked, false);
-assert.equal(operation.sendBlocked, true);
+assert.equal(operation.sendBlocked, false);
 assert.equal(operation.code, "operation");
+assert.equal(operation.text, "");
 
 const setup = composerLockPresentation({ busy: true, profileReady: false });
 assert.equal(setup.locked, false);
