@@ -564,8 +564,6 @@ export function SettingsPanel({
   onAddSelected,
   onSave,
   onDelete,
-  onDuplicate,
-  onOpenTerminal,
   onLoginRemoteAgent,
   onInstallAgent,
   onInstallCli,
@@ -1184,7 +1182,7 @@ export function SettingsPanel({
               <SettingsMenuRow
                 icon={FolderSimple}
                 title="会话操作"
-                detail="复制会话、打开终端或删除"
+                detail="登录 AI 工具或删除会话"
                 onClick={() => setSettingsPage("session-actions")}
               />
               <SettingsMenuRow
@@ -1851,34 +1849,20 @@ export function SettingsPanel({
 
         {editingSession && settingsPage === "session-actions" ? (
           <div className="settings-page-content">
-            <SettingsSection title="常用操作">
-              <SettingsActionRow
-                icon={Copy}
-                title="复制会话"
-                detail="保留服务器和工作目录，创建一个新的独立会话"
-                onClick={onDuplicate}
-                disabled={busy || !onDuplicate}
-              />
+            <SettingsSection title="AI 工具登录">
               <SettingsActionRow
                 icon={Robot}
                 title="登录 Codex"
                 detail="在远程机器打开 Codex 登录授权流程"
                 onClick={() => onLoginRemoteAgent?.("codex")}
-                disabled={busy || !onLoginRemoteAgent}
+                disabled={!onLoginRemoteAgent}
               />
               <SettingsActionRow
                 icon={Terminal}
                 title="登录 Claude"
                 detail="在远程机器打开 Claude Code 登录/授权向导"
                 onClick={() => onLoginRemoteAgent?.("claude")}
-                disabled={busy || !onLoginRemoteAgent}
-              />
-              <SettingsActionRow
-                icon={Terminal}
-                title="打开 SSH 终端"
-                detail="处理登录、授权或命令行交互"
-                onClick={onOpenTerminal}
-                disabled={busy || !onOpenTerminal}
+                disabled={!onLoginRemoteAgent}
               />
             </SettingsSection>
             <SettingsSection title="危险操作" footer="删除只会移除当前设备上的会话配置，不会删除远端工程文件。">
