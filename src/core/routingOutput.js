@@ -3,6 +3,11 @@ import * as Agent from "./agent.js";
 import * as RemoteCommands from "./remoteCommands.js";
 import * as RemoteFiles from "./remoteFiles.js";
 import * as AgentOutput from "./agentOutput.js";
+import {
+  taskStateForMessage,
+  taskStateIsActive,
+  taskStateSucceeded,
+} from "./messageLifecycle.js";
 
 const {
   SSHWorkbench,
@@ -200,9 +205,6 @@ const {
   serverPlatforms,
   serverSessionName,
   serverTaskRunning,
-  taskStateForMessage,
-  taskStateIsActive,
-  taskStateSucceeded,
   sessionName,
   sessionSelectionKey,
   shQuote,
