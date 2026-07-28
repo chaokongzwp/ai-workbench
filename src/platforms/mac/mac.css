@@ -1239,3 +1239,50 @@ body.mac-terminal-resizing {
     margin-bottom: 12px;
   }
 }
+
+.mac-shell .composer.compact .input-actions .wake-button.composer-icon-button,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .wake-button.composer-icon-button {
+  display: inline-flex !important;
+  place-items: unset !important;
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 64px !important;
+  height: 32px !important;
+  gap: 5px !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--mac-line) !important;
+  border-radius: 10px !important;
+  color: var(--mac-muted) !important;
+  background: transparent !important;
+  font-size: 12px !important;
+  font-weight: 620 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  white-space: nowrap;
+}
+
+.mac-shell .composer.compact .input-actions .wake-button.composer-icon-button.listening,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .wake-button.composer-icon-button.listening {
+  border-color: var(--mac-line) !important;
+  color: var(--mac-text) !important;
+  background: var(--mac-surface-selected) !important;
+}
+
+.mac-shell .composer.compact .input-actions .wake-button.composer-icon-button .wake-ear-icon,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .wake-button.composer-icon-button .wake-ear-icon {
+  width: 17px !important;
+  height: 17px !important;
+}
+
+.mac-shell .composer.compact .input-actions .wake-button.composer-icon-button .wake-status-dot,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .wake-button.composer-icon-button .wake-status-dot {
+  width: 6px !important;
+  height: 6px !important;
+  color: #30d158 !important;
+  stroke-width: 0 !important;
+}
+
+.mac-shell .composer.compact .input-actions .wake-button.composer-icon-button:disabled,
+.app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .wake-button.composer-icon-button:disabled {
+  opacity: 0.36;
+}

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
+  Circle,
   DownloadSimple,
+  Ear,
   File as FileIcon,
   FolderOpen,
-  Lightning,
   Microphone,
   Paperclip,
   Stop,
@@ -12,12 +13,13 @@ import {
 } from "@phosphor-icons/react";
 import {
   ArrowUp as LucideArrowUp,
+  Circle as LucideCircle,
   Download as LucideDownload,
+  Ear as LucideEar,
   Folder as LucideFolder,
   Mic as LucideMic,
   Paperclip as LucidePaperclip,
   Square as LucideSquare,
-  Zap as LucideZap,
 } from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
@@ -410,6 +412,7 @@ export function Composer({
           : wakeState === "listening"
             ? "唤醒中"
             : "唤醒";
+  const wakeButtonLabel = wakeState === "stopping" ? "关闭中" : wakeActive ? "监听中" : "唤醒";
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
   const macIcons = iconStyle === "mac";
   const toolIconSize = 18;
@@ -515,6 +518,42 @@ export function Composer({
           <div className="input-actions">
             {ready || !showSetupAction ? (
               <>
+                {voiceInputEnabled ? (
+                  <button
+                    type="button"
+                    className={`wake-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
+                      wakeActive ? "listening" : ""
+                    }`}
+                    onClick={onWake}
+                    disabled={wakeDisabled}
+                    aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}
+                    title={wakeLabel}
+                  >
+                    {macIcons ? (
+                      <LucideEar
+                        className="wake-ear-icon"
+                        size={toolIconSize}
+                        strokeWidth={1.9}
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Ear
+                        className="wake-ear-icon"
+                        size={toolIconSize}
+                        weight={toolIconWeight}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {wakeActive ? (
+                      macIcons ? (
+                        <LucideCircle className="wake-status-dot" fill="currentColor" aria-hidden="true" />
+                      ) : (
+                        <Circle className="wake-status-dot" weight="fill" aria-hidden="true" />
+                      )
+                    ) : null}
+                    <span className="wake-button-label">{wakeButtonLabel}</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={`download-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""}`}
@@ -558,49 +597,22 @@ export function Composer({
                   )}
                 </button>
                 {voiceInputEnabled ? (
-                  <>
-                    <button
-                      type="button"
-                      className={`voice-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
-                        voiceActive ? "listening" : ""
-                      }`}
-                      onClick={onVoice}
-                      disabled={voiceDisabled}
-                      aria-label={voiceActive ? "停止语音输入" : "语音输入"}
-                      title={voiceLabel}
-                    >
-                      {macIcons ? (
-                        <LucideMic size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
-                      ) : (
-                        <Microphone size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className={`wake-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
-                        wakeActive ? "listening" : ""
-                      }`}
-                      onClick={onWake}
-                      disabled={wakeDisabled}
-                      aria-label={wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"}
-                      title={wakeLabel}
-                    >
-                      {macIcons ? (
-                        <LucideZap
-                          size={toolIconSize}
-                          strokeWidth={1.9}
-                          fill={wakeActive ? "currentColor" : "none"}
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Lightning
-                          size={toolIconSize}
-                          weight={wakeActive ? "fill" : toolIconWeight}
-                          aria-hidden="true"
-                        />
-                      )}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className={`voice-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""} ${
+                      voiceActive ? "listening" : ""
+                    }`}
+                    onClick={onVoice}
+                    disabled={voiceDisabled}
+                    aria-label={voiceActive ? "停止语音输入" : "语音输入"}
+                    title={voiceLabel}
+                  >
+                    {macIcons ? (
+                      <LucideMic size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
+                    ) : (
+                      <Microphone size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                    )}
+                  </button>
                 ) : null}
                 <button
                   type="button"

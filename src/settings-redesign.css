@@ -4337,3 +4337,73 @@
   color: #d66760 !important;
   background: transparent !important;
 }
+
+/* Wake-word control: a readable neutral mode switch, distinct from voice input. */
+.composer .input-actions .wake-button.composer-icon-button,
+.conversation .composer .input-actions .wake-button.composer-icon-button {
+  display: inline-flex !important;
+  place-items: unset !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 64px !important;
+  height: 32px !important;
+  gap: 5px !important;
+  padding: 0 9px !important;
+  border: 1px solid color-mix(in srgb, var(--muted, #747b87) 36%, transparent) !important;
+  border-radius: 10px !important;
+  color: var(--muted, #747b87) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
+  font-weight: 620 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  white-space: nowrap;
+}
+
+.composer .input-actions .wake-button.composer-icon-button .wake-ear-icon,
+.conversation .composer .input-actions .wake-button.composer-icon-button .wake-ear-icon {
+  flex: 0 0 auto;
+  width: 17px !important;
+  height: 17px !important;
+}
+
+.composer .input-actions .wake-button.composer-icon-button .wake-status-dot,
+.conversation .composer .input-actions .wake-button.composer-icon-button .wake-status-dot {
+  flex: 0 0 auto;
+  width: 6px !important;
+  height: 6px !important;
+  color: #30d158 !important;
+  stroke-width: 0 !important;
+}
+
+.composer .input-actions .wake-button.composer-icon-button .wake-button-label,
+.conversation .composer .input-actions .wake-button.composer-icon-button .wake-button-label {
+  display: inline-block;
+  font-size: inherit;
+  line-height: 1;
+}
+
+.composer .input-actions .wake-button.composer-icon-button.listening,
+.conversation .composer .input-actions .wake-button.composer-icon-button.listening {
+  border-color: color-mix(in srgb, var(--text, #f2f4f8) 16%, transparent) !important;
+  color: var(--text, #f2f4f8) !important;
+  background: color-mix(in srgb, var(--text, #f2f4f8) 8%, transparent) !important;
+}
+
+.composer .input-actions .wake-button.composer-icon-button:hover:not(:disabled),
+.composer .input-actions .wake-button.composer-icon-button:focus-visible:not(:disabled),
+.conversation .composer .input-actions .wake-button.composer-icon-button:hover:not(:disabled),
+.conversation .composer .input-actions .wake-button.composer-icon-button:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text, #f2f4f8) 18%, transparent) !important;
+  color: var(--text, #f2f4f8) !important;
+  background: color-mix(in srgb, var(--text, #f2f4f8) 7%, transparent) !important;
+}
+
+.composer .input-actions .wake-button.composer-icon-button:disabled,
+.conversation .composer .input-actions .wake-button.composer-icon-button:disabled {
+  opacity: 0.36;
+  cursor: default;
+}

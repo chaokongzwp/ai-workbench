@@ -2,14 +2,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ArrowUp,
   ArrowClockwise,
+  Circle,
   DotsThree,
   DownloadSimple,
+  Ear,
   File as FileIcon,
   FileZip,
   FolderOpen,
   GearSix,
   List,
-  Lightning,
   MagnifyingGlass,
   Microphone,
   Paperclip,
@@ -200,6 +201,7 @@ function IphoneComposer({
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
   const voiceDisabled = !profileReady || taskLocked || (operationBusy && !voiceActive);
   const wakeDisabled = !profileReady || taskLocked || (operationBusy && !wakeActive);
+  const wakeButtonLabel = wakeState === "stopping" ? "关闭中" : wakeActive ? "监听中" : "唤醒";
   const statusText = !inputLock.locked && inputLock.sendBlocked
     ? inputLock.text
     : !voiceInputEnabled
@@ -336,6 +338,21 @@ function IphoneComposer({
                 <>
                   <button
                     type="button"
+                    className={`iphone-icon-button iphone-wake-button ${wakeActive ? "active" : ""} ${
+                      !voiceInputEnabled ? "muted" : ""
+                    }`}
+                    onClick={handleWakeClick}
+                    disabled={wakeDisabled}
+                    aria-label={
+                      !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
+                    }
+                  >
+                    <Ear className="wake-ear-icon" size={17} weight="regular" aria-hidden="true" />
+                    {wakeActive ? <Circle className="wake-status-dot" weight="fill" aria-hidden="true" /> : null}
+                    <span className="wake-button-label">{wakeButtonLabel}</span>
+                  </button>
+                  <button
+                    type="button"
                     className="iphone-icon-button download-button"
                     onClick={onOpenDownloadFile}
                     aria-label="下载远程文件"
@@ -371,17 +388,6 @@ function IphoneComposer({
                     }
                   >
                     <Microphone size={17} weight="regular" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    className={`iphone-icon-button ${wakeActive ? "active" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
-                    onClick={handleWakeClick}
-                    disabled={wakeDisabled}
-                    aria-label={
-                      !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
-                    }
-                  >
-                    <Lightning size={17} weight={wakeActive ? "fill" : "regular"} aria-hidden="true" />
                   </button>
                 </>
               ) : null}

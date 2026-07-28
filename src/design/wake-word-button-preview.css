@@ -1,0 +1,135 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  color: #f2f4f8;
+  background: #0d1016;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 860px;
+  min-height: 100vh;
+  background: #0d1016;
+}
+
+button {
+  font: inherit;
+}
+
+.wake-preview-page {
+  display: grid;
+  gap: 46px;
+  width: min(1280px, calc(100vw - 96px));
+  margin: 0 auto;
+  padding: 72px 0;
+}
+
+.wake-preview-state {
+  display: grid;
+  gap: 14px;
+}
+
+.wake-preview-state > span {
+  color: #a4aab5;
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.wake-preview-composer {
+  display: grid;
+  min-height: 172px;
+  padding: 26px 28px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 24px;
+  background: #1c2028;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.wake-preview-composer > p {
+  margin: 0;
+  color: #737b88;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.wake-preview-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: auto;
+}
+
+.wake-preview-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wake-preview-button,
+.wake-preview-tool,
+.wake-preview-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border: 0;
+  color: #aeb7c5;
+  background: transparent;
+}
+
+.wake-preview-button {
+  min-width: 64px;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid rgba(174, 183, 197, 0.28);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1;
+}
+
+.wake-preview-button.is-active {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f2f4f8;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.wake-preview-dot {
+  width: 6px;
+  height: 6px;
+  color: #30d158;
+  stroke-width: 0;
+}
+
+.wake-preview-tool {
+  width: 32px;
+  padding: 0;
+  border-radius: 9px;
+}
+
+.wake-preview-tool svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.9;
+}
+
+.wake-preview-button:hover,
+.wake-preview-tool:hover {
+  color: #f2f4f8;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.wake-preview-stop {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  color: #ffffff;
+  background: #ff4f55;
+}
