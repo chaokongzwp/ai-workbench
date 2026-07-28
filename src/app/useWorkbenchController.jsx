@@ -3240,6 +3240,20 @@ export function useWorkbenchController() {
     setSettingsOpen(true);
   }
 
+  function openGlobalVoiceSettings() {
+    setEditingServerId("global");
+    updateDraftProfile({
+      ...defaultProfile,
+      ...globalSettingsFromProfile(profileRef.current),
+    });
+    setSettingsDiscovery(null);
+    setSettingsSelectedSessions([]);
+    setSettingsAgentTab(activeAgentId);
+    setAgentManagementTargetId("");
+    setSettingsInitialPage("global-voice");
+    setSettingsOpen(true);
+  }
+
   function openNewServerSettings() {
     const globalSettings = globalSettingsFromProfile(profileRef.current);
     const nextProfile = {
@@ -7078,6 +7092,7 @@ export function useWorkbenchController() {
     onAddServer: openNewServerSettings,
     onDuplicateServer: () => duplicateServer(),
     onOpenGlobalSettings: openGlobalSettings,
+    onOpenVoiceSettings: openGlobalVoiceSettings,
     onOpenCloudSync: openCloudSyncSettings,
     onTestConnection: connectExistingSession,
     onDisconnectServer: disconnectSession,

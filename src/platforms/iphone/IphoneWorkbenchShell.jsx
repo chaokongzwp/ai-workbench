@@ -344,7 +344,7 @@ function IphoneComposer({
                     onClick={handleWakeClick}
                     disabled={wakeDisabled}
                     aria-label={
-                      !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
+                      !voiceInputEnabled ? "打开语音与播放设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
                     }
                   >
                     <span className="wake-button-content">
@@ -488,6 +488,7 @@ export function IphoneWorkbenchShell({
   onAddServer,
   onDuplicateServer,
   onOpenGlobalSettings,
+  onOpenVoiceSettings,
   onOpenCloudSync,
   onTestConnection,
   onDisconnectServer,
@@ -833,7 +834,7 @@ export function IphoneWorkbenchShell({
             runningTask={activeTaskRunning ? activeRunningMessage || { status: "running" } : null}
             setComposer={setComposer}
 	            onOpenSettings={onAddServer}
-	            onOpenVoiceSettings={onOpenGlobalSettings}
+	            onOpenVoiceSettings={onOpenVoiceSettings}
             onAttachFiles={onAttachFiles || onAttachImages}
             onPasteClipboard={onPasteClipboard}
             onRemoveImageAttachment={onRemoveImageAttachment}
