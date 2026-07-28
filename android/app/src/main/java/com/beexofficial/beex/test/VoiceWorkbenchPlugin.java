@@ -85,6 +85,7 @@ public class VoiceWorkbenchPlugin extends Plugin {
     private File audioPlayerFile;
     private PluginCall speechCall;
     private String taskId = "";
+    private String clientSessionId = "";
     private String lastTranscript = "";
     private String interimText = "";
     private long lastTranscriptChangedAt = 0;
@@ -236,6 +237,7 @@ public class VoiceWorkbenchPlugin extends Plugin {
         recognitionActive = true;
         activeSilenceMillis = (long) (silenceSeconds * 1000);
         taskId = UUID.randomUUID().toString();
+        clientSessionId = firstNonEmpty(call.getString("sessionId"), UUID.randomUUID().toString());
         if (wake) wakeCall = call;
         else activeCall = call;
 
@@ -381,7 +383,11 @@ public class VoiceWorkbenchPlugin extends Plugin {
                 eventPayload.put("text", joined);
                 eventPayload.put("isFinal", sentenceEnd);
                 eventPayload.put("provider", "pisen-dashscope-asr");
-                notifyListeners("voiceTranscript", eventPayload);
+                eventPayload.put("mode", wakeMode ? "wake" : "dictation");
+                eventPayload.put("sessionId", clientSessionId);
+                if (!wakeMode) {
+                    notifyListeners("voiceTranscript", eventPayload);
+                }
 
                 if (wakeMode) {
                     String phrase = detectWakePhrase(joined);
@@ -755,6 +761,7 @@ public class VoiceWorkbenchPlugin extends Plugin {
         taskStarted = false;
         finishSent = false;
         taskId = "";
+        clientSessionId = "";
         resetTranscriptOnly();
         synchronized (recognitionLock) {
             queuedAudio.clear();

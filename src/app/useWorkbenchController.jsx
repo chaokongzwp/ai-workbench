@@ -699,12 +699,13 @@ export function useWorkbenchController() {
   const composerRef = useRef(composer);
   const imageAttachmentsRef = useRef(imageAttachments);
   const voiceBaseTextRef = useRef("");
+  const voiceRecognitionSessionIdRef = useRef("");
   const voiceStateRef = useRef(voiceState);
   const wakeStateRef = useRef(wakeState);
   const wakeEnabledRef = useRef(false);
   const wakeLoopIdRef = useRef(0);
   const wakeListeningSignatureRef = useRef("");
-  const wakeManuallyDisabledRef = useRef(true);
+  const wakeManuallyDisabledRef = useRef(false);
   const voiceSessionActiveRef = useRef(false);
   const assistantSpeechActiveRef = useRef(false);
   const assistantSpeechRunIdRef = useRef(0);
@@ -946,7 +947,7 @@ export function useWorkbenchController() {
   useEffect(() => {
     if (voiceInputEnabled) return;
 
-    wakeManuallyDisabledRef.current = true;
+    wakeManuallyDisabledRef.current = false;
     wakeEnabledRef.current = false;
     wakeListeningSignatureRef.current = "";
     voiceSessionActiveRef.current = false;
@@ -1069,6 +1070,9 @@ export function useWorkbenchController() {
     const bridge = desktopBridge();
 
     const handleTranscript = (payload) => {
+      if (String(payload?.mode || "").toLowerCase() === "wake") return;
+      const eventSessionId = String(payload?.sessionId || "").trim();
+      if (eventSessionId && eventSessionId !== voiceRecognitionSessionIdRef.current) return;
       if (voiceStateRef.current !== "listening") return;
       if (Object.prototype.hasOwnProperty.call(payload || {}, "level")) {
         const level = Math.max(0, Math.min(Number(payload.level || 0) || 0, 1));
@@ -6366,10 +6370,13 @@ export function useWorkbenchController() {
     }
 
     try {
+      const recognitionSessionId = `dictation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      voiceRecognitionSessionIdRef.current = recognitionSessionId;
       const result = await VoiceWorkbench.start({
         locale: "zh-CN",
         timeoutSeconds: 30,
         silenceSeconds: 3,
+        sessionId: recognitionSessionId,
         apiKey: profileRef.current?.aliyunApiKey,
         workspaceId: profileRef.current?.aliyunWorkspaceId,
       });
@@ -6395,6 +6402,7 @@ export function useWorkbenchController() {
       setVoiceError(shortError(error));
       return false;
     } finally {
+      voiceRecognitionSessionIdRef.current = "";
       voiceBaseTextRef.current = "";
       applyVoiceState("idle");
       if (fromWake && wakeEnabledRef.current && !voiceSessionActiveRef.current) applyWakeState("listening");
