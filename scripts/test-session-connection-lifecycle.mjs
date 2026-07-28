@@ -3,7 +3,7 @@ import {
   connectionForAppLaunch,
 } from "../src/core/foundation.js";
 
-function loadedServer(connection, task = { state: "idle" }) {
+function loadedServer(connection, task = {}) {
   const server = {
     id: "session-1",
     name: "测试会话",
@@ -46,7 +46,6 @@ const recovering = loadedServer(
     mode: "agent",
   },
   {
-    state: "running",
     backend: "agent",
     remoteTaskId: "task-1",
     agentId: "claude",
@@ -54,7 +53,7 @@ const recovering = loadedServer(
   },
 );
 assert.equal(recovering.connection.state, "idle");
-assert.equal(recovering.task.state, "running");
+assert.equal("state" in recovering.task, false);
 assert.equal(recovering.task.remoteTaskId, "task-1");
 
 console.log("session connection lifecycle regression: ok");

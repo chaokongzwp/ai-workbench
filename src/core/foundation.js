@@ -1,9 +1,14 @@
 import { registerPlugin } from "@capacitor/core";
 import {
-  mergeResponseLifecycle,
+  lastActiveTaskMessage,
+  mergeTaskMessages,
+  messageChronologyTimestamp,
   normalizeMessageLifecycle,
-  responsePhaseCompleted,
-  responsePhasePending,
+  sortConversationMessages,
+  taskStateForMessage,
+  taskStateIsActive,
+  taskStateIsTerminal,
+  taskStateSucceeded,
 } from "./messageLifecycle.js";
 
 export function desktopBridge() {
@@ -572,9 +577,17 @@ export const directoryPrefsStorageKey = "ai-workbench-directory-prefs-v1";
 
 export const manualWorkdirHistoryStorageKey = "ai-workbench-manual-workdirs-v1";
 
-export const localMessageHistoryStorageKey = "ai-workbench-local-message-history-v1";
+export const workspaceStoreVersion = 4;
 
-export const workspaceMirrorStorageKey = "ai-workbench-workspace-mirror-v1";
+export const localMessageHistoryVersion = 2;
+
+export const localMessageHistoryStorageKey = "ai-workbench-local-message-history-v2";
+
+export const workspaceMirrorStorageKey = "ai-workbench-workspace-mirror-v2";
+
+const legacyLocalMessageHistoryStorageKey = "ai-workbench-local-message-history-v1";
+
+const legacyWorkspaceMirrorStorageKey = "ai-workbench-workspace-mirror-v1";
 
 export const browserDiagnosticLogStorageKey = "ai-workbench-diagnostics-log-v1";
 
@@ -783,13 +796,14 @@ export async function appLog(level, event, fields = {}) {
 }
 
 export function workspaceStoreHasServers(value) {
-  return Boolean(value?.version === 2 && Array.isArray(value.servers));
+  return Boolean([2, 3, workspaceStoreVersion].includes(Number(value?.version)) && Array.isArray(value.servers));
 }
 
 export function saveWorkspaceMirror(profile) {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     window.localStorage.setItem(workspaceMirrorStorageKey, JSON.stringify(profile || {}));
+    window.localStorage.removeItem(legacyWorkspaceMirrorStorageKey);
   } catch (error) {
     void appLog("warn", "workspace.mirror.save.failed", { error: diagnosticErrorText(error) });
   }
@@ -798,9 +812,17 @@ export function saveWorkspaceMirror(profile) {
 export function loadWorkspaceMirror() {
   if (typeof window === "undefined" || !window.localStorage) return null;
   try {
-    const raw = window.localStorage.getItem(workspaceMirrorStorageKey);
+    const raw =
+      window.localStorage.getItem(workspaceMirrorStorageKey) ||
+      window.localStorage.getItem(legacyWorkspaceMirrorStorageKey);
     const parsed = raw ? JSON.parse(raw) : null;
-    return workspaceStoreHasServers(parsed) ? parsed : null;
+    if (!workspaceStoreHasServers(parsed)) return null;
+    if (Number(parsed.version) === workspaceStoreVersion) return parsed;
+
+    const normalized = normalizeWorkspaceStore(parsed);
+    const migrated = serializeWorkspaceStore(normalized.servers, normalized.activeServerId);
+    saveWorkspaceMirror(migrated);
+    return migrated;
   } catch (error) {
     void appLog("warn", "workspace.mirror.load.failed", { error: diagnosticErrorText(error) });
     return null;
@@ -827,7 +849,12 @@ export function workspaceDiagnosticSummary(servers = [], activeServerId = "") {
         hasPassword: Boolean(profile.password),
         passwordLength: String(profile.password || "").length,
         connectionStatus: server?.connection?.state || "unknown",
-        taskState: server?.task?.state || "idle",
+        taskState:
+          taskStateForMessage(
+            [...(Array.isArray(server?.messages) ? server.messages : [])]
+              .reverse()
+              .find((message) => message?.role === "assistant"),
+          ) || "idle",
         messageCount: Array.isArray(server?.messages) ? server.messages.length : 0,
         hasUnreadResult: Boolean(server?.unreadResult),
       };
@@ -1026,7 +1053,7 @@ export function createMessage(partial) {
   const now = Date.now();
   return normalizeMessageLifecycle({
     id: `msg-${now}-${messageCounter}`,
-    status: "done",
+    taskState: partial?.role === "assistant" ? taskStateSucceeded : undefined,
     output: "",
     createdAt: new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     createdAtMs: now,
@@ -1046,39 +1073,31 @@ export function clipPersistedText(value, limit = maxPersistedTextLength) {
 
 export function normalizePersistedMessage(message) {
   const source = message && typeof message === "object" ? message : { body: String(message ?? "") };
-  const createdAtMs = Number(source.createdAtMs || 0) || Date.now();
+  const createdAtMs = messageChronologyTimestamp(source) || Date.now();
   const lifecycleSource = normalizeMessageLifecycle({ ...source, createdAtMs });
-  const startedAt =
-    Number(lifecycleSource.startedAt || 0) ||
-    (lifecycleSource.responsePhase === responsePhasePending ? createdAtMs : 0);
-  const resumableRemoteTask =
-    lifecycleSource.responsePhase === responsePhasePending &&
-    lifecycleSource.backend === "agent" &&
-    lifecycleSource.remoteTaskId;
   const remoteTaskStatus = String(source.remoteTaskStatus || "").trim();
   const hasCompletedRemoteOutput =
     lifecycleSource.role === "assistant" &&
     lifecycleSource.backend === "agent" &&
     Boolean(String(lifecycleSource.output || "").trim()) &&
     !["error", "cancelled", "missing", "deferred-waiting-answer"].includes(remoteTaskStatus) &&
-    !["error", "cancelled"].includes(String(lifecycleSource.status || "").trim());
-  const status = hasCompletedRemoteOutput
-    ? "done"
-    : lifecycleSource.responsePhase === responsePhasePending && !resumableRemoteTask
-      ? "idle"
-      : String(lifecycleSource.status || "done");
-  const completedAt = Number(source.completedAt || 0) || (startedAt && status !== "running" ? Date.now() : 0);
+    !["failed", "cancelled"].includes(String(lifecycleSource.taskState || "").trim());
+  const taskState = hasCompletedRemoteOutput ? "succeeded" : lifecycleSource.taskState;
+  const active = lifecycleSource.role === "assistant" && taskStateIsActive(taskState);
+  const startedAt =
+    Number(lifecycleSource.startedAt || 0) ||
+    (active ? createdAtMs : 0);
+  const resumableRemoteTask =
+    active &&
+    lifecycleSource.backend === "agent" &&
+    lifecycleSource.remoteTaskId;
+  const completedAt =
+    Number(source.completedAt || 0) ||
+    (startedAt && taskStateIsTerminal(taskState) ? Date.now() : 0);
   const durationMs =
     Number(source.durationMs || 0) ||
-    (startedAt && completedAt && status !== "running" ? Math.max(0, completedAt - startedAt) : 0);
+    (startedAt && completedAt && taskStateIsTerminal(taskState) ? Math.max(0, completedAt - startedAt) : 0);
   const turnId = String(source.turnId || source.messagePairId || "").trim();
-  const responsePhase =
-    lifecycleSource.role === "assistant"
-      ? status === "running"
-        ? responsePhasePending
-        : responsePhaseCompleted
-      : undefined;
-  const syncState = lifecycleSource.role === "assistant" ? responsePhase : undefined;
   const agentFailure =
     source.agentFailure && typeof source.agentFailure === "object"
       ? {
@@ -1092,14 +1111,12 @@ export function normalizePersistedMessage(message) {
     agentFailure,
     technicalDetail: clipPersistedText(source.technicalDetail, 12_000),
     executionSummary: clipPersistedText(source.executionSummary, 30_000),
-    status,
-    responsePhase,
+    taskState,
     turnId: turnId || undefined,
-    syncState,
     remoteTaskStatus: hasCompletedRemoteOutput ? "done" : source.remoteTaskStatus,
     resultMissing: hasCompletedRemoteOutput ? false : source.resultMissing,
     body:
-      responsePhase === responsePhasePending
+      active
         ? clipPersistedText(
             resumableRemoteTask
               ? lifecycleSource.body || "正在重新同步远端任务状态。"
@@ -1124,7 +1141,7 @@ export function messagesForStorage(messages) {
 
 export function localMessageHistoryFromServers(servers = []) {
   return {
-    version: 1,
+    version: localMessageHistoryVersion,
     updatedAt: Date.now(),
     servers: (Array.isArray(servers) ? servers : []).map((server) => ({
       id: server.id,
@@ -1152,12 +1169,12 @@ export function mergePersistedMessageLists(currentMessages = [], incomingMessage
     }
 
     if (message?.role === "assistant" && existing?.role === "assistant") {
-      byId.set(id, mergeResponseLifecycle(existing, message));
+      byId.set(id, mergeTaskMessages(existing, message));
       continue;
     }
     const preferred = String(message?.body || message?.output || "").trim() ? message : existing;
     const fallback = preferred === message ? existing : message;
-    const terminal = ["done", "error", "cancelled"].includes(String(preferred?.status || ""));
+    const terminal = taskStateIsTerminal(preferred?.taskState);
     byId.set(id, {
       ...fallback,
       ...preferred,
@@ -1181,8 +1198,7 @@ export function mergePersistedMessageLists(currentMessages = [], incomingMessage
       startedAt: earliestPositiveNumber(existing.startedAt, message.startedAt),
     });
   }
-  return [...byId.values()]
-    .sort((left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0))
+  return sortConversationMessages([...byId.values()])
     .slice(-maxPersistedMessagesPerServer)
     .map(normalizePersistedMessage);
 }
@@ -1195,6 +1211,7 @@ export function saveLocalMessageHistory(servers = []) {
     // back after every save and make one task look like several replies.
     const next = localMessageHistoryFromServers(servers);
     window.localStorage.setItem(localMessageHistoryStorageKey, JSON.stringify(next));
+    window.localStorage.removeItem(legacyLocalMessageHistoryStorageKey);
   } catch {
     // Local chat history is a convenience cache. The encrypted profile save remains the primary store.
   }
@@ -1203,14 +1220,34 @@ export function saveLocalMessageHistory(servers = []) {
 export function loadLocalMessageHistory() {
   if (typeof window === "undefined" || !window.localStorage) return {};
   try {
-    const raw = window.localStorage.getItem(localMessageHistoryStorageKey);
+    const currentRaw = window.localStorage.getItem(localMessageHistoryStorageKey);
+    const legacyRaw = currentRaw ? "" : window.localStorage.getItem(legacyLocalMessageHistoryStorageKey);
+    const raw = currentRaw || legacyRaw;
     const parsed = raw ? JSON.parse(raw) : null;
-    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.servers)) return {};
-    return parsed.servers.reduce((acc, item) => {
+    if (
+      !parsed ||
+      ![1, localMessageHistoryVersion].includes(Number(parsed.version)) ||
+      !Array.isArray(parsed.servers)
+    ) {
+      return {};
+    }
+
+    const history = parsed.servers.reduce((acc, item) => {
       if (!item?.id) return acc;
       acc[item.id] = messagesForStorage(item.messages);
       return acc;
     }, {});
+    if (legacyRaw || Number(parsed.version) !== localMessageHistoryVersion) {
+      const migrated = localMessageHistoryFromServers(
+        parsed.servers.map((server) => ({
+          ...server,
+          messages: history[server.id] || [],
+        })),
+      );
+      window.localStorage.setItem(localMessageHistoryStorageKey, JSON.stringify(migrated));
+      window.localStorage.removeItem(legacyLocalMessageHistoryStorageKey);
+    }
+    return history;
   } catch {
     return {};
   }
@@ -1231,15 +1268,9 @@ export function mergeLocalMessageHistory(servers = []) {
 }
 
 export function taskForStorage(task) {
-  if (!task || typeof task !== "object") return { state: "idle" };
-  if (task.state === "running" && task.backend === "agent" && task.remoteTaskId) return task;
-  if (task.state !== "running") return task;
-  return {
-    ...task,
-    state: "idle",
-    interruptedAt: Date.now(),
-    finishedAt: task.finishedAt || Date.now(),
-  };
+  if (!task || typeof task !== "object") return {};
+  const { state: _legacyState, ...metadata } = task;
+  return metadata;
 }
 
 export function formatDuration(ms) {
@@ -1582,12 +1613,8 @@ export function taskWakeMatchFromText(text, servers = []) {
   return null;
 }
 
-export function serverTaskState(server) {
-  return server?.task?.state || "idle";
-}
-
 export function serverTaskRunning(server) {
-  return serverTaskState(server) === "running";
+  return Boolean(lastActiveTaskMessage(server?.messages || []));
 }
 
 export function createServerId() {
@@ -1598,8 +1625,8 @@ export function initialConnectionForProfile(profile) {
   const normalized = normalizeProfile(profile || {});
   const mode = normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : "ssh";
   return profileReady(normalized)
-    ? { state: "idle", label: "未测试", detail: `${normalized.username}@${normalized.host}`, mode }
-    : { state: "idle", label: "待配置", detail: profileIssue(normalized), mode };
+    ? { state: "idle", label: "未连接", detail: `${normalized.username}@${normalized.host}`, mode }
+    : { state: "idle", label: "未连接", detail: profileIssue(normalized), mode };
 }
 
 export function dormantConnectionForProfile(profile, previous = {}, label = "未连接") {
@@ -1618,7 +1645,7 @@ export function connectionForAppLaunch(server) {
   const connection = server?.connection || initialConnectionForProfile(profile);
   if (!profileReady(profile)) return initialConnectionForProfile(profile);
   // A persisted transport result only describes the previous App process.
-  // Remote task recovery is tracked independently through server.task.
+  // server.task keeps recovery metadata; task state lives on the assistant message.
   return dormantConnectionForProfile(profile, connection, "未连接");
 }
 
@@ -1629,7 +1656,7 @@ export function readyConnectionForSession(profile, previous = {}) {
     ...initialConnectionForProfile(normalized),
     mode: normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : previousMode,
     state: "idle",
-    label: "就绪",
+    label: "未连接",
     detail: String(normalized.workdir || "").trim() ? workdirDisplayName(normalized.workdir) : `${normalized.username}@${normalized.host}`,
   };
 }
@@ -1677,8 +1704,8 @@ export function createServerSession(partial = {}, index = 0) {
     diagnostics: partial.diagnostics || {},
     discovery: partial.discovery || null,
     rawOutput: partial.rawOutput || "原始输出会在测试连接或发送任务后显示。",
-    messages: Array.isArray(partial.messages) ? partial.messages : [],
-    task: partial.task || { state: "idle" },
+    messages: messagesForStorage(partial.messages),
+    task: taskForStorage(partial.task),
     unreadResult: partial.unreadResult || null,
     shared: partial.shared || null,
     agentHistoryCursor: String(partial.agentHistoryCursor || "").trim(),
@@ -1691,9 +1718,19 @@ export function createServerSession(partial = {}, index = 0) {
 }
 
 export function normalizeWorkspaceStore(value) {
-  if (value?.version === 2 && Array.isArray(value.servers)) {
+  if (workspaceStoreHasServers(value)) {
     const servers = value.servers.map((server, index) => {
-      const normalized = createServerSession(stripLegacyDefaultWorkdirFromPlaceholder(server, index), index);
+      const normalized = createServerSession(
+        stripLegacyDefaultWorkdirFromPlaceholder(
+          {
+            ...server,
+            messages: messagesForStorage(server?.messages),
+            task: taskForStorage(server?.task),
+          },
+          index,
+        ),
+        index,
+      );
       return {
         ...normalized,
         connection: connectionForAppLaunch(normalized),
@@ -1730,7 +1767,7 @@ export function normalizeWorkspaceStore(value) {
 
 export function serializeWorkspaceStore(servers, activeServerId) {
   return {
-    version: 2,
+    version: workspaceStoreVersion,
     activeServerId,
     servers: servers.map((server, index) => ({
       id: server.id,
@@ -1755,7 +1792,7 @@ export function serializeWorkspaceStore(servers, activeServerId) {
 
 export function serializeWorkspaceMigrationStore(servers, activeServerId) {
   return {
-    version: 2,
+    version: workspaceStoreVersion,
     activeServerId,
     servers: (Array.isArray(servers) ? servers : []).map((server, index) => {
       const profile = normalizeProfile(server.profile);
@@ -1774,7 +1811,7 @@ export function serializeWorkspaceMigrationStore(servers, activeServerId) {
         diagnostics: server.diagnostics || {},
         rawOutput: "",
         messages: [],
-        task: { state: "idle" },
+        task: {},
         unreadResult: null,
         shared: server.shared || null,
       };
@@ -1850,7 +1887,7 @@ export function mergeImportedServers(currentServers, importedServers) {
         id: server.id || createServerId(),
         messages: existing?.messages || [],
         rawOutput: existing?.rawOutput || server.rawOutput,
-        task: { state: "idle" },
+        task: {},
         unreadResult: existing?.unreadResult || null,
       },
       kept.length + index,
@@ -2056,7 +2093,7 @@ export function mergeCloudSharedSessions(currentServers, records = []) {
             ? "这是共享会话，SSH 登录信息已同步，可以直接连接。"
             : "这是共享会话。首次连接前，请在会话设置中填写 SSH 密码。",
           messages: [],
-          task: { state: "idle" },
+          task: {},
           shared: {
             shareId: String(record?.id || "").trim(),
             ownerAccount: String(record?.ownerAccount || "").trim(),
@@ -2089,7 +2126,7 @@ export function buildCloudSyncPlainPayload(servers, activeServerId) {
         syncIdentity,
         messages: [],
         rawOutput: "",
-        task: { state: "idle" },
+        task: {},
         unreadResult: null,
       };
     })
@@ -2124,7 +2161,7 @@ export function normalizeCloudSyncPlainPayload(value = {}) {
           version: cloudSyncPayloadVersion,
         }
       : value;
-  const workspace = normalizeWorkspaceStore(payload?.workspace || { version: 2, servers: [] });
+  const workspace = normalizeWorkspaceStore(payload?.workspace || { version: workspaceStoreVersion, servers: [] });
   const servers = (workspace.servers || [])
     .map((server) => {
       const profile = normalizeProfile(server?.profile || {});
@@ -2138,7 +2175,7 @@ export function normalizeCloudSyncPlainPayload(value = {}) {
         syncIdentity,
         messages: [],
         rawOutput: "",
-        task: { state: "idle" },
+        task: {},
         unreadResult: null,
       };
     })
@@ -2152,7 +2189,7 @@ export function normalizeCloudSyncPlainPayload(value = {}) {
     includesChatHistory: false,
     uniqueBy: ["host", "username", "workdir", "agentId"],
     workspace: {
-      version: 2,
+      version: workspaceStoreVersion,
       activeServerId: servers.some((server) => server.id === workspace.activeServerId)
         ? workspace.activeServerId
         : servers[0]?.id || "",
@@ -2188,7 +2225,7 @@ export function mergeCloudSyncPayloads(remotePayload, localPayload) {
       ...local,
       exportedAt: new Date().toISOString(),
       workspace: {
-        version: 2,
+        version: workspaceStoreVersion,
         activeServerId:
           remote.workspace.activeServerId && servers.some((server) => server.id === remote.workspace.activeServerId)
             ? remote.workspace.activeServerId
@@ -2234,7 +2271,7 @@ export function mergeCloudDownloadedServers(currentServers, cloudPayload) {
           id: nextId,
           messages: [],
           rawOutput: "",
-          task: { state: "idle" },
+          task: {},
           unreadResult: null,
           connection: initialConnectionForProfile(server.profile),
         },
@@ -2496,7 +2533,7 @@ export async function waitUntil(check, { timeoutMs = 5000, intervalMs = 120 } = 
 }
 
 export function speechTextFromMessage(message) {
-  if (!message || message.role !== "assistant" || message.status !== "done") return "";
+  if (!message || message.role !== "assistant" || taskStateForMessage(message) !== taskStateSucceeded) return "";
   return stripTextForSpeech(message.output || message.body || "");
 }
 

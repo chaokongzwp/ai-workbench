@@ -221,7 +221,6 @@ const {
   serverSessionName,
   serverSidebarMeta,
   serverTaskRunning,
-  serverTaskState,
   sessionName,
   sessionSelectionKey,
   shQuote,

@@ -220,7 +220,6 @@ const {
   serverSessionName,
   serverSidebarMeta,
   serverTaskRunning,
-  serverTaskState,
   sessionName,
   sessionSelectionKey,
   shQuote,
@@ -235,6 +234,8 @@ const {
   stripLegacyDefaultWorkdirFromPlaceholder,
   stripTerminalControl,
   stripTextForSpeech,
+  taskStateForMessage,
+  taskStateIsActive,
   taskForStorage,
   taskTextFromValue,
   taskWakeMatchFromPhrase,
@@ -352,7 +353,7 @@ export function readFileAsText(file) {
 }
 
 export function TaskTimer({ message }) {
-  const running = message.status === "running";
+  const running = taskStateIsActive(taskStateForMessage(message));
   const [now, setNow] = useState(Date.now());
   const startedAt = Number(message.startedAt || message.createdAtMs || 0);
   const durationMs =
@@ -371,7 +372,7 @@ export function TaskTimer({ message }) {
 }
 
 export function useRunningElapsed(message) {
-  const running = message?.status === "running";
+  const running = taskStateIsActive(taskStateForMessage(message));
   const [now, setNow] = useState(Date.now());
   const startedAt = Number(message?.startedAt || message?.createdAtMs || 0);
 
@@ -385,13 +386,12 @@ export function useRunningElapsed(message) {
 }
 
 export function statusLabel(status) {
-  if (status === "login") return "待登录";
-  if (status === "choice") return "待选择";
-  if (status === "running") return "运行中";
-  if (status === "error") return "失败";
+  if (status === "submitting") return "正在发送";
+  if (status === "accepted") return "Agent 已接收";
+  if (status === "running") return "AI 执行中";
+  if (status === "syncing") return "同步中";
+  if (status === "failed") return "失败";
   if (status === "cancelled") return "已取消";
-  if (status === "unknown") return "未知";
-  if (status === "idle") return "待命";
   return "完成";
 }
 

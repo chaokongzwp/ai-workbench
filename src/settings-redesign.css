@@ -4233,9 +4233,9 @@
   --mac-design-accent-soft: rgba(235, 235, 245, 0.07);
 }
 
-.mac-shell .conversation .message-header .streaming.running,
+.mac-shell .conversation .message-header .streaming:is(.submitting, .accepted, .running, .syncing),
 .mac-shell .conversation .message-header .task-timer.running,
-.app-shell[data-theme="dark"].mac-shell .conversation .message-header .streaming.running,
+.app-shell[data-theme="dark"].mac-shell .conversation .message-header .streaming:is(.submitting, .accepted, .running, .syncing),
 .app-shell[data-theme="dark"].mac-shell .conversation .message-header .task-timer.running {
   color: var(--mac-design-text);
   background: var(--mac-design-soft);

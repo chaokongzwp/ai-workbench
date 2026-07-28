@@ -168,7 +168,7 @@ else nextServers.push(nextServer);
 
 const nextProfile = {
   ...current,
-  version: 2,
+  version: 4,
   activeServerId: nextServer.id,
   servers: nextServers,
   updatedAt: new Date().toISOString(),

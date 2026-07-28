@@ -320,7 +320,7 @@ export function MacWorkbenchShell({
               wakeState={wakeState}
               wakeError={wakeError}
               wakePhrases={wakePhrases}
-              runningTask={activeTaskRunning ? activeRunningMessage || { status: "running" } : null}
+              runningTask={activeTaskRunning ? activeRunningMessage || { role: "assistant", taskState: "running" } : null}
               setComposer={setComposer}
               onOpenSettings={onAddServer}
               onAttachFiles={onAttachFiles || onAttachImages}

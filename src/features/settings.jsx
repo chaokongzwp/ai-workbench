@@ -254,7 +254,6 @@ const {
   serverPlatforms,
   serverSidebarMeta,
   serverTaskRunning,
-  serverTaskState,
   sessionName,
   sessionSelectionKey,
   shQuote,
@@ -984,7 +983,7 @@ export function SettingsPanel({
     [servers],
   );
   const runningTaskCount = useMemo(
-    () => (Array.isArray(servers) ? servers : []).filter((server) => server?.task?.state === "running").length,
+    () => (Array.isArray(servers) ? servers : []).filter((server) => serverTaskRunning(server)).length,
     [servers],
   );
   const settingsPageNeedsSave = [

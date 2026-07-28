@@ -138,7 +138,6 @@ const {
   serverPlatforms,
   serverSessionName,
   serverTaskRunning,
-  serverTaskState,
   sessionName,
   sessionSelectionKey,
   shQuote,

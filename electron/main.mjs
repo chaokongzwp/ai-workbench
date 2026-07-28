@@ -7,6 +7,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 import { fileURLToPath } from "node:url";
 import { Client } from "ssh2";
+import { sortConversationMessages } from "../src/core/messageLifecycle.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -203,8 +204,7 @@ function mergeWorkspaceMessages(currentMessages = [], incomingMessages = []) {
     if (!id) continue;
     byId.set(id, { ...(byId.get(id) || {}), ...message });
   }
-  return [...byId.values()]
-    .sort((left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0))
+  return sortConversationMessages([...byId.values()])
     .slice(-120);
 }
 

@@ -238,7 +238,6 @@ const {
   serverSessionName,
   serverSidebarMeta,
   serverTaskRunning,
-  serverTaskState,
   sessionName,
   sessionSelectionKey,
   shQuote,
@@ -253,6 +252,9 @@ const {
   stripLegacyDefaultWorkdirFromPlaceholder,
   stripTerminalControl,
   stripTextForSpeech,
+  taskStateForMessage,
+  taskStateIsActive,
+  taskStateFailed,
   taskForStorage,
   taskTextFromValue,
   taskWakeMatchFromPhrase,
@@ -331,7 +333,7 @@ export function messageDisplayText(value) {
 
 export function RunningTaskHint({ message, agent, operationBusy, onRefreshOutput, onInterruptAgent }) {
   const elapsedMs = useRunningElapsed(message);
-  if (message.status !== "running" || elapsedMs < 120_000) return null;
+  if (!taskStateIsActive(taskStateForMessage(message)) || elapsedMs < 120_000) return null;
 
   const longRunning = elapsedMs >= 300_000;
   const isClaude = agent.id === "claude";
@@ -454,7 +456,10 @@ function messageNeedsResultSync(message) {
 function messageTimestamp(message) {
   const completedAt = Number(message?.completedAt || 0);
   const createdAtMs = Number(message?.createdAtMs || 0);
-  const timestamp = message?.role === "assistant" && message?.status !== "running" ? completedAt || createdAtMs : createdAtMs;
+  const timestamp =
+    message?.role === "assistant" && !taskStateIsActive(taskStateForMessage(message))
+      ? completedAt || createdAtMs
+      : createdAtMs;
   if (!timestamp) {
     return { label: String(message?.createdAt || "").trim(), dateTime: "" };
   }
@@ -475,24 +480,9 @@ function compactAgentMessageTitle(message, agent) {
 }
 
 function agentDeliveryStatus(message, liveOutputText = "") {
-  if (message?.backend !== "agent" || message?.status !== "running") return "";
-
-  const remoteStatus = String(message?.remoteTaskStatus || "").trim();
-  if (remoteStatus === "sync-lost-no-task-id") return "提交状态未知";
-  if (remoteStatus === "syncing") return "同步中";
-  if (remoteStatus === "preparing" || !String(message?.remoteTaskId || "").trim()) return "正在发送";
-  if (remoteStatus === "queued") return "Agent 已接收";
-  if (remoteStatus === "running") {
-    if (String(message?.remoteTaskRunnerStartedAt || "").trim() || String(liveOutputText || "").trim()) {
-      return "AI 执行中";
-    }
-    return "正在交给 AI";
-  }
-  if (remoteStatus === "busy") return "会话占用";
-  if (remoteStatus === "sync-lost" || remoteStatus === "sync-timeout" || remoteStatus === "unknown") {
-    return "状态同步中";
-  }
-  return "等待确认";
+  if (message?.backend !== "agent") return "";
+  const state = taskStateForMessage(message);
+  return taskStateIsActive(state) ? statusLabel(state) : "";
 }
 
 function CopyButton({
@@ -603,12 +593,16 @@ export function MessageBubble({
   iconStyle = "default",
 }) {
   const agent = agents.find((item) => item.id === message.agentId) ?? activeAgent;
+  const taskState = taskStateForMessage(message);
+  const taskRunning = taskStateIsActive(taskState);
   const bodyText = messageDisplayText(message.body);
   const outputText = messageDisplayText(message.output);
   const liveOutputText = messageDisplayText(message.liveOutput);
   const legacyFailureSource = `${bodyText}\n${outputText}\n${messageDisplayText(message.technicalDetail)}`;
   const legacyAgentFailure =
-    !message.agentFailure && message.status === "error" && /__AIWB_AGENT_|runner process is not alive|runner pid:/i.test(legacyFailureSource)
+    !message.agentFailure &&
+    taskState === taskStateFailed &&
+    /__AIWB_AGENT_|runner process is not alive|runner pid:/i.test(legacyFailureSource)
       ? classifyAgentFailure(legacyFailureSource, agent)
       : null;
   const storedAgentFailure =
@@ -681,15 +675,15 @@ export function MessageBubble({
       .trim();
   }, [fileReferences, outputText]);
   const friendlyProgress = useMemo(
-    () => friendlyProgressFromText(displayOutputText || (message.status === "running" ? liveOutputText : ""), agent),
-    [displayOutputText, liveOutputText, message.status, agent],
+    () => friendlyProgressFromText(displayOutputText || (taskRunning ? liveOutputText : ""), agent),
+    [displayOutputText, liveOutputText, taskRunning, agent],
   );
   const copyText = friendlyProgress ? `${friendlyProgress.title}\n${friendlyProgress.body}` : rawCopyText;
   const needsResultSync = messageNeedsResultSync(message);
   const taskId = String(message.remoteTaskId || "").trim();
   const taskStatusUnconfirmed =
     message.backend === "agent" &&
-    message.status === "idle" &&
+    taskState === taskStateFailed &&
     !taskId &&
     waitingLikeMessage(message);
   const hasVisibleAssistantContent = Boolean(
@@ -700,22 +694,16 @@ export function MessageBubble({
       message.modelChoice ||
       message.loginAction ||
       fileReferences.length ||
-      message.status === "running" ||
+      taskRunning ||
       needsResultSync,
   );
-  const statusForHeader = taskStatusUnconfirmed || legacyMissingResult
-    ? "error"
-    : needsResultSync
-      ? "unknown"
-    : message.status === "idle" && waitingLikeMessage(message)
-      ? "unknown"
-      : message.status;
+  const statusForHeader = taskStatusUnconfirmed || legacyMissingResult ? taskStateFailed : taskState;
   const deliveryStatus = agentDeliveryStatus(message, liveOutputText);
   const statusText = needsResultSync ? "待同步" : deliveryStatus || statusLabel(statusForHeader);
   const compactTitle = compactAgentMessageTitle(message, agent);
   const headerTitle = hasActualResult && /没有最终答案标记|没有最终内容|没有返回结果/.test(compactTitle)
     ? `${agent.shortName} 回复`
-    : message.status === "running" && !agentFailure
+    : taskRunning && !agentFailure
       ? agent.shortName
     : taskStatusUnconfirmed
       ? "状态待确认"
@@ -729,7 +717,7 @@ export function MessageBubble({
     message.backend === "agent" &&
       String(message.remoteTaskId || "").trim() &&
       typeof onRefreshOutput === "function" &&
-      (message.status === "running" || message.status === "error" || needsResultSync),
+      (taskRunning || taskState === taskStateFailed || needsResultSync),
   );
 
   if (message.role === "user") {
@@ -781,12 +769,12 @@ export function MessageBubble({
   if (!hasVisibleAssistantContent) return null;
 
   return (
-    <article className={`agent-response ${legacyMissingResult ? "error" : message.status}`}>
+    <article className={`agent-response ${legacyMissingResult ? "failed" : taskState}`}>
       <header className="message-header">
         <AgentLogo agentId={agent.id} compact />
         <strong>{headerTitle}</strong>
         {timestamp.label ? (
-          <time className="message-time" dateTime={timestamp.dateTime} title={message.status === "running" ? "发送时间" : "回复时间"}>
+          <time className="message-time" dateTime={timestamp.dateTime} title={taskRunning ? "发送时间" : "回复时间"}>
             {timestamp.label}
           </time>
         ) : null}
@@ -862,7 +850,7 @@ export function MessageBubble({
           <RichMessage text={displayOutputText} />
         </section>
       ) : null}
-      {message.status === "running" && liveOutputText && !friendlyProgress ? <AgentLiveOutput text={liveOutputText} /> : null}
+      {taskRunning && liveOutputText && !friendlyProgress ? <AgentLiveOutput text={liveOutputText} /> : null}
       {fileReferences.length ? (
         <FileReferenceList
           files={fileReferences}

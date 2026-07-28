@@ -26,21 +26,21 @@ assert.equal(pendingAction.sendBlocked, true);
 assert.equal(pendingAction.code, "action-required");
 
 const preparingTask = composerLockPresentation({
-  runningTask: { remoteTaskStatus: "preparing" },
+  runningTask: { role: "assistant", taskState: "submitting" },
 });
 assert.equal(preparingTask.locked, true);
 assert.equal(preparingTask.sendBlocked, true);
-assert.equal(preparingTask.code, "checking");
+assert.equal(preparingTask.code, "submitting");
 
 const syncingTask = composerLockPresentation({
-  runningTask: { remoteTaskId: "task-1", remoteTaskStatus: "sync-lost" },
+  runningTask: { role: "assistant", taskState: "syncing" },
 });
 assert.equal(syncingTask.locked, true);
 assert.equal(syncingTask.sendBlocked, true);
 assert.equal(syncingTask.code, "syncing");
 
 const runningTask = composerLockPresentation({
-  runningTask: { remoteTaskId: "task-1", remoteTaskStatus: "running" },
+  runningTask: { role: "assistant", taskState: "running" },
 });
 assert.equal(runningTask.locked, true);
 assert.equal(runningTask.sendBlocked, true);

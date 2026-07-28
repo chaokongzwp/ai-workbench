@@ -1,14 +1,19 @@
+import {
+  taskStateForMessage,
+  taskStateIsActive,
+  taskStateSubmitting,
+  taskStateSyncing,
+} from "./messageLifecycle.js";
+
 export function composerLockPresentation({
   busy = false,
   pendingAction = false,
   profileReady = true,
   runningTask = null,
 } = {}) {
-  if (runningTask) {
-    const remoteTaskStatus = String(runningTask.remoteTaskStatus || "").trim();
-    const remoteTaskId = String(runningTask.remoteTaskId || "").trim();
-
-    if (remoteTaskStatus === "sync-lost") {
+  const taskState = taskStateForMessage(runningTask);
+  if (runningTask && taskStateIsActive(taskState)) {
+    if (taskState === taskStateSyncing) {
       return {
         locked: true,
         sendBlocked: true,
@@ -17,12 +22,12 @@ export function composerLockPresentation({
       };
     }
 
-    if (!remoteTaskId) {
+    if (taskState === taskStateSubmitting) {
       return {
         locked: true,
         sendBlocked: true,
-        code: "checking",
-        text: "正在确认上一条任务状态",
+        code: "submitting",
+        text: "正在发送",
       };
     }
 

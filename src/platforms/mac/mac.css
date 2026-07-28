@@ -1025,16 +1025,16 @@ body.mac-terminal-resizing {
   background: color-mix(in srgb, var(--mac-surface-selected) 64%, transparent);
 }
 
-.mac-shell .conversation .message-header .streaming.running,
+.mac-shell .conversation .message-header .streaming:is(.submitting, .accepted, .running, .syncing),
 .mac-shell .conversation .message-header .task-timer.running {
   color: var(--aiwb-status-warning);
 }
 
-.mac-shell .conversation .message-header .streaming.done {
+.mac-shell .conversation .message-header .streaming.succeeded {
   color: var(--aiwb-status-success);
 }
 
-.mac-shell .conversation .message-header .streaming.error {
+.mac-shell .conversation .message-header .streaming.failed {
   color: var(--aiwb-status-danger);
 }
 

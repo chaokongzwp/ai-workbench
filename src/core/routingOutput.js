@@ -200,7 +200,9 @@ const {
   serverPlatforms,
   serverSessionName,
   serverTaskRunning,
-  serverTaskState,
+  taskStateForMessage,
+  taskStateIsActive,
+  taskStateSucceeded,
   sessionName,
   sessionSelectionKey,
   shQuote,
@@ -276,7 +278,7 @@ export function latestServerMessageSummary(server) {
   const messages = Array.isArray(server?.messages) ? server.messages : [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (!message || message.status === "running") continue;
+    if (!message || taskStateIsActive(taskStateForMessage(message))) continue;
     const text = messageDisplayText(message.output || message.body || message.title);
     if (!text) continue;
     return compactInlineText(message.role === "user" ? `你：${text}` : text, 32);
@@ -285,10 +287,16 @@ export function latestServerMessageSummary(server) {
 }
 
 export function serverSidebarMeta(server, index, connected = false) {
-  const task = server?.task || {};
   const connection = server?.connection || {};
-  if (serverTaskRunning(server)) return compactInlineText(task.label || "正在等待 AI 回复", 32);
-  if (task.state === "done" && task.finishedAt && Date.now() - Number(task.finishedAt) < 5 * 60 * 1000) {
+  const latestAssistant = [...(Array.isArray(server?.messages) ? server.messages : [])]
+    .reverse()
+    .find((message) => message?.role === "assistant");
+  if (serverTaskRunning(server)) return compactInlineText(latestAssistant?.title || "正在等待 AI 回复", 32);
+  if (
+    taskStateForMessage(latestAssistant) === taskStateSucceeded &&
+    latestAssistant?.completedAt &&
+    Date.now() - Number(latestAssistant.completedAt) < 5 * 60 * 1000
+  ) {
     return "刚完成";
   }
   if (connection.state === "error") return compactInlineText(connection.detail || "连接异常", 32);
