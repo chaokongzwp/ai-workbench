@@ -347,9 +347,11 @@ function IphoneComposer({
                       !voiceInputEnabled ? "唤醒未开启，打开语音设置" : wakeActive ? "关闭唤醒词监听" : "开启唤醒词监听"
                     }
                   >
-                    <Ear className="wake-ear-icon" size={17} weight="regular" aria-hidden="true" />
-                    {wakeActive ? <Circle className="wake-status-dot" weight="fill" aria-hidden="true" /> : null}
-                    <span className="wake-button-label">{wakeButtonLabel}</span>
+                    <span className="wake-button-content">
+                      <Ear className="wake-ear-icon" size={17} weight="regular" aria-hidden="true" />
+                      {wakeActive ? <Circle className="wake-status-dot" weight="fill" aria-hidden="true" /> : null}
+                      <span className="wake-button-label">{wakeButtonLabel}</span>
+                    </span>
                   </button>
                   <button
                     type="button"

@@ -149,8 +149,8 @@
 .iphone-shell .iphone-composer-actions .iphone-wake-button {
   display: inline-flex !important;
   place-items: unset !important;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch !important;
+  justify-content: stretch !important;
   flex: 0 0 auto !important;
   width: auto !important;
   min-width: 62px !important;
@@ -167,6 +167,16 @@
   letter-spacing: 0;
   white-space: nowrap;
   opacity: 1;
+}
+
+.iphone-shell .iphone-composer-actions .iphone-wake-button .wake-button-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  gap: 4px;
+  line-height: 1;
 }
 
 .iphone-shell .iphone-composer-actions .iphone-wake-button.active {
