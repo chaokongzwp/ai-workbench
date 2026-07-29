@@ -993,7 +993,17 @@ export function RichMessage({ text }) {
         }
 
         if (block.type === "quote") {
-          return <blockquote key={`quote-${index}`}>{renderInlineMessage(block.text, `quote-${index}`)}</blockquote>;
+          return (
+            <blockquote key={`quote-${index}`} className="rich-quote">
+              <span className="rich-quote-content">{renderInlineMessage(block.text, `quote-${index}`)}</span>
+              <CopyButton
+                text={block.text}
+                label="复制引用"
+                className="rich-content-copy rich-quote-copy"
+                iconStyle="mac"
+              />
+            </blockquote>
+          );
         }
 
         if (block.type === "code") {
@@ -1562,7 +1572,18 @@ export function renderInlineMessage(text, keyPrefix) {
 
     const token = match[0];
     if (token.startsWith("`")) {
-      nodes.push(<code key={`${keyPrefix}-code-${matchIndex}`}>{token.slice(1, -1)}</code>);
+      const codeText = token.slice(1, -1);
+      nodes.push(
+        <span className="inline-code-token" key={`${keyPrefix}-code-${matchIndex}`}>
+          <code>{codeText}</code>
+          <CopyButton
+            text={codeText}
+            label="复制代码"
+            className="rich-content-copy inline-code-copy"
+            iconStyle="mac"
+          />
+        </span>,
+      );
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${matchIndex}`}>{token.slice(2, -2)}</strong>);
     } else if (/^https?:\/\//i.test(token)) {

@@ -414,8 +414,15 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
 
 .native-app-shell[data-native-form-factor="ipad"] .native-conversation .rich-message blockquote {
   border-left-color: var(--ipad-chat-line-strong);
-  color: var(--ipad-chat-muted);
-  background: var(--ipad-chat-soft);
+  color: var(--ipad-chat-text);
+  background: rgba(118, 118, 128, 0.028);
+}
+
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"]
+  .native-conversation
+  .rich-message
+  blockquote {
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .native-app-shell[data-native-form-factor="ipad"] .native-conversation .task-status-card,
