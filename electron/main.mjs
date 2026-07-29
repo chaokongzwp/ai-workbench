@@ -5,6 +5,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { appendFile, chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { connect as tlsConnect } from "node:tls";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { Client } from "ssh2";
 import { sortConversationMessages } from "../src/core/messageLifecycle.js";
@@ -716,23 +717,30 @@ function startEmbeddedSshTerminal(event, payload = {}) {
 
             record.stream = stream;
             record.settled = true;
+            const stdoutDecoder = new StringDecoder("utf8");
+            const stderrDecoder = new StringDecoder("utf8");
+            const emitDecoded = (decoder, chunk) => {
+              const data = typeof chunk === "string" ? chunk : decoder.write(chunk);
+              if (!data || record.sender.isDestroyed()) return;
+              record.sender.send("aiwb:terminal-data", {
+                terminalId: record.id,
+                data,
+              });
+            };
+            const flushDecoded = () => {
+              emitDecoded(stdoutDecoder, stdoutDecoder.end());
+              emitDecoded(stderrDecoder, stderrDecoder.end());
+            };
             stream.on("data", (chunk) => {
-              if (!record.sender.isDestroyed()) {
-                record.sender.send("aiwb:terminal-data", {
-                  terminalId: record.id,
-                  data: chunk.toString("utf8"),
-                });
-              }
+              emitDecoded(stdoutDecoder, chunk);
             });
             stream.stderr?.on("data", (chunk) => {
-              if (!record.sender.isDestroyed()) {
-                record.sender.send("aiwb:terminal-data", {
-                  terminalId: record.id,
-                  data: chunk.toString("utf8"),
-                });
-              }
+              emitDecoded(stderrDecoder, chunk);
             });
-            stream.on("close", () => closeEmbeddedTerminalRecord(record, "closed", "远端 SSH 已断开"));
+            stream.on("close", () => {
+              flushDecoded();
+              closeEmbeddedTerminalRecord(record, "closed", "远端 SSH 已断开");
+            });
             stream.on("error", (streamError) => {
               closeEmbeddedTerminalRecord(record, "error", streamError?.message || String(streamError));
             });
@@ -2090,9 +2098,21 @@ async function startWakeWord(payload = {}) {
   );
 }
 
-function runUploadedPowerShellScript(client, config, append, finish, getOutput, resolvePromise, reject) {
+function runUploadedPowerShellScript(
+  client,
+  config,
+  appendStdout,
+  appendStderr,
+  flushOutput,
+  finish,
+  getOutput,
+  resolvePromise,
+  reject,
+) {
   const tempCommand = 'powershell -NoLogo -NoProfile -Command "[System.IO.Path]::GetTempPath()"';
   let tempOutput = "";
+  const tempStdoutDecoder = new StringDecoder("utf8");
+  const tempStderrDecoder = new StringDecoder("utf8");
 
   client.exec(tempCommand, {}, (tempError, tempStream) => {
     if (tempError) {
@@ -2102,6 +2122,8 @@ function runUploadedPowerShellScript(client, config, append, finish, getOutput, 
 
     tempStream
       .on("close", () => {
+        tempOutput += tempStdoutDecoder.end();
+        tempOutput += tempStderrDecoder.end();
         const tempLine =
           tempOutput
             .split(/\r?\n/)
@@ -2149,15 +2171,16 @@ function runUploadedPowerShellScript(client, config, append, finish, getOutput, 
 
                 runStream
                   .on("close", () => {
+                    flushOutput();
                     console.info("[aiwb:ssh:uploaded-close]", {
                       requestId: config.requestId,
                       outputLength: getOutput().length,
                     });
                     finish(() => resolvePromise({ ok: true, stdout: getOutput() }));
                   })
-                  .on("data", append);
+                  .on("data", appendStdout);
 
-                runStream.stderr.on("data", append);
+                runStream.stderr.on("data", appendStderr);
               });
             });
 
@@ -2165,11 +2188,11 @@ function runUploadedPowerShellScript(client, config, append, finish, getOutput, 
         });
       })
       .on("data", (chunk) => {
-        tempOutput += chunk.toString("utf8");
+        tempOutput += tempStdoutDecoder.write(chunk);
       });
 
     tempStream.stderr.on("data", (chunk) => {
-      tempOutput += chunk.toString("utf8");
+      tempOutput += tempStderrDecoder.write(chunk);
     });
   });
 }
@@ -2207,6 +2230,9 @@ function runSshCommand(payload) {
     const client = new Client();
     let output = "";
     let settled = false;
+    let decodersFlushed = false;
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
 
     const finish = (fn) => {
       if (settled) return;
@@ -2216,11 +2242,23 @@ function runSshCommand(payload) {
       fn();
     };
 
-    const append = (chunk) => {
-      output += chunk.toString("utf8");
+    const appendText = (text) => {
+      output += String(text || "");
       if (output.length > config.maxResponseSize) {
         output = output.slice(output.length - config.maxResponseSize);
       }
+    };
+    const appendStdout = (chunk) => {
+      appendText(typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk));
+    };
+    const appendStderr = (chunk) => {
+      appendText(typeof chunk === "string" ? chunk : stderrDecoder.write(chunk));
+    };
+    const flushOutput = () => {
+      if (decodersFlushed) return;
+      decodersFlushed = true;
+      appendText(stdoutDecoder.end());
+      appendText(stderrDecoder.end());
     };
 
     const timer = setTimeout(() => {
@@ -2250,7 +2288,17 @@ function runSshCommand(payload) {
         });
 
         if (config.uploadScript && config.stdin) {
-          runUploadedPowerShellScript(client, config, append, finish, () => output, resolvePromise, reject);
+          runUploadedPowerShellScript(
+            client,
+            config,
+            appendStdout,
+            appendStderr,
+            flushOutput,
+            finish,
+            () => output,
+            resolvePromise,
+            reject,
+          );
           return;
         }
 
@@ -2262,6 +2310,7 @@ function runSshCommand(payload) {
 
           stream
             .on("close", () => {
+              flushOutput();
               console.info("[aiwb:ssh:close]", {
                 requestId,
                 outputLength: output.length,
@@ -2272,9 +2321,9 @@ function runSshCommand(payload) {
               });
               finish(() => resolvePromise({ ok: true, stdout: output }));
             })
-            .on("data", append);
+            .on("data", appendStdout);
 
-          stream.stderr.on("data", append);
+          stream.stderr.on("data", appendStderr);
 
           if (config.stdin) {
             stream.end(config.stdin.endsWith("\n") ? config.stdin : `${config.stdin}\n`);
