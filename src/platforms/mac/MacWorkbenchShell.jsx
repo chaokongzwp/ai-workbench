@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { dataTransferHasFiles } from "../../core/workbenchCore.js";
 
-const initialRenderedMessageCount = 30;
-const renderedMessageBatchSize = 15;
+const initialRenderedMessageCount = 6;
+const renderedMessageBatchSize = 6;
 
 const MacSshPanel = lazy(() =>
   import("./MacSshPanel.jsx").then((module) => ({ default: module.MacSshPanel })),
