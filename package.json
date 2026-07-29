@@ -47,7 +47,11 @@
     "agent:export:github": "node scripts/export-agent-github.mjs",
     "agent:publish": "node scripts/release-agent.mjs",
     "agent:publish:oss": "node scripts/publish-agent-oss.mjs",
+    "agent:prune": "node scripts/prune-agent-versions.mjs",
+    "agent:prune:apply": "node scripts/prune-agent-versions.mjs --apply",
     "voice:configure-local": "node scripts/configure-local-voice.mjs",
+    "test": "node --test scripts/test-*.mjs",
+    "test:ci": "npm test && npm run build",
     "test:lifecycle": "node scripts/test-message-lifecycle.mjs",
     "test:ssh-reconnect": "node scripts/test-ssh-reconnect.mjs"
   },
