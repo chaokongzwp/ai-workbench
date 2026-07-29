@@ -2904,6 +2904,20 @@ if (-not $AIWB_GIT) {
 $AIWB_PARENT = Split-Path -Parent $AIWB_TARGET
 if ($AIWB_PARENT) { New-Item -ItemType Directory -Force -Path $AIWB_PARENT | Out-Null }
 
+$AIWB_TARGET_IS_REPO = Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container
+if ((Test-Path -LiteralPath $AIWB_TARGET) -and -not $AIWB_TARGET_IS_REPO) {
+  $AIWB_TARGET_CHILDREN = @(Get-ChildItem -LiteralPath $AIWB_TARGET -Force -ErrorAction SilentlyContinue)
+  if ($AIWB_TARGET_CHILDREN.Count -gt 0) {
+    $AIWB_REPO_LEAF = (($AIWB_REPO -replace '\\\\', '/').TrimEnd('/') -split '/')[-1]
+    $AIWB_REPO_NAME = [System.IO.Path]::GetFileNameWithoutExtension($AIWB_REPO_LEAF)
+    if (-not $AIWB_REPO_NAME) {
+      Write-Output "__AIWB_GIT_OPERATION_ERROR__无法从仓库地址识别目录名称，请填写一个新的完整保存目录。"
+      exit 3
+    }
+    $AIWB_TARGET = Join-Path $AIWB_TARGET $AIWB_REPO_NAME
+  }
+}
+
 if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) {
   Set-Location -LiteralPath $AIWB_TARGET
   git fetch --all --prune
@@ -2915,7 +2929,7 @@ if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) 
 } elseif (Test-Path -LiteralPath $AIWB_TARGET) {
   $AIWB_CHILDREN = @(Get-ChildItem -LiteralPath $AIWB_TARGET -Force -ErrorAction SilentlyContinue)
   if ($AIWB_CHILDREN.Count -gt 0) {
-    Write-Output "__AIWB_GIT_OPERATION_ERROR__目标目录已存在但不是 Git 仓库，请换一个空目录。"
+    Write-Output ("__AIWB_GIT_OPERATION_ERROR__保存位置已存在同名目录且里面有文件：" + $AIWB_TARGET + "。请选择其他目录，或先处理这个同名目录。")
     exit 3
   }
   if ($AIWB_BRANCH) {
@@ -2959,6 +2973,16 @@ fi
 AIWB_PARENT=$(dirname "$AIWB_TARGET")
 [ -n "$AIWB_PARENT" ] && mkdir -p "$AIWB_PARENT"
 
+if [ -e "$AIWB_TARGET" ] && [ ! -d "$AIWB_TARGET/.git" ] && [ "$(find "$AIWB_TARGET" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
+  AIWB_REPO_LEAF=$(basename "\${AIWB_REPO%/}")
+  AIWB_REPO_NAME=\${AIWB_REPO_LEAF%.git}
+  if [ -z "$AIWB_REPO_NAME" ]; then
+    printf '__AIWB_GIT_OPERATION_ERROR__无法从仓库地址识别目录名称，请填写一个新的完整保存目录。\\n'
+    exit 3
+  fi
+  AIWB_TARGET="$AIWB_TARGET/$AIWB_REPO_NAME"
+fi
+
 if [ -d "$AIWB_TARGET/.git" ]; then
   cd "$AIWB_TARGET"
   git fetch --all --prune
@@ -2968,7 +2992,7 @@ if [ -d "$AIWB_TARGET/.git" ]; then
   git pull --ff-only
   printf '__AIWB_GIT_OPERATION_STATUS__updated\\n'
 elif [ -e "$AIWB_TARGET" ] && [ "$(find "$AIWB_TARGET" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]; then
-  printf '__AIWB_GIT_OPERATION_ERROR__目标目录已存在但不是 Git 仓库，请换一个空目录。\\n'
+  printf '__AIWB_GIT_OPERATION_ERROR__保存位置已存在同名目录且里面有文件：%s。请选择其他目录，或先处理这个同名目录。\\n' "$AIWB_TARGET"
   exit 3
 else
   if [ -n "$AIWB_BRANCH" ]; then
