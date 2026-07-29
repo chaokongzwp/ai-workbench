@@ -21,6 +21,7 @@ import {
 } from "@phosphor-icons/react";
 import { AgentLogo, StatusDot } from "../../features/primitives.jsx";
 import { NativeSshTerminal } from "../native/NativeSshTerminal.jsx";
+import { useProgressiveMessages } from "../useProgressiveMessages.js";
 import {
   agentById,
   composerLockPresentation,
@@ -576,6 +577,14 @@ export function IphoneWorkbenchShell({
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
   const [exportNotice, setExportNotice] = useState(null);
+  const {
+    visibleMessages,
+    handleProgressiveScroll,
+  } = useProgressiveMessages({
+    messages,
+    sessionId: activeServerId,
+    onScroll: handleConversationScroll,
+  });
   const visibleSessions = useMemo(() => {
     const query = sessionQuery.trim().toLocaleLowerCase();
     return servers
@@ -761,7 +770,7 @@ export function IphoneWorkbenchShell({
             <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} />
           </div>
         ) : null}
-        <div className="iphone-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
+        <div className="iphone-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleProgressiveScroll}>
           {!hasWorkSession ? (
             <EmptyWorkspaceActions busy={busy} onAddServer={onAddServer} onSyncCloud={onOpenCloudSync} />
           ) : null}
@@ -784,7 +793,7 @@ export function IphoneWorkbenchShell({
               onAddWorkdir={onAddWorkdir}
             />
           ) : null}
-          {hasWorkSession ? messages.map((message) => (
+          {hasWorkSession ? visibleMessages.map((message) => (
             <MessageBubble
               key={message.id}
               message={message}

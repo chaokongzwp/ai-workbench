@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
 import { DotsThree, SidebarSimple, TerminalWindow } from "@phosphor-icons/react";
 import { connectionStatusPresentation, dataTransferHasFiles } from "../../core/workbenchCore.js";
+import { useProgressiveMessages } from "../useProgressiveMessages.js";
 import { NativeSshTerminal } from "./NativeSshTerminal.jsx";
 
 export function NativeWorkbenchShell({
@@ -158,6 +159,14 @@ export function NativeWorkbenchShell({
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const hasWorkSession = servers.length > 0;
+  const {
+    visibleMessages,
+    handleProgressiveScroll,
+  } = useProgressiveMessages({
+    messages,
+    sessionId: activeServerId,
+    onScroll: handleConversationScroll,
+  });
 
   useEffect(() => {
     if (platform !== "android") return undefined;
@@ -361,7 +370,7 @@ export function NativeWorkbenchShell({
           </div>
         ) : null}
 
-        <div className="native-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleConversationScroll}>
+        <div className="native-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleProgressiveScroll}>
           {!hasWorkSession ? (
             <EmptyWorkspaceActions busy={busy} onAddServer={onAddServer} onSyncCloud={onOpenCloudSync} />
           ) : null}
@@ -384,7 +393,7 @@ export function NativeWorkbenchShell({
               onAddWorkdir={onAddWorkdir}
             />
           ) : null}
-          {hasWorkSession ? messages.map((message) => (
+          {hasWorkSession ? visibleMessages.map((message) => (
             <MessageBubble
               key={message.id}
               message={message}

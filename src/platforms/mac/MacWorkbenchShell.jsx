@@ -1,8 +1,6 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { dataTransferHasFiles } from "../../core/workbenchCore.js";
-
-const initialRenderedMessageCount = 6;
-const renderedMessageBatchSize = 6;
+import { useProgressiveMessages } from "../useProgressiveMessages.js";
 
 const MacSshPanel = lazy(() =>
   import("./MacSshPanel.jsx").then((module) => ({ default: module.MacSshPanel })),
@@ -161,41 +159,19 @@ export function MacWorkbenchShell({
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [renderedMessageCount, setRenderedMessageCount] = useState(initialRenderedMessageCount);
-  const pendingOlderMessagesRef = useRef(null);
   const hasWorkSession = servers.length > 0;
-  const renderedMessages = useMemo(
-    () => messages.slice(-renderedMessageCount),
-    [messages, renderedMessageCount],
-  );
-  const hasOlderMessages = renderedMessages.length < messages.length;
+  const {
+    visibleMessages: renderedMessages,
+    handleProgressiveScroll: handleMacConversationScroll,
+  } = useProgressiveMessages({
+    messages,
+    sessionId: activeServerId,
+    onScroll: handleConversationScroll,
+  });
   const macSessionTitle = String(activeSessionName || "当前会话")
     .replace(/\s*[·•]\s*(codex|claude|gemini|aider|ollama)\s*$/i, "")
     .trim();
   const activeMachineName = String(diagnostics?.host || profile.host || "未识别服务器").trim();
-
-  useEffect(() => {
-    setRenderedMessageCount(initialRenderedMessageCount);
-    pendingOlderMessagesRef.current = null;
-  }, [activeServerId]);
-
-  useLayoutEffect(() => {
-    const pending = pendingOlderMessagesRef.current;
-    if (!pending) return;
-    pendingOlderMessagesRef.current = null;
-    pending.element.scrollTop = pending.element.scrollHeight - pending.previousScrollHeight;
-  }, [renderedMessageCount]);
-
-  function handleMacConversationScroll(event) {
-    handleConversationScroll?.(event);
-    const container = event.currentTarget;
-    if (!hasOlderMessages || container.scrollTop > 48 || pendingOlderMessagesRef.current) return;
-    pendingOlderMessagesRef.current = {
-      element: container,
-      previousScrollHeight: container.scrollHeight,
-    };
-    setRenderedMessageCount((count) => Math.min(messages.length, count + renderedMessageBatchSize));
-  }
 
   function handleFileDrop(event) {
     event.preventDefault();
