@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   agentPreferredForProfile,
   dedupeRemoteTaskMessages,
+  isMessageListDiagnostic,
+  messageTextKey,
   reconcileServerMessageLifecycle,
 } from "../src/app/controllerMessageLifecycle.js";
 import {
@@ -81,5 +83,9 @@ assert.equal(reconciled.task.agentId, "claude");
 assert.equal(agentPreferredForProfile({ platform: "windows", useWorkbenchAgent: false }), true);
 assert.equal(agentPreferredForProfile({ platform: "linux", useWorkbenchAgent: true }), true);
 assert.equal(agentPreferredForProfile({ platform: "linux", useWorkbenchAgent: false }), false);
+assert.equal(messageTextKey({ promptText: " 继续执行 " }), "继续执行");
+assert.equal(isMessageListDiagnostic({ title: "消息列表已拉取" }), true);
+assert.equal(isMessageListDiagnostic({ title: "Claude 输出已刷新" }), true);
+assert.equal(isMessageListDiagnostic({ title: "Claude 回复" }), false);
 
 console.log("controller message lifecycle regression: ok");

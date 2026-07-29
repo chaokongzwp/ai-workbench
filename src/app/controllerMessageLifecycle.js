@@ -25,7 +25,7 @@ function earliestMessageTime(left, right) {
   return values.length ? Math.min(...values) : undefined;
 }
 
-function messageTextKey(message) {
+export function messageTextKey(message) {
   return String(message?.body || message?.promptText || "").trim();
 }
 
@@ -52,7 +52,7 @@ function mergeRemoteUserMessages(existing, incoming) {
   };
 }
 
-function isMessageListDiagnostic(message) {
+export function isMessageListDiagnostic(message) {
   const title = String(message?.title || "").trim();
   return title === "消息列表已拉取" || /输出已刷新$/.test(title);
 }

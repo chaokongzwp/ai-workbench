@@ -5,6 +5,8 @@ import {
   agentPreferredForProfile,
   dedupeRemoteTaskMessages,
   dedupeServerRemoteTaskMessages,
+  isMessageListDiagnostic,
+  messageTextKey,
   reconcileServerMessageLifecycle,
 } from "./controllerMessageLifecycle.js";
 import { shellComponents } from "./shellComponents.jsx";
