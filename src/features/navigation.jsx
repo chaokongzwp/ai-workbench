@@ -574,14 +574,14 @@ export function NavigationPanel({
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
+                        onSelectServer?.(server.id);
+                        if (busy || taskRunning) return;
                         if (isActive && connectionIsLive(serverConnection)) {
                           onDisconnectServer?.(server.id);
                         } else {
-                          onSelectServer?.(server.id);
                           onTestConnection?.(server.id);
                         }
                       }}
-                      disabled={busy || taskRunning}
                     >
                       <StatusDot
                         status={macState.tone === "running" ? "testing" : macState.tone === "done" ? "connected" : macState.tone}
@@ -667,11 +667,16 @@ export function NavigationPanel({
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      if (isActive && connectionIsLive(serverConnection)) onDisconnectServer?.(server.id);
-                      else if (serverReady) onTestConnection?.(server.id);
-                      else onConfigureServer?.(server.id);
+                      onSelectServer?.(server.id);
+                      if (busy || taskRunning) return;
+                      if (isActive && connectionIsLive(serverConnection)) {
+                        onDisconnectServer?.(server.id);
+                      } else if (serverReady) {
+                        onTestConnection?.(server.id);
+                      } else {
+                        onConfigureServer?.(server.id);
+                      }
                     }}
-                    disabled={busy || taskRunning}
                   >
                     {ipadStatus.label}
                   </button>
@@ -747,13 +752,14 @@ export function NavigationPanel({
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
+                      onSelectServer?.(server.id);
+                      if (busy || (isActive && connection.state === "testing")) return;
                       if (isActive && connectionIsLive(serverConnection)) {
                         onDisconnectServer?.(server.id);
                       } else {
                         onTestConnection?.(server.id);
                       }
                     }}
-                    disabled={busy || (isActive && connection.state === "testing")}
                   >
                     {serverConnectLabel}
                   </button>
