@@ -26,7 +26,9 @@ const {
   buildWorkspaceMigrationPayload,
   builtInAliyunVoiceConfig,
   chineseNumber,
+  claudePermissionMode,
   clipPersistedText,
+  codexPermissionArgs,
   commandDiagnosticPayload,
   commandName,
   compactInlineText,
@@ -1059,6 +1061,7 @@ export function buildCodexExecCommand(profile, agent, prompt) {
   const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
   const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.session`;
   const model = selectedAgentModel(profile, agent);
+  const permissionArgs = codexPermissionArgs(profile).map(shQuote).join(" ");
 
   return remoteBashCommand(profile, `
 set -e
@@ -1094,9 +1097,9 @@ fi
 
 set +e
 if printf '%s' "$AIWB_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
-  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --skip-git-repo-check --sandbox danger-full-access --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --skip-git-repo-check ${permissionArgs} --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
 else
-  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --skip-git-repo-check --sandbox danger-full-access --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --skip-git-repo-check ${permissionArgs} --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
 fi
 AIWB_STATUS=$?
 set -e
@@ -1131,6 +1134,7 @@ export function buildWindowsCodexExecCommand(profile, agent, prompt) {
   const stateDir = joinWindowsPath(profile.workdir, ".ai-workbench");
   const sessionFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.session`);
   const model = selectedAgentModel(profile, agent);
+  const permissionArgs = codexPermissionArgs(profile).map(psQuote).join(", ");
 
   return powershellStdinCommand(`
 $AIWB_WORKDIR = ${psQuote(profile.workdir)}
@@ -1174,7 +1178,7 @@ $AIWB_ARGS = @("exec")
 if ($AIWB_MODEL) {
   $AIWB_ARGS += @("--model", $AIWB_MODEL)
 }
-$AIWB_ARGS += @("--skip-git-repo-check", "--sandbox", "danger-full-access", "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT, "--color", "never")
+$AIWB_ARGS += @("--skip-git-repo-check", ${permissionArgs}, "--cd", $AIWB_WORKDIR, "--output-last-message", $AIWB_OUTPUT, "--color", "never")
 if ($AIWB_SESSION -match "^[0-9a-fA-F-]{36}$") {
   $AIWB_ARGS += @("resume", $AIWB_SESSION, $AIWB_PROMPT)
 } else {
@@ -1237,6 +1241,7 @@ export function buildClaudePrintCommand(profile, agent, prompt) {
   const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
   const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.claude-session`;
   const model = selectedAgentModel(profile, agent);
+  const permissionMode = claudePermissionMode(profile);
 
   return remoteBashCommand(profile, `
 set -e
@@ -1266,7 +1271,7 @@ if [ -s ${shQuote(sessionFile)} ]; then
   AIWB_SESSION=$(cat ${shQuote(sessionFile)} 2>/dev/null | tr -d '[:space:]' || true)
 fi
 
-AIWB_ARGS=(-p "$AIWB_PROMPT" --output-format json --permission-mode acceptEdits)
+AIWB_ARGS=(-p "$AIWB_PROMPT" --output-format json --permission-mode ${shQuote(permissionMode)})
 if [ -n "$AIWB_MODEL" ]; then
   AIWB_ARGS+=(--model "$AIWB_MODEL")
 fi
@@ -1474,6 +1479,7 @@ export function buildAgentTaskCommand(profile, agent, prompt) {
     model: selectedAgentModel(profile, agent),
     prompt: formatAgentPrompt(prompt),
     sessionFile,
+    executionPermissionMode: profile.executionPermissionMode,
   };
 }
 

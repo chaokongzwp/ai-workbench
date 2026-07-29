@@ -10,6 +10,18 @@ import {
   taskStateIsTerminal,
   taskStateSucceeded,
 } from "./messageLifecycle.js";
+import { normalizeExecutionPermissionMode } from "./executionPermissions.js";
+
+export {
+  claudeFullAccessBlockedByRoot,
+  claudePermissionMode,
+  codexPermissionArgs,
+  executionPermissionModeFullAccess,
+  executionPermissionModeOptions,
+  executionPermissionModeStandard,
+  normalizeExecutionPermissionMode,
+  profileUsesFullAccess,
+} from "./executionPermissions.js";
 
 export function desktopBridge() {
   return typeof window !== "undefined" ? window.aiWorkbench : undefined;
@@ -392,6 +404,7 @@ export const defaultProfile = {
   playResultAudio: false,
   resultAudioMode: "summary",
   useWorkbenchAgent: true,
+  executionPermissionMode: "standard",
   appearanceMode: "light",
   messageFontFamily: "system",
   messageFontSize: "16",
@@ -1317,6 +1330,7 @@ export function normalizeProfile(profile) {
       profile?.useWorkbenchAgent === undefined
         ? defaultUseWorkbenchAgent
         : Boolean(profile.useWorkbenchAgent),
+    executionPermissionMode: normalizeExecutionPermissionMode(profile?.executionPermissionMode),
     appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
     messageFontFamily: normalizeMessageFontFamily(profile?.messageFontFamily),
     messageFontSize: normalizeMessageFontSize(profile?.messageFontSize),
@@ -1385,6 +1399,7 @@ export function globalSettingsFromProfile(profile) {
     ttsModel: normalized.ttsModel,
     playResultAudio: normalized.playResultAudio,
     resultAudioMode: normalized.resultAudioMode,
+    executionPermissionMode: normalized.executionPermissionMode,
     appearanceMode: normalized.appearanceMode,
     messageFontFamily: normalized.messageFontFamily,
     messageFontSize: normalized.messageFontSize,

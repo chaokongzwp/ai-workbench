@@ -15,6 +15,7 @@ import {
   Palette,
   Robot,
   ShareNetwork,
+  ShieldCheck,
   Terminal,
   TextT,
   Trash,
@@ -189,6 +190,7 @@ const {
   normalizeAgentModel,
   normalizeCloudSyncAccount,
   normalizeDirectoryPrefs,
+  normalizeExecutionPermissionMode,
   normalizeDiscovery,
   normalizeMainAIRoute,
   normalizeManualWorkdirHistory,
@@ -952,6 +954,7 @@ export function SettingsPanel({
     "session-actions": "会话操作",
     "session-share": "分享会话",
     "global-appearance": "外观",
+    "global-permissions": "执行权限",
     "global-typography": "字体与消息",
     "global-voice": "语音与播放",
     "global-cloud-sync": "云端配置",
@@ -989,6 +992,7 @@ export function SettingsPanel({
   const settingsPageNeedsSave = [
     "session-general",
     "global-appearance",
+    "global-permissions",
     "global-typography",
     "global-voice",
     "global-main-ai",
@@ -1224,6 +1228,13 @@ export function SettingsPanel({
                 detail="自然语言理解与任务分流"
                 value={draftProfile.mainAIEnabled !== false ? "已开启" : "已关闭"}
                 onClick={() => setSettingsPage("global-main-ai")}
+              />
+              <SettingsMenuRow
+                icon={ShieldCheck}
+                title="执行权限"
+                detail="统一控制 Codex 和 Claude 的操作范围"
+                value={normalizeExecutionPermissionMode(draftProfile.executionPermissionMode) === "full-access" ? "完全访问" : "标准"}
+                onClick={() => setSettingsPage("global-permissions")}
               />
             </SettingsSection>
             <SettingsSection title="数据">
@@ -1724,6 +1735,25 @@ export function SettingsPanel({
                 onChange={(value) => updateField("appearanceMode", value)}
               />
             </SettingsSection>
+          </div>
+        ) : null}
+
+        {globalSettings && settingsPage === "global-permissions" ? (
+          <div className="settings-page-content">
+            <SettingsSection
+              title="AI 执行权限"
+              footer="这是全局设置。保存后会同步到已有会话和以后新建的会话。"
+            >
+              <ConfigToggle
+                label="允许完全访问"
+                checked={normalizeExecutionPermissionMode(draftProfile.executionPermissionMode) === "full-access"}
+                onChange={(value) => updateField("executionPermissionMode", value ? "full-access" : "standard")}
+              />
+            </SettingsSection>
+            <p className="settings-note">
+              开启后，Codex 和 Claude 可以在系统账号允许的范围内修改文件、执行命令和访问网络，并且不再等待操作确认。
+              Claude 官方不允许 Linux/macOS 的 root 用户启用完全访问，root 会话会自动保留标准权限。
+            </p>
           </div>
         ) : null}
 

@@ -1,12 +1,11 @@
-export function windowsWorkbenchAgentScript(version = "25") {
-  return String.raw`import fs from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
-const VERSION = ${JSON.stringify(version)};
+const VERSION = "29";
 const HOME = os.homedir();
 const ROOT = path.join(HOME, ".ai-workbench", "agent");
 const TASKS = path.join(ROOT, "tasks");
@@ -939,5 +938,3 @@ async function main() {
 }
 
 await main();
-`;
-}
