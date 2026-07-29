@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   Copy as CopyIcon,
@@ -975,7 +975,7 @@ export function FileReferenceList({
   );
 }
 
-export function RichMessage({ text }) {
+export const RichMessage = memo(function RichMessage({ text }) {
   const blocks = useMemo(() => parseRichMessage(text), [text]);
 
   if (!blocks.length) return null;
@@ -1038,7 +1038,7 @@ export function RichMessage({ text }) {
       })}
     </div>
   );
-}
+});
 
 function parseMarkdownListItem(line) {
   const unordered = String(line || "").match(/^\s*[-*•]\s+(.+)$/);
@@ -1494,9 +1494,32 @@ function normalizeMermaidSvg(svg) {
 }
 
 export function MermaidDiagram({ source }) {
+  const pendingDiagramRef = useRef(null);
+  const [shouldRender, setShouldRender] = useState(false);
   const [renderState, setRenderState] = useState({ status: "loading", svg: "", error: "" });
 
   useEffect(() => {
+    const node = pendingDiagramRef.current;
+    const Observer = typeof window !== "undefined" ? window.IntersectionObserver : null;
+    if (!node || !Observer) {
+      setShouldRender(true);
+      return undefined;
+    }
+
+    const observer = new Observer(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setShouldRender(true);
+        observer.disconnect();
+      },
+      { rootMargin: "900px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [source]);
+
+  useEffect(() => {
+    if (!shouldRender) return undefined;
     let cancelled = false;
     const diagramId = `aiwb-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const shell = document.querySelector(".app-shell, .native-app-shell");
@@ -1520,7 +1543,15 @@ export function MermaidDiagram({ source }) {
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [shouldRender, source]);
+
+  if (!shouldRender) {
+    return (
+      <div ref={pendingDiagramRef} className="rich-diagram pending" aria-label="图表将在显示时加载">
+        <span>图表将在显示时加载</span>
+      </div>
+    );
+  }
 
   if (renderState.status === "done" && renderState.svg) {
     return (
