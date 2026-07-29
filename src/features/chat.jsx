@@ -1014,8 +1014,9 @@ export function RichMessage({ text }) {
 
         if (block.type === "ul" || block.type === "ol") {
           const ListTag = block.type;
+          const listProps = block.type === "ol" && block.start ? { start: block.start } : {};
           return (
-            <ListTag key={`list-${index}`}>
+            <ListTag key={`list-${index}`} {...listProps}>
               {block.items.map((item, itemIndex) => (
                 <li key={`item-${index}-${itemIndex}`}>{renderInlineMessage(item, `item-${index}-${itemIndex}`)}</li>
               ))}
@@ -1027,6 +1028,24 @@ export function RichMessage({ text }) {
       })}
     </div>
   );
+}
+
+function parseMarkdownListItem(line) {
+  const unordered = String(line || "").match(/^\s*[-*•]\s+(.+)$/);
+  if (unordered) {
+    return { type: "ul", text: unordered[1].trim() };
+  }
+
+  const ordered = String(line || "").match(/^\s*(\d+)[.)]\s+(.+)$/);
+  if (ordered) {
+    return {
+      type: "ol",
+      start: Math.max(1, Number.parseInt(ordered[1], 10) || 1),
+      text: ordered[2].trim(),
+    };
+  }
+
+  return null;
 }
 
 export function parseRichMessage(value) {
@@ -1077,7 +1096,16 @@ export function parseRichMessage(value) {
 
     if (!trimmed) {
       flushParagraph();
-      flushList();
+      if (list) {
+        let nextIndex = lineIndex + 1;
+        while (nextIndex < lines.length && !String(lines[nextIndex] || "").trim()) {
+          nextIndex += 1;
+        }
+        const nextListItem = parseMarkdownListItem(lines[nextIndex]);
+        if (!nextListItem || nextListItem.type !== list.type) {
+          flushList();
+        }
+      }
       continue;
     }
 
@@ -1127,16 +1155,19 @@ export function parseRichMessage(value) {
       continue;
     }
 
-    const unordered = line.match(/^\s*[-*•]\s+(.+)$/);
-    const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    const listMatch = unordered || ordered;
-
-    if (listMatch) {
-      const type = unordered ? "ul" : "ol";
+    const listItem = parseMarkdownListItem(line);
+    if (listItem) {
+      const { type } = listItem;
       flushParagraph();
       if (!list || list.type !== type) flushList();
-      if (!list) list = { type, items: [] };
-      list.items.push(listMatch[1].trim());
+      if (!list) {
+        list = {
+          type,
+          items: [],
+          ...(type === "ol" ? { start: listItem.start } : {}),
+        };
+      }
+      list.items.push(listItem.text);
       continue;
     }
 
