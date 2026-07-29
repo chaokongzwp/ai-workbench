@@ -1603,18 +1603,7 @@ export function renderInlineMessage(text, keyPrefix) {
 
     const token = match[0];
     if (token.startsWith("`")) {
-      const codeText = token.slice(1, -1);
-      nodes.push(
-        <span className="inline-code-token" key={`${keyPrefix}-code-${matchIndex}`}>
-          <code>{codeText}</code>
-          <CopyButton
-            text={codeText}
-            label="复制代码"
-            className="rich-content-copy inline-code-copy"
-            iconStyle="mac"
-          />
-        </span>,
-      );
+      nodes.push(<code key={`${keyPrefix}-code-${matchIndex}`}>{token.slice(1, -1)}</code>);
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${matchIndex}`}>{token.slice(2, -2)}</strong>);
     } else if (/^https?:\/\//i.test(token)) {

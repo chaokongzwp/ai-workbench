@@ -1718,30 +1718,17 @@ textarea:disabled {
   text-align: left;
 }
 
-.inline-code-token {
-  position: relative;
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  gap: 1px;
-  margin: 0 1px;
-  padding: 0 1px 0 5px;
-  border: 1px solid rgba(60, 60, 67, 0.13);
-  border-radius: 4px;
-  background: rgba(118, 118, 128, 0.065);
-  vertical-align: baseline;
-}
-
 .rich-message code {
-  display: inline;
+  display: inline-block;
   max-width: 100%;
-  padding: 0;
-  border-radius: 0;
+  padding: 1px 5px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 4px;
   color: inherit;
-  background: transparent;
+  background: rgba(118, 118, 128, 0.065);
   font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
   font-size: 0.92em;
-  line-height: 1.48;
+  line-height: 1.4;
   vertical-align: baseline;
   overflow-wrap: anywhere;
 }
@@ -1824,6 +1811,20 @@ textarea:disabled {
   position: absolute;
   top: 5px;
   right: 6px;
+  opacity: 0;
+}
+
+.rich-quote:hover .rich-quote-copy,
+.rich-quote:focus-within .rich-quote-copy,
+.rich-quote-copy.copy-state-copied,
+.rich-quote-copy.copy-state-failed {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rich-quote-copy {
+    opacity: 0.58;
+  }
 }
 
 .rich-message pre {
@@ -8257,14 +8258,10 @@ body {
   color: var(--red);
 }
 
-.app-shell[data-theme="dark"] .inline-code-token {
-  border-color: rgba(235, 235, 245, 0.11);
-  background: rgba(255, 255, 255, 0.05);
-}
-
 .app-shell[data-theme="dark"] .rich-message code {
   color: #f4f4f5;
-  background: transparent;
+  border-color: rgba(235, 235, 245, 0.1);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .app-shell[data-theme="dark"] .rich-content-copy {
