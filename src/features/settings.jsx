@@ -1752,7 +1752,7 @@ export function SettingsPanel({
             </SettingsSection>
             <p className="settings-note">
               开启后，Codex 和 Claude 可以在系统账号允许的范围内修改文件、执行命令和访问网络，并且不再等待操作确认。
-              Claude 官方不允许 Linux/macOS 的 root 用户启用完全访问，root 会话会自动保留标准权限。
+              Linux/macOS 的 root 会话会改用显式工具授权，以兼容 Claude 对 root 绕过模式的限制。
             </p>
           </div>
         ) : null}

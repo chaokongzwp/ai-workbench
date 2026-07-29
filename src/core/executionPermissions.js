@@ -33,3 +33,23 @@ export function claudePermissionMode(profile) {
   if (!profileUsesFullAccess(profile) || claudeFullAccessBlockedByRoot(profile)) return "acceptEdits";
   return "bypassPermissions";
 }
+
+export function claudePermissionArgs(profile) {
+  const args = ["--permission-mode", claudePermissionMode(profile)];
+  if (profileUsesFullAccess(profile) && claudeFullAccessBlockedByRoot(profile)) {
+    args.push(
+      "--allowedTools",
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Skill",
+    );
+  }
+  return args;
+}

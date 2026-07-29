@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   claudeFullAccessBlockedByRoot,
+  claudePermissionArgs,
   claudePermissionMode,
   codexPermissionArgs,
   normalizeExecutionPermissionMode,
@@ -60,6 +61,28 @@ test("uses Claude bypass mode for full access except Linux root", () => {
       username: "root",
     }),
     true,
+  );
+  assert.deepEqual(
+    claudePermissionArgs({
+      executionPermissionMode: "full-access",
+      platform: "linux",
+      username: "root",
+    }),
+    [
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Bash",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Skill",
+    ],
   );
 });
 

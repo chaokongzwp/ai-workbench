@@ -14,6 +14,7 @@ import { normalizeExecutionPermissionMode } from "./executionPermissions.js";
 
 export {
   claudeFullAccessBlockedByRoot,
+  claudePermissionArgs,
   claudePermissionMode,
   codexPermissionArgs,
   executionPermissionModeFullAccess,

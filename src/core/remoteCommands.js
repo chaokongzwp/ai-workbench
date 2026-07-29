@@ -26,7 +26,7 @@ const {
   buildWorkspaceMigrationPayload,
   builtInAliyunVoiceConfig,
   chineseNumber,
-  claudePermissionMode,
+  claudePermissionArgs,
   clipPersistedText,
   codexPermissionArgs,
   commandDiagnosticPayload,
@@ -1241,7 +1241,7 @@ export function buildClaudePrintCommand(profile, agent, prompt) {
   const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
   const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.claude-session`;
   const model = selectedAgentModel(profile, agent);
-  const permissionMode = claudePermissionMode(profile);
+  const permissionArgs = claudePermissionArgs(profile).map(shQuote).join(" ");
 
   return remoteBashCommand(profile, `
 set -e
@@ -1271,7 +1271,7 @@ if [ -s ${shQuote(sessionFile)} ]; then
   AIWB_SESSION=$(cat ${shQuote(sessionFile)} 2>/dev/null | tr -d '[:space:]' || true)
 fi
 
-AIWB_ARGS=(-p "$AIWB_PROMPT" --output-format json --permission-mode ${shQuote(permissionMode)})
+AIWB_ARGS=(-p "$AIWB_PROMPT" --output-format json ${permissionArgs})
 if [ -n "$AIWB_MODEL" ]; then
   AIWB_ARGS+=(--model "$AIWB_MODEL")
 fi
