@@ -2250,14 +2250,23 @@ export function useWorkbenchController() {
     };
     void appLog("info", "diagnostics.export.start", context);
     const result = await SSHWorkbench.exportLogs({ context });
+    if (result?.canceled) {
+      return {
+        ...result,
+        message: "已取消导出，原日志仍然保留。",
+      };
+    }
+    await SSHWorkbench.clearLogs();
+    clearBrowserDiagnosticLogs();
     void appLog("info", "diagnostics.export.success", {
       fileName: result?.name,
       path: result?.path,
       serverCount: context.serverCount,
+      oldLogsCleared: true,
     });
     return {
       ...result,
-      message: "诊断日志已打包，可以直接分享给微信或保存到文件。",
+      message: "诊断日志已导出，设备上的旧日志已自动清理。",
     };
   }
 

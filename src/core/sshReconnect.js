@@ -4,7 +4,7 @@ const authenticationErrorPattern =
   /All configured authentication methods failed|Authentication failed|Permission denied|No supported authentication methods|Invalid credentials|用户名或密码|登录密码/i;
 
 const reconnectableErrorPattern =
-  /Timed out while waiting for handshake|Keepalive timeout|Connection lost before handshake|Handshake failed|Connection lost|Connection closed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EPIPE|Socket closed|No response from server|Client network socket disconnected|Connection refused|getaddrinfo|Network is unreachable|Host is unreachable|channel closed|unexpected EOF/i;
+  /Timed out while waiting for handshake|Keepalive timeout|Connection lost before handshake|Handshake failed|Connection lost|Connection closed|NIOSSHError\.tcpShutdown|tcpShutdown|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EPIPE|Socket closed|No response from server|Client network socket disconnected|Connection refused|getaddrinfo|Network is unreachable|Host is unreachable|channel closed|unexpected EOF/i;
 
 function errorText(error) {
   return String(error?.message || error || "");

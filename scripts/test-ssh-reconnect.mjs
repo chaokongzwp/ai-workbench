@@ -3,6 +3,10 @@ import {
   isRetryableSshConnectionError,
   runWithSshReconnect,
 } from "../src/core/sshReconnect.js";
+import {
+  isTransientSshSyncError,
+  shortError,
+} from "../src/core/agentOutput.js";
 
 const noWait = async () => {};
 
@@ -70,5 +74,8 @@ const noWait = async () => {};
 
 assert.equal(isRetryableSshConnectionError(new Error("SSH command timed out")), false);
 assert.equal(isRetryableSshConnectionError(new Error("Connection lost before handshake")), true);
+assert.equal(isRetryableSshConnectionError(new Error("SSH command failed: NIOSSHError.tcpShutdown")), true);
+assert.equal(isTransientSshSyncError(new Error("SSH command failed: NIOSSHError.tcpShutdown")), true);
+assert.equal(shortError(new Error("SSH command failed: NIOSSHError.tcpShutdown")), "连接断开");
 
 console.log("SSH reconnect tests passed.");

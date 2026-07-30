@@ -1654,6 +1654,22 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                     }
 
                     let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+                    activity.completionWithItemsHandler = { _, completed, _, activityError in
+                        if let activityError {
+                            call.reject(
+                                "分享诊断日志失败：\(self.safeErrorMessage(activityError))",
+                                "DIAGNOSTICS_SHARE_FAILED",
+                                activityError
+                            )
+                            return
+                        }
+                        call.resolve([
+                            "ok": true,
+                            "canceled": !completed,
+                            "path": fileURL.path,
+                            "name": fileURL.lastPathComponent
+                        ])
+                    }
                     if let popover = activity.popoverPresentationController {
                         popover.sourceView = viewController.view
                         popover.sourceRect = CGRect(
@@ -1665,9 +1681,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                         popover.permittedArrowDirections = []
                     }
 
-                    viewController.present(activity, animated: true) {
-                        call.resolve(["ok": true, "path": fileURL.path, "name": fileURL.lastPathComponent])
-                    }
+                    viewController.present(activity, animated: true)
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -1729,6 +1743,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         return message.contains("connection reset")
             || message.contains("connection closed")
             || message.contains("channel closed")
+            || message.contains("tcpshutdown")
             || message.contains("timed out")
             || message.contains("eof")
     }
@@ -1753,6 +1768,13 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         if message.contains("refused") {
             return "连接被拒绝：请确认这台机器已开启 SSH，端口 \(config.port) 没有被防火墙拦截。原始错误：\(raw)"
+        }
+        if message.contains("tcpshutdown")
+            || message.contains("connection reset")
+            || message.contains("connection closed")
+            || message.contains("channel closed")
+            || message.contains("eof") {
+            return "连接断开"
         }
         if isPrivateNetworkHost(config.host),
            message.contains("timed out")

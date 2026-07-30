@@ -12,7 +12,9 @@ import {
   taskStateFailed,
   taskStateIsTerminal,
   taskStateSucceeded,
+  taskStateSyncing,
 } from "../core/messageLifecycle.js";
+import { isRetryableSshConnectionError } from "../core/sshReconnect.js";
 import {
   agentById,
   looksLikeDeferredWaitingAnswer,
@@ -110,6 +112,42 @@ function normalizeDeferredWaitingMessage(message) {
   });
 }
 
+function recoverInterruptedAgentMessage(message) {
+  const taskId = String(message?.remoteTaskId || "").trim();
+  const remoteStatus = String(message?.remoteTaskStatus || "").trim().toLowerCase();
+  const terminalRemoteStatuses = new Set(["done", "error", "cancelled", "missing"]);
+  const errorText = [
+    message?.remoteSyncError,
+    message?.body,
+    message?.title,
+    message?.technicalDetail,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const canRecover =
+    message?.role === "assistant" &&
+    message?.backend === "agent" &&
+    taskId &&
+    taskStateForMessage(message) === taskStateFailed &&
+    !terminalRemoteStatuses.has(remoteStatus) &&
+    isRetryableSshConnectionError(errorText);
+
+  if (!canRecover) return message;
+  return {
+    ...message,
+    title: "同步中",
+    body: "连接曾短暂断开，正在从 Agent 恢复任务结果。",
+    taskState: taskStateSyncing,
+    remoteTaskStatus: "sync-lost",
+    remoteSyncError: errorText,
+    resultMissing: false,
+    agentFailure: undefined,
+    technicalDetail: undefined,
+    completedAt: undefined,
+    durationMs: undefined,
+  };
+}
+
 export function dedupeRemoteTaskMessages(messages = []) {
   const nextMessages = [];
   const identityIndexes = new Map();
@@ -128,9 +166,10 @@ export function dedupeRemoteTaskMessages(messages = []) {
 
   for (const source of Array.isArray(messages) ? messages : []) {
     if (!source || typeof source !== "object") continue;
-    const turnId = String(source.turnId || source.messagePairId || "").trim();
+    const recoveredSource = recoverInterruptedAgentMessage(source);
+    const turnId = String(recoveredSource.turnId || recoveredSource.messagePairId || "").trim();
     const message = normalizeMessageLifecycle(normalizeDeferredWaitingMessage(
-      turnId && !source.turnId ? { ...source, turnId } : { ...source },
+      turnId && !recoveredSource.turnId ? { ...recoveredSource, turnId } : { ...recoveredSource },
     ));
     const keys = identityKeys(message);
     const existingIndex = keys

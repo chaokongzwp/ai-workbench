@@ -257,7 +257,7 @@ export function shortError(error) {
   if (/Unable to exec/i.test(message)) {
     return "SSH 已连上，但远端系统拒绝执行命令。Windows 机器请确认 OpenSSH Server 可执行 PowerShell，或改用 Windows + WSL 模式。";
   }
-  if (/Timed out while waiting for handshake|Keepalive timeout|Connection lost before handshake/i.test(message)) {
+  if (/Timed out while waiting for handshake|Keepalive timeout|Connection lost before handshake|NIOSSHError\.tcpShutdown|tcpShutdown/i.test(message)) {
     return "连接断开";
   }
   if (/SSH command timed out|timed out/i.test(message)) {
@@ -280,7 +280,7 @@ export function shortError(error) {
 
 export function isTransientSshSyncError(error) {
   const message = String(error?.message || error || "");
-  return /Timed out while waiting for handshake|Keepalive timeout|SSH command timed out|Connection lost before handshake|Handshake failed|Connection lost|Connection closed|ECONNRESET|EPIPE|Socket closed|No response from server|Client network socket disconnected/i.test(
+  return /Timed out while waiting for handshake|Keepalive timeout|SSH command timed out|Connection lost before handshake|Handshake failed|Connection lost|Connection closed|NIOSSHError\.tcpShutdown|tcpShutdown|ECONNRESET|EPIPE|Socket closed|No response from server|Client network socket disconnected/i.test(
     message,
   );
 }

@@ -9,6 +9,7 @@ import {
 import {
   taskStateRunning,
   taskStateSucceeded,
+  taskStateSyncing,
 } from "../src/core/messageLifecycle.js";
 
 const userMessages = dedupeRemoteTaskMessages([
@@ -79,6 +80,30 @@ const reconciled = reconcileServerMessageLifecycle({
 });
 assert.equal(reconciled.task.remoteTaskId, "task-running");
 assert.equal(reconciled.task.agentId, "claude");
+
+const recoveredAfterTcpShutdown = reconcileServerMessageLifecycle({
+  id: "server-2",
+  profile: { agentId: "claude" },
+  messages: [
+    {
+      id: "response-disconnected",
+      role: "assistant",
+      backend: "agent",
+      agentId: "claude",
+      remoteTaskId: "task-accepted-before-disconnect",
+      remoteTaskStatus: "running",
+      taskState: "failed",
+      title: "远端执行失败",
+      body: "SSH command failed: NIOSSHError.tcpShutdown",
+      completedAt: 900,
+      createdAtMs: 800,
+    },
+  ],
+});
+assert.equal(recoveredAfterTcpShutdown.messages[0].taskState, taskStateSyncing);
+assert.equal(recoveredAfterTcpShutdown.messages[0].remoteTaskStatus, "sync-lost");
+assert.equal(recoveredAfterTcpShutdown.messages[0].completedAt, undefined);
+assert.equal(recoveredAfterTcpShutdown.task.remoteTaskId, "task-accepted-before-disconnect");
 
 assert.equal(agentPreferredForProfile({ platform: "windows", useWorkbenchAgent: false }), true);
 assert.equal(agentPreferredForProfile({ platform: "linux", useWorkbenchAgent: true }), true);
