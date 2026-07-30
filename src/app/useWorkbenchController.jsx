@@ -2642,14 +2642,36 @@ export function useWorkbenchController() {
 
   useEffect(() => {
     const handlePageHide = () => flushWorkspaceSave();
+    const recoveryTimers = new Set();
+    const scheduleRecoverySync = (delayMs) => {
+      const timer = window.setTimeout(() => {
+        recoveryTimers.delete(timer);
+        if (document.visibilityState !== "visible" || !workspaceLoadedRef.current) return;
+        syncRemoteAgentTasks().catch((error) => {
+          void appLog("warn", "agent.resume_sync.failed", { error: shortError(error) });
+        });
+      }, delayMs);
+      recoveryTimers.add(timer);
+    };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") flushWorkspaceSave();
+      if (document.visibilityState === "hidden") {
+        flushWorkspaceSave();
+        return;
+      }
+      // A native SSH callback can finish just after iOS resumes the web view.
+      // Retry briefly so the completed Agent result is recovered without the
+      // user pressing refresh.
+      scheduleRecoverySync(100);
+      scheduleRecoverySync(1_500);
+      scheduleRecoverySync(5_000);
     };
 
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("beforeunload", handlePageHide);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      recoveryTimers.forEach((timer) => window.clearTimeout(timer));
+      recoveryTimers.clear();
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -4565,6 +4587,19 @@ export function useWorkbenchController() {
           mode: "agent",
         });
 
+        // Native apps can be suspended while an SSH long poll is active. Once
+        // the Agent has accepted the task, persist the task id and let the
+        // shared recovery loop own status polling across background/resume.
+        if (Capacitor.isNativePlatform()) {
+          void appLog("info", "agent.native_sync.handoff", {
+            serverId,
+            agentId: agent.id,
+            remoteTaskId,
+            taskStatus: created.taskStatus || "queued",
+          });
+          return { used: true, ok: false, pending: true };
+        }
+
         let retryAgentStartup = false;
         let pollCount = 0;
         let lastEventFingerprint = created.eventFingerprint || "";
@@ -6121,6 +6156,23 @@ export function useWorkbenchController() {
       });
       completedOk = Boolean(remoteResult?.ok);
       pendingRemoteTask = Boolean(remoteResult?.pending);
+      if (pendingRemoteTask) {
+        const pendingMessage = (serverById(serverId)?.messages || []).find((item) => item.id === assistantMessageId);
+        const remoteTaskId = String(pendingMessage?.remoteTaskId || "").trim();
+        if (remoteTaskId && taskStateForMessage(pendingMessage) === taskStateSubmitting) {
+          const remoteTaskStatus = String(pendingMessage?.remoteTaskStatus || "").trim();
+          updateAssistantMessageInServer(serverId, assistantMessageId, {
+            title: remoteTaskStatus === "sync-lost" ? "同步中" : "Agent 已接收",
+            body:
+              remoteTaskStatus === "sync-lost"
+                ? "任务已提交，正在重新连接并同步执行结果。"
+                : "消息发送成功，Agent 正在把任务交给 AI。",
+            taskState: remoteTaskStatus === "sync-lost" ? taskStateSyncing : taskStateAccepted,
+            remoteTaskCheckedAt: Date.now(),
+            forceUpdate: true,
+          });
+        }
+      }
     } catch (error) {
       const message = shortError(error);
         const agentMode = agentPreferredForProfile(currentProfile);
