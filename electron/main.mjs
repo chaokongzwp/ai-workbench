@@ -252,23 +252,35 @@ function readPlistString(text, key) {
 
 async function getAppRuntimeInfo() {
   const fallbackVersion = app.getVersion();
+  let projectVersion = "";
   let bundleShortVersion = "";
   let bundleVersion = "";
   let bundleIdentifier = "";
 
-  try {
-    const infoPath = join(process.resourcesPath || "", "..", "Info.plist");
-    if (infoPath && existsSync(infoPath)) {
-      const infoText = await readFile(infoPath, "utf8");
-      bundleShortVersion = readPlistString(infoText, "CFBundleShortVersionString");
-      bundleVersion = readPlistString(infoText, "CFBundleVersion");
-      bundleIdentifier = readPlistString(infoText, "CFBundleIdentifier");
+  if (!app.isPackaged) {
+    try {
+      const packageInfo = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"));
+      projectVersion = String(packageInfo?.version || "").trim();
+    } catch (error) {
+      await appendPersistentLog("warn", "app.package-info.read-failed", { message: error?.message || String(error) });
     }
-  } catch (error) {
-    await appendPersistentLog("warn", "app.info.read-failed", { message: error?.message || String(error) });
   }
 
-  const version = bundleShortVersion || fallbackVersion || "0.0.0";
+  if (app.isPackaged) {
+    try {
+      const infoPath = join(process.resourcesPath || "", "..", "Info.plist");
+      if (infoPath && existsSync(infoPath)) {
+        const infoText = await readFile(infoPath, "utf8");
+        bundleShortVersion = readPlistString(infoText, "CFBundleShortVersionString");
+        bundleVersion = readPlistString(infoText, "CFBundleVersion");
+        bundleIdentifier = readPlistString(infoText, "CFBundleIdentifier");
+      }
+    } catch (error) {
+      await appendPersistentLog("warn", "app.info.read-failed", { message: error?.message || String(error) });
+    }
+  }
+
+  const version = bundleShortVersion || projectVersion || fallbackVersion || "0.0.0";
   const build = bundleVersion || "";
   return {
     name: app.getName() || "AI Workbench",

@@ -937,6 +937,80 @@
   border-bottom: 0.5px solid var(--settings-separator);
 }
 
+.app-shell .git-ssh-key-result {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+}
+
+.app-shell .git-ssh-key-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-shell .git-ssh-key-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.app-shell .git-ssh-key-heading strong {
+  color: var(--settings-text);
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.app-shell .git-ssh-key-heading small,
+.app-shell .git-key-fingerprint {
+  overflow-wrap: anywhere;
+  color: var(--settings-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.app-shell .settings-status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--settings-secondary);
+}
+
+.app-shell .settings-status-dot.success {
+  background: #34c759;
+}
+
+.app-shell .git-public-key {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 9px 9px 11px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--settings-control) 58%, transparent);
+}
+
+.app-shell .git-public-key code {
+  overflow-wrap: anywhere;
+  color: var(--settings-text);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.app-shell .git-public-key .config-copy-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+}
+
+.app-shell .git-key-fingerprint {
+  margin: 0;
+}
+
 .app-shell .settings-subpage-mode .settings-section-group > .settings-action-row .settings-action-row-icon {
   background: #5856d6;
 }

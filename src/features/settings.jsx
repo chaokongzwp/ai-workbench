@@ -11,6 +11,7 @@ import {
   GitBranch,
   HardDrives,
   Info,
+  Key,
   Microphone,
   Palette,
   Robot,
@@ -573,6 +574,7 @@ export function SettingsPanel({
   onInstallWsl,
   onInstallGit,
   onGitDownload,
+  onGitSshKey,
   onExportConfig,
   onExportLogs,
   onClearCache,
@@ -602,15 +604,25 @@ export function SettingsPanel({
   }));
   const [shareBusy, setShareBusy] = useState(false);
   const [shareStatus, setShareStatus] = useState(null);
-  const [gitRepoUrl, setGitRepoUrl] = useState("");
-  const [gitTargetDir, setGitTargetDir] = useState(() => String(draftProfile.workdir || ""));
-  const [gitBranch, setGitBranch] = useState("");
+  const [gitRepoUrl, setGitRepoUrl] = useState(() => String(draftProfile.gitRepoUrl || ""));
+  const [gitTargetDir, setGitTargetDir] = useState(
+    () => String(draftProfile.gitTargetDir || draftProfile.workdir || ""),
+  );
+  const [gitBranch, setGitBranch] = useState(() => String(draftProfile.gitBranch || ""));
   const [gitStatus, setGitStatus] = useState(null);
+  const [gitSshKey, setGitSshKey] = useState({
+    status: "idle",
+    publicKey: "",
+    path: "",
+    fingerprint: "",
+    message: "",
+  });
   const [agentSelectionNotice, setAgentSelectionNotice] = useState("");
   const [settingsPage, setSettingsPage] = useState(() => initialPage || "root");
   const [appInfo, setAppInfo] = useState(() => normalizeAppInfo());
   const migrationInputRef = useRef(null);
   const settingsScrollRef = useRef(null);
+  const gitSshKeyCheckedForRef = useRef("");
 
   function updateField(field, value) {
     if (field === "agentId") {
@@ -897,10 +909,52 @@ export function SettingsPanel({
     }
   }
 
+  async function handleGitSshKeyCheck(generate = false) {
+    if (!onGitSshKey || busy) return;
+    setGitSshKey((current) => ({
+      ...current,
+      status: generate ? "generating" : "checking",
+      message: generate ? "正在远端生成 SSH Key..." : "正在检测远端 SSH Key...",
+    }));
+    try {
+      const result = await onGitSshKey({ generate });
+      if (!result) return;
+      const ready = result.status === "ready" && result.publicKey;
+      setGitSshKey({
+        status: ready ? "ready" : "missing",
+        publicKey: result.publicKey || "",
+        path: result.path || "",
+        fingerprint: result.fingerprint || "",
+        message: ready
+          ? generate
+            ? "SSH Key 已生成。复制公钥并添加到 GitHub。"
+            : "已找到远端 SSH Key。"
+          : "远端账号还没有 SSH Key。",
+      });
+    } catch (error) {
+      setGitSshKey({
+        status: "error",
+        publicKey: "",
+        path: "",
+        fingerprint: "",
+        message: shortError(error),
+      });
+    }
+  }
+
   useEffect(() => {
     if (!editingSession) return;
-    setGitTargetDir(String(draftProfile.workdir || ""));
+    setGitRepoUrl(String(draftProfile.gitRepoUrl || ""));
+    setGitTargetDir(String(draftProfile.gitTargetDir || draftProfile.workdir || ""));
+    setGitBranch(String(draftProfile.gitBranch || ""));
     setGitStatus(null);
+    setGitSshKey({
+      status: "idle",
+      publicKey: "",
+      path: "",
+      fingerprint: "",
+      message: "",
+    });
     setAgentSelectionNotice("");
     setShareForm((current) => ({
       ...current,
@@ -909,7 +963,23 @@ export function SettingsPanel({
       password: "",
     }));
     setShareStatus(null);
-  }, [editingSession, editingServer?.id, draftProfile.workdir]);
+  }, [editingSession, editingServer?.id]);
+
+  useEffect(() => {
+    if (
+      !editingSession ||
+      settingsPage !== "session-development" ||
+      !editingServer?.id ||
+      !onGitSshKey ||
+      busy
+    ) {
+      return;
+    }
+    const checkKey = `${editingServer.id}:${profileConnectionKey(draftProfile)}`;
+    if (gitSshKeyCheckedForRef.current === checkKey) return;
+    gitSshKeyCheckedForRef.current = checkKey;
+    void handleGitSshKeyCheck(false);
+  }, [busy, editingSession, editingServer?.id, settingsPage]);
 
   useEffect(() => {
     setSettingsPage(initialPage || "root");
@@ -1517,10 +1587,82 @@ export function SettingsPanel({
                 </button>
               </SettingsButtonRow>
             </SettingsSection>
+            <SettingsSection
+              title="Git SSH Key"
+              className="git-ssh-key-settings"
+              footer="私钥只保存在远端机器。App 仅展示公钥，用于添加到 GitHub、GitLab 等代码托管平台。"
+            >
+              {gitSshKey.status === "ready" ? (
+                <div className="git-ssh-key-result">
+                  <div className="git-ssh-key-heading">
+                    <span className="settings-status-dot success" aria-hidden="true" />
+                    <div>
+                      <strong>SSH Key 已就绪</strong>
+                      <small>{gitSshKey.path || "远端公钥文件"}</small>
+                    </div>
+                  </div>
+                  <div className="git-public-key">
+                    <code>{gitSshKey.publicKey}</code>
+                    <ConfigCopyButton value={gitSshKey.publicKey} />
+                  </div>
+                  {gitSshKey.fingerprint ? <p className="git-key-fingerprint">{gitSshKey.fingerprint}</p> : null}
+                </div>
+              ) : (
+                <p className={`settings-inline-status ${gitSshKey.status === "error" ? "error" : ""}`}>
+                  {gitSshKey.message ||
+                    (gitSshKey.status === "checking"
+                      ? "正在检测远端 SSH Key..."
+                      : "打开本页后会自动检测远端 SSH Key。")}
+                </p>
+              )}
+              <SettingsButtonRow>
+                <button
+                  type="button"
+                  className="settings-inline-button"
+                  onClick={() => handleGitSshKeyCheck(false)}
+                  disabled={busy || !onGitSshKey}
+                >
+                  <ArrowClockwise size={17} weight="bold" />
+                  重新检测
+                </button>
+                {gitSshKey.status !== "ready" ? (
+                  <button
+                    type="button"
+                    className="settings-inline-button primary"
+                    onClick={() => handleGitSshKeyCheck(true)}
+                    disabled={busy || !onGitSshKey || gitSshKey.status === "checking" || gitSshKey.status === "generating"}
+                  >
+                    <Key size={17} weight="bold" />
+                    生成 SSH Key
+                  </button>
+                ) : null}
+              </SettingsButtonRow>
+            </SettingsSection>
             <SettingsSection title="Git 仓库" className="git-operation-settings">
-              <ConfigField label="仓库地址" value={gitRepoUrl} onChange={setGitRepoUrl} />
-              <ConfigField label="保存目录" value={gitTargetDir} onChange={setGitTargetDir} />
-              <ConfigField label="分支" value={gitBranch} onChange={setGitBranch} />
+              <ConfigField
+                label="仓库地址"
+                value={gitRepoUrl}
+                onChange={(value) => {
+                  setGitRepoUrl(value);
+                  updateField("gitRepoUrl", value);
+                }}
+              />
+              <ConfigField
+                label="保存目录"
+                value={gitTargetDir}
+                onChange={(value) => {
+                  setGitTargetDir(value);
+                  updateField("gitTargetDir", value);
+                }}
+              />
+              <ConfigField
+                label="分支"
+                value={gitBranch}
+                onChange={(value) => {
+                  setGitBranch(value);
+                  updateField("gitBranch", value);
+                }}
+              />
               <SettingsButtonRow>
                 <button
                   type="button"

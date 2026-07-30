@@ -128,6 +128,7 @@ export function MacWorkbenchShell({
   onInstallWsl,
   onInstallGit,
   onGitDownload,
+  onGitSshKey,
   onExportConfig,
   onExportLogs,
   onClearCache,
@@ -456,6 +457,7 @@ export function MacWorkbenchShell({
           onInstallWsl={onInstallWsl}
           onInstallGit={onInstallGit}
           onGitDownload={onGitDownload}
+          onGitSshKey={onGitSshKey}
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
           onClearCache={onClearCache}

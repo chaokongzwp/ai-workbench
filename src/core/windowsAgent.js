@@ -246,7 +246,7 @@ function captureGitSnapshot(id, workdir, filename) {
   return snapshot;
 }
 
-function buildExecutionSummary(id, workdir, exitCode) {
+function buildExecutionSummary(id, workdir, exitCode, prompt = "") {
   const directory = taskDir(id);
   let before = { repositories: {} };
   try { before = JSON.parse(read(path.join(directory, "git-before.json"), "{\"repositories\":{}}")); } catch {}
@@ -259,6 +259,7 @@ function buildExecutionSummary(id, workdir, exitCode) {
   ];
   let commitCount = 0;
   let changedCount = 0;
+  let addedRepositoryCount = 0;
   const repositories = new Set([
     ...Object.keys(before.repositories || {}),
     ...Object.keys(after.repositories || {}),
@@ -267,6 +268,10 @@ function buildExecutionSummary(id, workdir, exitCode) {
     const beforeRepo = before.repositories?.[repository] || { head: "", dirty: {} };
     const afterRepo = after.repositories?.[repository] || { head: "", dirty: {} };
     const repositoryName = path.basename(repository);
+    if (!beforeRepo.head && afterRepo.head) {
+      lines.push("- 新增 Git 仓库：" + repository);
+      addedRepositoryCount += 1;
+    }
     if (beforeRepo.head && afterRepo.head && beforeRepo.head !== afterRepo.head) {
       lines.push("- 新提交（" + repositoryName + "）：");
       const log = gitRun(repository, ["log", "--format=  - %h %s", beforeRepo.head + ".." + afterRepo.head, "-n", "12"]).stdout.trimEnd();
@@ -295,8 +300,26 @@ function buildExecutionSummary(id, workdir, exitCode) {
   if (!commitCount && !changedCount) {
     lines.push("- Git 变化：本任务期间未检测到新增提交或工作区文件变化。");
   }
+  const gitCheckoutRequested =
+    /\bgit\s+clone\b|\bclone\b|克隆|下载.{0,12}(?:代码|仓库|项目)|拉取.{0,12}(?:代码|仓库|项目)|(?:代码|仓库|项目).{0,12}(?:下载|拉取)/i.test(
+      String(prompt || ""),
+    );
+  const repositoryCount = Object.keys(after.repositories || {}).length;
+  const verificationFailed = gitCheckoutRequested && repositoryCount === 0;
+  if (gitCheckoutRequested) {
+    lines.push(
+      verificationFailed
+        ? "- 落盘验证：失败。任务结束后工作目录内没有检测到 Git 仓库。"
+        : "- 落盘验证：通过。任务结束后检测到 " + repositoryCount + " 个 Git 仓库。",
+    );
+  }
   lines.push("- 说明：这是 Agent 根据任务开始与结束时的 Git 状态自动生成的执行痕迹。");
   write(path.join(directory, "execution-summary.txt"), lines.join("\n") + "\n");
+  return {
+    verificationFailed,
+    repositoryCount,
+    addedRepositoryCount,
+  };
 }
 
 function emitTask(id) {
@@ -676,12 +699,38 @@ async function runTask(id) {
       : (body || "Windows Agent 任务执行失败。");
     write(path.join(directory, "output.log"), response);
     if (result.diagnostics) append(path.join(directory, "launcher.log"), "\n命令输出：\n" + result.diagnostics + "\n");
-    buildExecutionSummary(id, spec.workdir || process.cwd(), result.code);
-    setStatus(id, result.code === 0 ? "done" : "error", String(result.code));
+    const verification = buildExecutionSummary(
+      id,
+      spec.workdir || process.cwd(),
+      result.code,
+      spec.prompt || read(path.join(directory, "prompt.txt")),
+    );
+    if (result.code === 0 && verification.verificationFailed) {
+      const verificationMessage = [
+        "代码没有下载成功。",
+        "",
+        "远端命令虽然正常结束，但 Agent 检查了工作目录 " + String(spec.workdir || process.cwd()) + "，没有发现任何 Git 仓库。",
+        "App 不再把这类情况显示为成功。请检查仓库地址、网络、权限和实际下载路径后重试。",
+      ].join("\n");
+      write(
+        path.join(directory, "output.log"),
+        "__AIWB_RESPONSE_START__\n" + verificationMessage + "\n__AIWB_RESPONSE_END__\n",
+      );
+      setStatus(id, "error", "65");
+    } else {
+      setStatus(id, result.code === 0 ? "done" : "error", String(result.code));
+    }
   } catch (error) {
     write(path.join(directory, "bootstrap.log"), String(error?.stack || error) + "\n");
     append(path.join(directory, "launcher.log"), "\nAgent Runner 异常：\n" + String(error?.stack || error) + "\n");
-    if (spec) buildExecutionSummary(id, spec.workdir || process.cwd(), 1);
+    if (spec) {
+      buildExecutionSummary(
+        id,
+        spec.workdir || process.cwd(),
+        1,
+        spec.prompt || read(path.join(directory, "prompt.txt")),
+      );
+    }
     setStatus(id, "error", "1");
   }
 }

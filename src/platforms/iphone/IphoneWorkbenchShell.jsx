@@ -554,6 +554,7 @@ export function IphoneWorkbenchShell({
   onInstallWsl,
   onInstallGit,
   onGitDownload,
+  onGitSshKey,
   onExportConfig,
   onExportLogs,
   onClearCache,
@@ -620,16 +621,10 @@ export function IphoneWorkbenchShell({
   const closeSessionSheet = () => setMobileNavOpen(false);
   const closeMoreMenu = () => setMoreMenuOpen(false);
   const selectSession = (server) => {
-    const serverConnection = server.id === activeServerId ? connection : server.connection;
     closeSessionSheet();
     setSessionQuery("");
 
-    void (async () => {
-      await onSelectServer?.(server.id);
-      if (!connectionIsLive(serverConnection) && !serverTaskRunning(server)) {
-        await onTestConnection?.(server.id);
-      }
-    })().catch((error) => {
+    Promise.resolve(onSelectServer?.(server.id)).catch((error) => {
       console.warn("[aiwb:iphone:session-select]", shortError(error));
     });
   };
@@ -1019,6 +1014,7 @@ export function IphoneWorkbenchShell({
           onInstallWsl={onInstallWsl}
           onInstallGit={onInstallGit}
           onGitDownload={onGitDownload}
+          onGitSshKey={onGitSshKey}
           onExportConfig={onExportConfig}
           onExportLogs={onExportLogs}
           onClearCache={onClearCache}

@@ -367,6 +367,16 @@ export function TopBar({
   );
 }
 
+function connectionActionLabel(connection, fallback = "连接") {
+  const state = String(connection?.state || "idle").trim();
+  if (state === "testing") return "连接中";
+  if (state === "connected") return "断开";
+  if (state === "error") return "重新连接";
+
+  const detail = String(connection?.detail || "").trim();
+  return /上次状态已重置|已断开|连接断开/.test(detail) ? "重新连接" : fallback;
+}
+
 export function NavigationPanel({
   servers = [],
   activeServerId,
@@ -395,8 +405,7 @@ export function NavigationPanel({
   const [versionCopied, setVersionCopied] = useState(false);
   const versionCopyResetRef = useRef(null);
   const connected = connectionIsLive(connection);
-  const connectLabel =
-    connection.state === "testing" ? "连接中" : connected ? "断开" : connection.state === "error" ? "重试" : "连接";
+  const connectLabel = connected ? "断开" : connectionActionLabel(connection);
 
   useEffect(() => {
     if (!macVariant) return undefined;
@@ -520,11 +529,11 @@ export function NavigationPanel({
               ? "运行中"
               : connectLabel
             : serverConnection?.state === "error"
-              ? "错误"
+              ? "重新连接"
               : taskRunning
                 ? "运行中"
                 : serverReady
-                  ? "打开"
+                  ? connectionActionLabel(serverConnection, "打开")
                   : "配置";
           const serverStatus = taskRunning
             ? "testing"
@@ -539,12 +548,12 @@ export function NavigationPanel({
           const macState = taskRunning
             ? { label: "执行中", tone: "running" }
             : serverConnection?.state === "error"
-              ? { label: "异常", tone: "error" }
+              ? { label: "重新连接", tone: "error" }
               : connectionIsLive(serverConnection)
                 ? { label: "已连接", tone: "connected" }
                 : unreadResult
                   ? { label: "已完成", tone: "done" }
-                  : { label: "未连接", tone: "idle" };
+                  : { label: connectionActionLabel(serverConnection), tone: "idle" };
 
           if (macVariant) {
             return (
@@ -570,7 +579,7 @@ export function NavigationPanel({
                     <button
                       type="button"
                       className={`mac-session-state ${macState.tone}`}
-                      title={isActive && connectionIsLive(serverConnection) ? "断开连接" : "连接会话"}
+                      title={isActive && connectionIsLive(serverConnection) ? "断开连接" : connectionActionLabel(serverConnection)}
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -632,12 +641,12 @@ export function NavigationPanel({
             const ipadStatus = taskRunning
               ? { label: "运行中", tone: "running" }
               : serverConnection?.state === "error"
-                ? { label: "异常", tone: "error" }
+                ? { label: "重新连接", tone: "error" }
                 : connectionIsLive(serverConnection)
                   ? { label: "已连接", tone: "connected" }
                   : unreadResult
                     ? { label: "已完成", tone: "done" }
-                    : { label: serverReady ? "连接" : "配置", tone: "idle" };
+                    : { label: serverReady ? connectionActionLabel(serverConnection) : "配置", tone: "idle" };
 
             return (
               <div

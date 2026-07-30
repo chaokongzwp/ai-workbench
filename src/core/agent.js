@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "29";
+export const latestWorkbenchAgentVersion = "30";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -569,6 +569,10 @@ aiwb_build_execution_summary() {
   local repo_name
   local changed_count=0
   local commit_count=0
+  local added_repository_count=0
+  local repository_count=0
+  local prompt
+  local git_checkout_requested=0
 
   aiwb_capture_git_snapshot "$after"
   {
@@ -587,6 +591,10 @@ aiwb_build_execution_summary() {
     [ -n "$repo" ] || continue
     before_head="$(aiwb_snapshot_value "$before" HEAD "$repo")"
     after_head="$(aiwb_snapshot_value "$after" HEAD "$repo")"
+    if [ -z "$before_head" ] && [ -n "$after_head" ]; then
+      printf -- "- 新增 Git 仓库：%s\\n" "$repo" >> "$summary"
+      added_repository_count="$((added_repository_count + 1))"
+    fi
     if [ -n "$before_head" ] && [ -n "$after_head" ] && [ "$before_head" != "$after_head" ]; then
       repo_name="$(basename "$repo")"
       printf -- "- 新提交（%s）：\\n" "$repo_name" >> "$summary"
@@ -621,8 +629,22 @@ aiwb_build_execution_summary() {
   if [ "$changed_count" -eq 0 ] && [ "$commit_count" -eq 0 ]; then
     printf -- "- Git 变化：本任务期间未检测到新增提交或工作区文件变化。\\n" >> "$summary"
   fi
+  repository_count="$(awk -F "$(printf '\\t')" '$1 == "HEAD" { count += 1 } END { print count + 0 }' "$after" 2>/dev/null)"
+  prompt="$(cat "$AIWB_TASK_DIR/prompt.txt" 2>/dev/null || printf "")"
+  if printf "%s" "$prompt" | grep -Eiq 'git[[:space:]]+clone|(^|[^[:alpha:]])clone([^[:alpha:]]|$)|克隆|下载.{0,12}(代码|仓库|项目)|拉取.{0,12}(代码|仓库|项目)|(代码|仓库|项目).{0,12}(下载|拉取)'; then
+    git_checkout_requested=1
+    if [ "$repository_count" -eq 0 ]; then
+      printf -- "- 落盘验证：失败。任务结束后工作目录内没有检测到 Git 仓库。\\n" >> "$summary"
+    else
+      printf -- "- 落盘验证：通过。任务结束后检测到 %s 个 Git 仓库。\\n" "$repository_count" >> "$summary"
+    fi
+  fi
   printf -- "- 说明：这是 Agent 根据任务开始与结束时的 Git 状态自动生成的执行痕迹。\\n" >> "$summary"
   rm -f "$keys"
+  if [ "$git_checkout_requested" -eq 1 ] && [ "$repository_count" -eq 0 ]; then
+    return 65
+  fi
+  return 0
 }
 
 aiwb_update_conversation_from_task() {
@@ -706,6 +728,18 @@ fi
 eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1
 AIWB_EXIT_CODE=$?
 aiwb_build_execution_summary "$AIWB_EXIT_CODE"
+AIWB_GIT_VERIFICATION_CODE=$?
+if [ "$AIWB_EXIT_CODE" -eq 0 ] && [ "$AIWB_GIT_VERIFICATION_CODE" -eq 65 ]; then
+  cat > "$AIWB_TASK_DIR/output.log" <<'AIWB_GIT_VERIFICATION_FAILED'
+AIWB_FINAL_START
+代码没有下载成功。
+
+远端命令虽然正常结束，但 Agent 检查了当前工作目录，没有发现任何 Git 仓库。
+App 不再把这类情况显示为成功。请检查仓库地址、网络、权限和实际下载路径后重试。
+AIWB_FINAL_END
+AIWB_GIT_VERIFICATION_FAILED
+  AIWB_EXIT_CODE=65
+fi
 if [ "$AIWB_EXIT_CODE" -eq 0 ]; then
   aiwb_set_status "done" "$AIWB_EXIT_CODE"
 else
@@ -2900,9 +2934,19 @@ if (-not $AIWB_GIT) {
   Write-Output "__AIWB_GIT_OPERATION_ERROR__远端没有找到 git，请先安装 Git。"
   exit 2
 }
+function Assert-AiwbGitSucceeded([string]$Action, [int]$ExitCode) {
+  if ($ExitCode -ne 0) {
+    $AIWB_EXIT_CODE = $ExitCode
+    if (-not $AIWB_EXIT_CODE) { $AIWB_EXIT_CODE = 4 }
+    Write-Output ("__AIWB_GIT_OPERATION_ERROR__" + $Action + "失败，Git 退出码：" + $AIWB_EXIT_CODE)
+    exit $AIWB_EXIT_CODE
+  }
+}
 
 $AIWB_PARENT = Split-Path -Parent $AIWB_TARGET
-if ($AIWB_PARENT) { New-Item -ItemType Directory -Force -Path $AIWB_PARENT | Out-Null }
+if ($AIWB_PARENT -and -not (Test-Path -LiteralPath $AIWB_PARENT)) {
+  New-Item -ItemType Directory -Force -Path $AIWB_PARENT | Out-Null
+}
 
 $AIWB_TARGET_IS_REPO = Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container
 if ((Test-Path -LiteralPath $AIWB_TARGET) -and -not $AIWB_TARGET_IS_REPO) {
@@ -2921,10 +2965,16 @@ if ((Test-Path -LiteralPath $AIWB_TARGET) -and -not $AIWB_TARGET_IS_REPO) {
 if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) {
   Set-Location -LiteralPath $AIWB_TARGET
   git fetch --all --prune
+  $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
+  Assert-AiwbGitSucceeded "获取远端仓库" $AIWB_GIT_EXIT_CODE
   if ($AIWB_BRANCH) {
     git checkout $AIWB_BRANCH
+    $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
+    Assert-AiwbGitSucceeded "切换分支" $AIWB_GIT_EXIT_CODE
   }
   git pull --ff-only
+  $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
+  Assert-AiwbGitSucceeded "更新仓库" $AIWB_GIT_EXIT_CODE
   Write-Output "__AIWB_GIT_OPERATION_STATUS__updated"
 } elseif (Test-Path -LiteralPath $AIWB_TARGET) {
   $AIWB_CHILDREN = @(Get-ChildItem -LiteralPath $AIWB_TARGET -Force -ErrorAction SilentlyContinue)
@@ -2937,6 +2987,8 @@ if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) 
   } else {
     git clone $AIWB_REPO $AIWB_TARGET
   }
+  $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
+  Assert-AiwbGitSucceeded "下载仓库" $AIWB_GIT_EXIT_CODE
   Write-Output "__AIWB_GIT_OPERATION_STATUS__cloned"
 } else {
   if ($AIWB_BRANCH) {
@@ -2944,8 +2996,15 @@ if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) 
   } else {
     git clone $AIWB_REPO $AIWB_TARGET
   }
+  $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
+  Assert-AiwbGitSucceeded "下载仓库" $AIWB_GIT_EXIT_CODE
   Write-Output "__AIWB_GIT_OPERATION_STATUS__cloned"
 }
+if (-not (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container)) {
+  Write-Output ("__AIWB_GIT_OPERATION_ERROR__Git 命令已经结束，但保存目录中没有找到仓库：" + $AIWB_TARGET)
+  exit 5
+}
+Write-Output "__AIWB_GIT_OPERATION_VERIFIED__1"
 Write-Output ("__AIWB_GIT_OPERATION_TARGET__" + $AIWB_TARGET)
 Write-Output ("__AIWB_GIT_OPERATION_REPO__" + $AIWB_REPO)
 `);
@@ -3002,8 +3061,121 @@ else
   fi
   printf '__AIWB_GIT_OPERATION_STATUS__cloned\\n'
 fi
+if [ ! -d "$AIWB_TARGET/.git" ]; then
+  printf '__AIWB_GIT_OPERATION_ERROR__Git 命令已经结束，但保存目录中没有找到仓库：%s\\n' "$AIWB_TARGET"
+  exit 5
+fi
+printf '__AIWB_GIT_OPERATION_VERIFIED__1\\n'
 printf '__AIWB_GIT_OPERATION_TARGET__%s\\n' "$AIWB_TARGET"
 printf '__AIWB_GIT_OPERATION_REPO__%s\\n' "$AIWB_REPO"
+`);
+}
+
+export function buildGitSshKeyCommand(profile, options = {}) {
+  const generate = options.generate === true;
+
+  if (isWindowsProfile(profile)) {
+    return powershellStdinCommand(`
+$AIWB_GENERATE = ${generate ? "$true" : "$false"}
+$AIWB_USER_HOME = [Environment]::GetFolderPath("UserProfile")
+if (-not $AIWB_USER_HOME) { $AIWB_USER_HOME = $HOME }
+$AIWB_SSH_DIR = Join-Path $AIWB_USER_HOME ".ssh"
+$AIWB_KEY_PATH = Join-Path $AIWB_SSH_DIR "id_ed25519"
+$AIWB_PUBLIC_KEY_PATH = $AIWB_KEY_PATH + ".pub"
+$AIWB_EXISTING_PUBLIC_KEYS = @(
+  (Join-Path $AIWB_SSH_DIR "id_ed25519.pub"),
+  (Join-Path $AIWB_SSH_DIR "id_rsa.pub"),
+  (Join-Path $AIWB_SSH_DIR "id_ecdsa.pub")
+)
+$AIWB_PUBLIC_KEY_PATH = $AIWB_EXISTING_PUBLIC_KEYS |
+  Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+  Select-Object -First 1
+
+if (-not $AIWB_PUBLIC_KEY_PATH -and $AIWB_GENERATE) {
+  $AIWB_SSH_KEYGEN = Get-Command ssh-keygen -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $AIWB_SSH_KEYGEN) {
+    Write-Output "__AIWB_GIT_SSH_KEY_ERROR__远端没有找到 ssh-keygen，无法生成 SSH Key。"
+    exit 2
+  }
+  New-Item -ItemType Directory -Force -Path $AIWB_SSH_DIR | Out-Null
+  $AIWB_COMMENT = "ai-workbench@" + $env:COMPUTERNAME
+  & $AIWB_SSH_KEYGEN.Source -t ed25519 -C $AIWB_COMMENT -N '""' -f $AIWB_KEY_PATH
+  $AIWB_KEYGEN_EXIT_CODE = $LASTEXITCODE
+  if ($AIWB_KEYGEN_EXIT_CODE -ne 0) {
+    Write-Output ("__AIWB_GIT_SSH_KEY_ERROR__生成 SSH Key 失败，ssh-keygen 退出码：" + $AIWB_KEYGEN_EXIT_CODE)
+    exit $AIWB_KEYGEN_EXIT_CODE
+  }
+  $AIWB_PUBLIC_KEY_PATH = $AIWB_KEY_PATH + ".pub"
+}
+
+if (-not $AIWB_PUBLIC_KEY_PATH) {
+  Write-Output "__AIWB_GIT_SSH_KEY_STATUS__missing"
+  exit 0
+}
+
+$AIWB_PUBLIC_KEY = (Get-Content -LiteralPath $AIWB_PUBLIC_KEY_PATH -Raw -ErrorAction SilentlyContinue).Trim()
+if (-not $AIWB_PUBLIC_KEY) {
+  Write-Output "__AIWB_GIT_SSH_KEY_ERROR__找到了公钥文件，但内容为空。"
+  exit 3
+}
+$AIWB_FINGERPRINT = ""
+$AIWB_SSH_KEYGEN = Get-Command ssh-keygen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($AIWB_SSH_KEYGEN) {
+  $AIWB_FINGERPRINT = (& $AIWB_SSH_KEYGEN.Source -lf $AIWB_PUBLIC_KEY_PATH 2>$null | Out-String).Trim()
+}
+Write-Output "__AIWB_GIT_SSH_KEY_STATUS__ready"
+Write-Output ("__AIWB_GIT_SSH_KEY_PUBLIC_KEY__" + $AIWB_PUBLIC_KEY)
+Write-Output ("__AIWB_GIT_SSH_KEY_PATH__" + $AIWB_PUBLIC_KEY_PATH)
+Write-Output ("__AIWB_GIT_SSH_KEY_FINGERPRINT__" + $AIWB_FINGERPRINT)
+`);
+  }
+
+  return remoteBashCommand(profile, `
+AIWB_GENERATE=${generate ? "1" : "0"}
+AIWB_SSH_DIR="\${HOME}/.ssh"
+AIWB_KEY_PATH="\${AIWB_SSH_DIR}/id_ed25519"
+AIWB_PUBLIC_KEY_PATH=""
+for AIWB_CANDIDATE in "\${AIWB_SSH_DIR}/id_ed25519.pub" "\${AIWB_SSH_DIR}/id_rsa.pub" "\${AIWB_SSH_DIR}/id_ecdsa.pub"; do
+  if [ -f "$AIWB_CANDIDATE" ]; then
+    AIWB_PUBLIC_KEY_PATH="$AIWB_CANDIDATE"
+    break
+  fi
+done
+
+if [ -z "$AIWB_PUBLIC_KEY_PATH" ] && [ "$AIWB_GENERATE" = "1" ]; then
+  if ! command -v ssh-keygen >/dev/null 2>&1; then
+    printf '__AIWB_GIT_SSH_KEY_ERROR__远端没有找到 ssh-keygen，无法生成 SSH Key。\\n'
+    exit 2
+  fi
+  mkdir -p "$AIWB_SSH_DIR"
+  chmod 700 "$AIWB_SSH_DIR" 2>/dev/null || true
+  ssh-keygen -t ed25519 -C "ai-workbench@$(hostname)" -N "" -f "$AIWB_KEY_PATH"
+  AIWB_KEYGEN_EXIT_CODE=$?
+  if [ "$AIWB_KEYGEN_EXIT_CODE" -ne 0 ]; then
+    printf '__AIWB_GIT_SSH_KEY_ERROR__生成 SSH Key 失败，ssh-keygen 退出码：%s\\n' "$AIWB_KEYGEN_EXIT_CODE"
+    exit "$AIWB_KEYGEN_EXIT_CODE"
+  fi
+  AIWB_PUBLIC_KEY_PATH="$AIWB_KEY_PATH.pub"
+fi
+
+if [ -z "$AIWB_PUBLIC_KEY_PATH" ]; then
+  printf '__AIWB_GIT_SSH_KEY_STATUS__missing\\n'
+  exit 0
+fi
+
+AIWB_PUBLIC_KEY=$(tr -d '\\r\\n' < "$AIWB_PUBLIC_KEY_PATH")
+if [ -z "$AIWB_PUBLIC_KEY" ]; then
+  printf '__AIWB_GIT_SSH_KEY_ERROR__找到了公钥文件，但内容为空。\\n'
+  exit 3
+fi
+AIWB_FINGERPRINT=""
+if command -v ssh-keygen >/dev/null 2>&1; then
+  AIWB_FINGERPRINT=$(ssh-keygen -lf "$AIWB_PUBLIC_KEY_PATH" 2>/dev/null || true)
+fi
+printf '__AIWB_GIT_SSH_KEY_STATUS__ready\\n'
+printf '__AIWB_GIT_SSH_KEY_PUBLIC_KEY__%s\\n' "$AIWB_PUBLIC_KEY"
+printf '__AIWB_GIT_SSH_KEY_PATH__%s\\n' "$AIWB_PUBLIC_KEY_PATH"
+printf '__AIWB_GIT_SSH_KEY_FINGERPRINT__%s\\n' "$AIWB_FINGERPRINT"
 `);
 }
 

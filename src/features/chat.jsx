@@ -369,21 +369,6 @@ export function RunningTaskHint({ message, agent, operationBusy, onRefreshOutput
   );
 }
 
-export function AgentLiveOutput({ text }) {
-  const visibleText = String(text || "").trim();
-  if (!visibleText) return null;
-
-  return (
-    <section className="agent-live-output" aria-label="实时输出">
-      <header>
-        <strong>实时输出</strong>
-        <span>运行中</span>
-      </header>
-      <pre>{visibleText}</pre>
-    </section>
-  );
-}
-
 function friendlyProgressFromText(text, agent) {
   const value = String(text || "").trim();
   if (!value) return null;
@@ -850,7 +835,6 @@ export function MessageBubble({
           <RichMessage text={displayOutputText} />
         </section>
       ) : null}
-      {taskRunning && liveOutputText && !friendlyProgress ? <AgentLiveOutput text={liveOutputText} /> : null}
       {fileReferences.length ? (
         <FileReferenceList
           files={fileReferences}

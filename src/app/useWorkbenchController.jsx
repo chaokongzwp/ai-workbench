@@ -55,6 +55,7 @@ const {
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildGitDownloadCommand,
+  buildGitSshKeyCommand,
   buildHealthCommand,
   buildInstallGitCommand,
   buildInstallCliCommand,
@@ -406,6 +407,33 @@ function normalizeRemoteCommandOutput(result) {
     );
   }
   return detail;
+}
+
+function readableGitOperationError(output) {
+  const text = String(output || "").trim();
+  const explicitMarker = text.match(/__AIWB_GIT_OPERATION_ERROR__([^\r\n<]*)/i)?.[1]?.trim();
+  if (explicitMarker) return explicitMarker;
+
+  if (/Could not resolve hostname\s+github\.com|Name or service not known|Temporary failure in name resolution/i.test(text)) {
+    return "远端机器无法解析 github.com（DNS 不可用），因此无法连接 GitHub。请先恢复这台机器的网络或 DNS 后重试。";
+  }
+  if (/Permission denied\s*\(publickey\)|Could not read from remote repository/i.test(text)) {
+    return "远端机器没有通过 GitHub SSH 认证。请为远端账号配置可访问该仓库的 SSH Key，或改用具备访问权限的 HTTPS 仓库地址。";
+  }
+  if (/Repository not found|repository .* not found/i.test(text)) {
+    return "GitHub 没有找到该仓库，或当前远端账号没有访问权限。请检查仓库地址和仓库权限。";
+  }
+  if (/Remote branch .* not found|couldn't find remote ref|pathspec .* did not match/i.test(text)) {
+    return "填写的 Git 分支不存在。请清空分支使用默认分支，或填写仓库中真实存在的分支。";
+  }
+  if (/already exists and is not an empty directory/i.test(text)) {
+    return "保存目录已经存在且不为空。请选择空目录，或更换保存目录。";
+  }
+  if (/路径的形式不合法|CreateDirectoryArgumentError|The filename, directory name, or volume label syntax is incorrect/i.test(text)) {
+    return "Windows 保存目录格式不正确，或磁盘根目录无法访问。请检查盘符和完整保存路径。";
+  }
+
+  return "Git 操作没有通过远端落盘验证。远端没有生成可用仓库，请检查仓库地址、网络权限和保存目录。";
 }
 
 function wslProfileFromWindowsProfile(profile, distro = "") {
@@ -2747,6 +2775,29 @@ export function useWorkbenchController() {
     return true;
   }
 
+  function scheduleSessionAutoConnect(serverId, attempt = 0) {
+    window.setTimeout(() => {
+      if (activeServerIdRef.current !== serverId) return;
+
+      const latestServer = serverById(serverId);
+      if (!latestServer || connectionIsLive(latestServer.connection) || latestServer.connection?.state === "testing") {
+        return;
+      }
+
+      if (busyRef.current) {
+        if (attempt < 10) scheduleSessionAutoConnect(serverId, attempt + 1);
+        return;
+      }
+
+      connectExistingSession(serverId).catch((error) => {
+        void appLog("warn", "session.switch_auto_connect.failed", {
+          serverId,
+          error: shortError(error),
+        });
+      });
+    }, attempt ? 300 : 0);
+  }
+
   async function selectServer(serverId) {
     const currentServers = serversRef.current;
     const target = currentServers.find((server) => server.id === serverId);
@@ -2778,6 +2829,7 @@ export function useWorkbenchController() {
       updateDraftProfile(nextProfile);
       setActiveAgentId(nextProfile.agentId);
       if (nextServers !== currentServers) await saveWorkspace(nextServers, serverId);
+      scheduleSessionAutoConnect(serverId);
       return;
     }
 
@@ -2793,6 +2845,7 @@ export function useWorkbenchController() {
     setActiveAgentId(nextProfile.agentId);
     setRawOpen(false);
     await saveWorkspace(nextServers, serverId);
+    scheduleSessionAutoConnect(serverId);
   }
 
   const refreshAgentHealthForServer = useCallback(
@@ -3576,11 +3629,22 @@ export function useWorkbenchController() {
       if (parsed.git_operation_error) {
         throw new Error(parsed.git_operation_error);
       }
+      if (parsed.git_operation_verified !== "1") {
+        throw new Error(readableGitOperationError(output));
+      }
       const status = parsed.git_operation_status || "done";
       const target = parsed.git_operation_target || options.targetDir || nextProfile.workdir || "";
       const message = status === "updated" ? "仓库已更新。" : status === "cloned" ? "仓库已下载。" : "Git 操作完成。";
+      const gitProfile = normalizeProfile({
+        ...nextProfile,
+        gitRepoUrl: String(options.repoUrl || "").trim(),
+        gitTargetDir: target,
+        gitBranch: String(options.branch || "").trim(),
+      });
+      updateDraftProfile(gitProfile);
       setRawOutput(output.trim() || message);
       updateServer(targetServerId, (server) => ({
+        profile: gitProfile,
         diagnostics: {
           ...(server.diagnostics || {}),
           git: (server.diagnostics || {}).git || "git",
@@ -3599,6 +3663,34 @@ export function useWorkbenchController() {
       const message = shortError(error);
       setRawOutput(message);
       throw error;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function inspectGitSshKeyForEditingServer(options = {}) {
+    if (busy) return null;
+    const nextProfile = withKnownPassword(draftProfileRef.current);
+    const issue = profileIssue(nextProfile);
+    if (issue) throw new Error(issue);
+
+    setBusy(true);
+    try {
+      const output = await runRemoteCommandForProfile(
+        nextProfile,
+        buildGitSshKeyCommand(nextProfile, { generate: options.generate === true }),
+        256_000,
+        120,
+      );
+      const parsed = parseHealth(output);
+      if (parsed.git_ssh_key_error) throw new Error(parsed.git_ssh_key_error);
+
+      return {
+        status: parsed.git_ssh_key_status || "missing",
+        publicKey: parsed.git_ssh_key_public_key || "",
+        path: parsed.git_ssh_key_path || "",
+        fingerprint: parsed.git_ssh_key_fingerprint || "",
+      };
     } finally {
       setBusy(false);
     }
@@ -7077,6 +7169,7 @@ export function useWorkbenchController() {
     onInstallWsl: installWslForDraftProfile,
     onInstallGit: editingServerId && editingServerId !== "global" ? installGitForEditingServer : undefined,
     onGitDownload: editingServerId && editingServerId !== "global" ? runGitDownloadForEditingServer : undefined,
+    onGitSshKey: editingServerId && editingServerId !== "global" ? inspectGitSshKeyForEditingServer : undefined,
     onExportConfig: exportWorkspaceConfig,
     onExportLogs: exportDiagnosticsLogs,
     onClearCache: clearWorkspaceCache,
