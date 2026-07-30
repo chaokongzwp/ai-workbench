@@ -1618,7 +1618,7 @@ textarea:disabled {
   width: max-content;
   max-width: 100%;
   overflow: auto;
-  border: 1px solid rgba(17, 24, 39, 0.1);
+  border: 1px solid rgba(17, 24, 39, 0.14);
   border-radius: 10px;
   background: transparent;
   box-shadow: none;
@@ -1640,8 +1640,8 @@ textarea:disabled {
   min-width: 96px;
   max-width: 420px;
   padding: 10px 12px;
-  border-right: 1px solid rgba(17, 24, 39, 0.08);
-  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  border-right: 1px solid rgba(17, 24, 39, 0.12);
+  border-bottom: 1px solid rgba(17, 24, 39, 0.12);
   vertical-align: top;
   overflow-wrap: anywhere;
 }
@@ -1665,6 +1665,24 @@ textarea:disabled {
 
 .rich-message tr:last-child td {
   border-bottom: 0;
+}
+
+.rich-data-table-wrap td {
+  min-width: 0;
+  max-width: 520px;
+  border-right: 0;
+  border-bottom: 0;
+  font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+  white-space: nowrap;
+}
+
+.rich-data-table-wrap td + td {
+  border-left: 1px solid rgba(17, 24, 39, 0.16);
+}
+
+.rich-data-table-wrap tr + tr td {
+  border-top: 1px solid rgba(17, 24, 39, 0.16);
 }
 
 .rich-diagram {
@@ -8215,22 +8233,32 @@ body {
 .app-shell[data-theme="dark"] .rich-table-wrap,
 .native-app-shell[data-theme="dark"] .rich-table-wrap,
 .app-shell[data-theme="dark"] .rich-diagram {
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
   background: transparent;
 }
 
 .app-shell[data-theme="dark"] .rich-message th,
 .native-app-shell[data-theme="dark"] .rich-message th {
   color: rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .app-shell[data-theme="dark"] .rich-message td,
 .native-app-shell[data-theme="dark"] .rich-message td {
   color: rgba(255, 255, 255, 0.84);
-  border-color: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.12);
   background: transparent;
+}
+
+.app-shell[data-theme="dark"] .rich-data-table-wrap td + td,
+.native-app-shell[data-theme="dark"] .rich-data-table-wrap td + td {
+  border-left-color: rgba(255, 255, 255, 0.2);
+}
+
+.app-shell[data-theme="dark"] .rich-data-table-wrap tr + tr td,
+.native-app-shell[data-theme="dark"] .rich-data-table-wrap tr + tr td {
+  border-top-color: rgba(255, 255, 255, 0.2);
 }
 
 .native-app-shell[data-theme="dark"] .rich-diagram {

@@ -17,6 +17,7 @@ import {
   Trash2 as LucideTrash,
 } from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
+import { parsePreformattedTable } from "../core/structuredText.js";
 import * as Primitives from "./primitives.jsx";
 import * as FilePreview from "./filePreview.jsx";
 
@@ -995,6 +996,11 @@ export const RichMessage = memo(function RichMessage({ text }) {
             return <MermaidDiagram key={`mermaid-${index}`} source={block.text} />;
           }
 
+          const structuredTable = parsePreformattedTable(block.text, block.language);
+          if (structuredTable) {
+            return <PreformattedTable key={`data-table-${index}`} table={structuredTable} blockIndex={index} />;
+          }
+
           return (
             <pre key={`code-${index}`}>
               <code>{block.text}</code>
@@ -1294,6 +1300,24 @@ export function MarkdownTable({ table, blockIndex }) {
                 <td key={`table-${blockIndex}-cell-${rowIndex}-${columnIndex}`} style={{ textAlign: table.align[columnIndex] }}>
                   {renderInlineMessage(cell, `table-${blockIndex}-cell-${rowIndex}-${columnIndex}`)}
                 </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function PreformattedTable({ table, blockIndex }) {
+  return (
+    <div className="rich-table-wrap rich-data-table-wrap">
+      <table aria-label="结构化命令输出">
+        <tbody>
+          {table.rows.map((row, rowIndex) => (
+            <tr key={`data-table-${blockIndex}-row-${rowIndex}`}>
+              {row.map((cell, columnIndex) => (
+                <td key={`data-table-${blockIndex}-cell-${rowIndex}-${columnIndex}`}>{cell}</td>
               ))}
             </tr>
           ))}
