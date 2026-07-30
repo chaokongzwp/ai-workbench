@@ -264,15 +264,18 @@ const {
 } = Core;
 
 export function TaskNotice({ notice, onOpen, onClose }) {
+  const dismissible = notice.dismissible !== false;
   return (
     <div className={`task-notice ${notice.tone || "done"}`} role="status">
-      <button type="button" className="task-notice-main" onClick={onOpen}>
+      <button type="button" className="task-notice-main" onClick={dismissible ? onOpen : undefined}>
         <StatusDot status={notice.tone === "error" ? "error" : "connected"} />
         <strong>{notice.title}</strong>
       </button>
-      <button type="button" className="task-notice-close" aria-label="关闭提示" onClick={onClose}>
-        ×
-      </button>
+      {dismissible ? (
+        <button type="button" className="task-notice-close" aria-label="关闭提示" onClick={onClose}>
+          ×
+        </button>
+      ) : null}
     </div>
   );
 }

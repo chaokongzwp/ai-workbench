@@ -538,6 +538,7 @@ export function useWorkbenchController() {
   const applyingExternalProfileRef = useRef(false);
   const noticeQueueRef = useRef([]);
   const noticeSpeakingRef = useRef(false);
+  const persistentNoticeKeysRef = useRef(new Set());
   const syncingAgentTasksRef = useRef(new Set());
   const syncingAgentConversationsRef = useRef(new Set());
   const syncingAgentSweepRef = useRef(false);
@@ -1619,8 +1620,20 @@ export function useWorkbenchController() {
     }, 4200);
   }
 
+  function dismissTaskNoticeByKey(key) {
+    const noticeKey = String(key || "").trim();
+    if (!noticeKey) return;
+    persistentNoticeKeysRef.current.delete(noticeKey);
+    noticeQueueRef.current = noticeQueueRef.current.filter((notice) => notice?.key !== noticeKey);
+    setTaskNotice((current) => (current?.key === noticeKey ? null : current));
+    if (!persistentNoticeKeysRef.current.size && noticeQueueRef.current.length) {
+      window.setTimeout(drainTaskNoticeQueue, 0);
+    }
+  }
+
   async function drainTaskNoticeQueue() {
     if (noticeSpeakingRef.current) return;
+    if (persistentNoticeKeysRef.current.size) return;
     if (voiceStateRef.current !== "idle") {
       window.setTimeout(drainTaskNoticeQueue, 900);
       return;
@@ -1631,7 +1644,7 @@ export function useWorkbenchController() {
 
     noticeSpeakingRef.current = true;
     setTaskNotice(nextNotice);
-    clearTaskNoticeLater(nextNotice.id);
+    if (!nextNotice.persistent) clearTaskNoticeLater(nextNotice.id);
     try {
       const currentProfile = normalizeProfile(profileRef.current);
       if (currentProfile.playResultAudio && nextNotice.speech) {
@@ -1645,17 +1658,30 @@ export function useWorkbenchController() {
     }
   }
 
-  function enqueueTaskNotice({ serverId, title, speech, tone = "done" }) {
+  function enqueueTaskNotice({ serverId, title, speech, tone = "done", persistent = false, key = "" }) {
+    const noticeKey = String(key || "").trim();
     const notice = {
       id: `notice-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       serverId,
       title,
       speech,
       tone,
+      persistent,
+      dismissible: !persistent,
+      key: noticeKey,
     };
     triggerInteractionFeedback(hapticKindForNoticeTone(tone));
+    if (persistent) {
+      if (noticeKey) {
+        persistentNoticeKeysRef.current.add(noticeKey);
+        noticeQueueRef.current = noticeQueueRef.current.filter((item) => item?.key !== noticeKey);
+      }
+      setTaskNotice(notice);
+      return notice.id;
+    }
     noticeQueueRef.current.push(notice);
     drainTaskNoticeQueue();
+    return notice.id;
   }
 
   function notifyTaskFinished(serverId, agent, ok = true) {
@@ -2826,6 +2852,14 @@ export function useWorkbenchController() {
       return;
     }
 
+    const connectionNoticeKey = `connection:${target.id}`;
+    enqueueTaskNotice({
+      serverId: target.id,
+      title: "连接中",
+      tone: "progress",
+      persistent: true,
+      key: connectionNoticeKey,
+    });
     setBusy(true);
     setServers((items) => {
       const nextItems = items.map((server) =>
@@ -2942,6 +2976,7 @@ export function useWorkbenchController() {
         return nextItems;
       });
     } finally {
+      dismissTaskNoticeByKey(connectionNoticeKey);
       setBusy(false);
     }
   }
@@ -5871,7 +5906,6 @@ export function useWorkbenchController() {
       return;
     }
     if (!connectionIsLive(sourceServer.connection)) {
-      enqueueTaskNotice({ serverId, title: "正在连接当前会话", tone: "progress" });
       await connectExistingSession(serverId);
       sourceServer = serverById(serverId) || sourceServer;
       currentProfile = withKnownPassword(sourceServer.profile);
