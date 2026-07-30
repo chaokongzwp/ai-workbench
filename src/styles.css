@@ -1614,26 +1614,32 @@ textarea:disabled {
 }
 
 .rich-table-wrap {
+  display: block;
+  width: max-content;
   max-width: 100%;
   overflow: auto;
   border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.72);
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .rich-message table {
-  width: 100%;
-  min-width: max-content;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 14px;
   line-height: 1.48;
+  background: transparent;
 }
 
 .rich-message th,
 .rich-message td {
-  max-width: 320px;
-  padding: 9px 11px;
+  min-width: 96px;
+  max-width: 420px;
+  padding: 10px 12px;
   border-right: 1px solid rgba(17, 24, 39, 0.08);
   border-bottom: 1px solid rgba(17, 24, 39, 0.08);
   vertical-align: top;
@@ -1642,14 +1648,14 @@ textarea:disabled {
 
 .rich-message th {
   color: #111827;
-  background: #f4f4f5;
+  background: rgba(17, 24, 39, 0.035);
   font-weight: 720;
   white-space: nowrap;
 }
 
 .rich-message td {
   color: #253041;
-  background: rgba(255, 255, 255, 0.54);
+  background: transparent;
 }
 
 .rich-message th:last-child,
@@ -1828,11 +1834,14 @@ textarea:disabled {
 }
 
 .rich-message pre {
+  width: max-content;
+  max-width: 100%;
   margin: 0;
   padding: 12px 14px;
-  border-radius: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 10px;
   color: #111827;
-  background: #f4f4f5;
+  background: rgba(17, 24, 39, 0.035);
   font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
   font-size: 0.92em;
   line-height: 1.55;
@@ -1842,8 +1851,11 @@ textarea:disabled {
 
 .rich-message pre code {
   display: block;
+  max-width: none;
   padding: 0;
+  border: 0;
   border-radius: 0;
+  color: inherit;
   background: transparent;
   font: inherit;
 }
@@ -8201,9 +8213,24 @@ body {
 }
 
 .app-shell[data-theme="dark"] .rich-table-wrap,
+.native-app-shell[data-theme="dark"] .rich-table-wrap,
 .app-shell[data-theme="dark"] .rich-diagram {
   border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(17, 20, 27, 0.96);
+  background: transparent;
+}
+
+.app-shell[data-theme="dark"] .rich-message th,
+.native-app-shell[data-theme="dark"] .rich-message th {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.app-shell[data-theme="dark"] .rich-message td,
+.native-app-shell[data-theme="dark"] .rich-message td {
+  color: rgba(255, 255, 255, 0.84);
+  border-color: rgba(255, 255, 255, 0.075);
+  background: transparent;
 }
 
 .native-app-shell[data-theme="dark"] .rich-diagram {
@@ -8263,16 +8290,6 @@ body {
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-.app-shell[data-theme="dark"] .rich-message th {
-  color: #f4f4f5;
-  background: #22242b;
-}
-
-.app-shell[data-theme="dark"] .rich-message td {
-  color: #d8dce5;
-  background: rgba(255, 255, 255, 0.025);
-}
-
 .app-shell[data-theme="dark"] .rich-diagram.pending {
   color: var(--muted);
 }
@@ -8304,9 +8321,18 @@ body {
 }
 
 .app-shell[data-theme="dark"] .rich-message pre,
+.native-app-shell[data-theme="dark"] .rich-message pre,
 .app-shell[data-theme="dark"] .preview-block pre {
+  border-color: rgba(255, 255, 255, 0.09);
   color: #f4f4f5;
-  background: #17191f;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.app-shell[data-theme="dark"] .rich-message pre code,
+.native-app-shell[data-theme="dark"] .rich-message pre code {
+  border: 0;
+  color: inherit;
+  background: transparent;
 }
 
 .app-shell[data-theme="dark"] .composer,
