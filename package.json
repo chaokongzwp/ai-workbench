@@ -1,6 +1,6 @@
 {
   "name": "ecs-ai-workbench",
-  "version": "1.0.55",
+  "version": "1.0.56",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",
@@ -60,6 +60,7 @@
     "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.4.0",
     "@capacitor/ios": "^8.4.0",
+    "@capacitor/push-notifications": "^8.1.2",
     "@phosphor-icons/react": "^2.1.10",
     "@vitejs/plugin-react": "5.0.4",
     "@xterm/addon-fit": "^0.11.0",

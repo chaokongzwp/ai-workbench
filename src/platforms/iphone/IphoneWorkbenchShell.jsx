@@ -985,6 +985,7 @@ export function IphoneWorkbenchShell({
       {settingsOpen ? (
         <SettingsPanel
           servers={servers}
+          platform={platform}
           draftProfile={draftProfile}
           editingServer={editingServer}
           editingServerIndex={editingServerIndex}

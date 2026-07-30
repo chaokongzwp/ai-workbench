@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowClockwise,
+  Bell,
   CaretRight,
   Check,
   Copy,
@@ -551,6 +552,7 @@ function normalizeAppInfo(info = {}) {
 
 export function SettingsPanel({
   servers = [],
+  platform = "",
   draftProfile,
   editingServer,
   busy,
@@ -1027,6 +1029,7 @@ export function SettingsPanel({
     "global-permissions": "执行权限",
     "global-typography": "字体与消息",
     "global-voice": "语音与播放",
+    "global-notifications": "任务通知",
     "global-cloud-sync": "云端配置",
     "global-migration": "配置迁移",
     "global-storage": "存储与缓存",
@@ -1065,6 +1068,7 @@ export function SettingsPanel({
     "global-permissions",
     "global-typography",
     "global-voice",
+    "global-notifications",
     "global-main-ai",
   ].includes(settingsPage);
 
@@ -1292,6 +1296,15 @@ export function SettingsPanel({
                 value={draftProfile.voiceInputEnabled === true ? "已开启" : "已关闭"}
                 onClick={() => setSettingsPage("global-voice")}
               />
+              {platform === "ios" ? (
+                <SettingsMenuRow
+                  icon={Bell}
+                  title="任务通知"
+                  detail="App 在后台时通知任务结果"
+                  value={draftProfile.taskPushNotificationsEnabled === true ? "已开启" : "已关闭"}
+                  onClick={() => setSettingsPage("global-notifications")}
+                />
+              ) : null}
               <SettingsMenuRow
                 icon={Robot}
                 title="主 AI"
@@ -1987,6 +2000,32 @@ export function SettingsPanel({
                 value={draftProfile.wakeWordPhrases}
                 hint=""
                 onChange={(value) => updateField("wakeWordPhrases", value)}
+              />
+            </SettingsSection>
+          </div>
+        ) : null}
+
+        {globalSettings && settingsPage === "global-notifications" ? (
+          <div className="settings-page-content">
+            <SettingsSection
+              title="任务完成通知"
+              footer="只发送会话名称和完成状态，不会把任务内容、AI 返回正文或服务器密码放进系统通知。"
+            >
+              <ConfigToggle
+                label="允许 Push 通知"
+                checked={draftProfile.taskPushNotificationsEnabled === true}
+                onChange={(value) => updateField("taskPushNotificationsEnabled", value)}
+              />
+            </SettingsSection>
+            <SettingsSection
+              title="通知时机"
+              footer="远端 Agent 到达完成、失败或已取消状态时发送。点击通知会打开对应会话并同步最终结果。"
+            >
+              <SettingsStatusRow
+                icon={Bell}
+                title="后台任务结果"
+                detail="iPhone 与 iPad"
+                value={draftProfile.taskPushNotificationsEnabled === true ? "已启用" : "未启用"}
               />
             </SettingsSection>
           </div>

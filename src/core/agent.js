@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "30";
+export const latestWorkbenchAgentVersion = "31";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -218,6 +218,68 @@ aiwb_append_log() {
   printf "[%s] %s\\n" "$(aiwb_now)" "$*" >> "$AIWB_DAEMON_LOG"
 }
 
+aiwb_notify_terminal() {
+  local task_dir="$1"
+  local status
+  local notify_url
+  local notify_token
+  local now_epoch
+  local next_epoch
+  local attempts
+  local http_code
+  local lock_dir
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  case "$status" in
+    done|error|cancelled) ;;
+    *) return 0 ;;
+  esac
+  [ -s "$task_dir/push_notify_url" ] || return 0
+  [ -s "$task_dir/push_notify_token" ] || return 0
+  [ ! -s "$task_dir/push_notified_at" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+
+  now_epoch="$(date -u +%s)"
+  next_epoch="$(cat "$task_dir/push_notify_next_at" 2>/dev/null || printf 0)"
+  if [ "$next_epoch" -gt "$now_epoch" ] 2>/dev/null; then
+    return 0
+  fi
+  lock_dir="$task_dir/push_notify.lock"
+  mkdir "$lock_dir" 2>/dev/null || return 0
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT INT TERM
+
+  notify_url="$(cat "$task_dir/push_notify_url" 2>/dev/null || printf "")"
+  notify_token="$(cat "$task_dir/push_notify_token" 2>/dev/null || printf "")"
+  attempts="$(cat "$task_dir/push_notify_attempts" 2>/dev/null || printf 0)"
+  attempts="$((attempts + 1))"
+  aiwb_write_file "$task_dir/push_notify_attempts" "$attempts"
+  http_code="$(
+    printf '{"status":"%s"}' "$status" |
+      curl --silent --show-error --max-time 12 \
+        --output "$task_dir/push_notify_response.log" \
+        --write-out '%{http_code}' \
+        --request POST \
+        --header "Authorization: Bearer $notify_token" \
+        --header 'Content-Type: application/json' \
+        --data-binary @- \
+        "$notify_url" 2>>"$task_dir/push_notify_response.log" ||
+      printf 000
+  )"
+  if [ "$http_code" = "200" ]; then
+    aiwb_write_file "$task_dir/push_notified_at" "$(aiwb_now)"
+    aiwb_append_log "push delivered task=$(basename "$task_dir") status=$status"
+  else
+    aiwb_write_file "$task_dir/push_notify_next_at" "$((now_epoch + 30 + attempts * 15))"
+    aiwb_append_log "push retry scheduled task=$(basename "$task_dir") status=$status http=$http_code"
+  fi
+  rmdir "$lock_dir" 2>/dev/null || true
+  trap - EXIT INT TERM
+}
+
+aiwb_schedule_terminal_notification() {
+  aiwb_notify_terminal "$1" >/dev/null 2>&1 &
+}
+
 aiwb_update_conversation_from_task() {
   local task_dir="$1"
   local conversation_id
@@ -266,6 +328,9 @@ aiwb_set_status() {
     aiwb_write_file "$task_dir/finished_at" "$(aiwb_now)"
   fi
   aiwb_update_conversation_from_task "$task_dir"
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    aiwb_schedule_terminal_notification "$task_dir"
+  fi
 }
 
 aiwb_task_age_seconds() {
@@ -860,6 +925,9 @@ aiwb_tick_tasks_unlocked() {
         ;;
       running)
         aiwb_mark_stale_if_needed "$task_dir"
+        ;;
+      done|error|cancelled)
+        aiwb_schedule_terminal_notification "$task_dir"
         ;;
     esac
   done
@@ -2261,6 +2329,8 @@ export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metad
     const turnId = String(metadata.turnId || "").trim();
     const requestMessageId = String(metadata.requestMessageId || "").trim();
     const responseMessageId = String(metadata.responseMessageId || "").trim();
+    const pushNotifyUrl = String(metadata.pushNotifyUrl || "").trim();
+    const pushNotifyToken = String(metadata.pushNotifyToken || "").trim();
     const taskPayload = [
       ["conversation_id", conversationId],
       ["name", conversationName],
@@ -2270,6 +2340,8 @@ export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metad
       ["turn_id", turnId],
       ["request_message_id", requestMessageId],
       ["response_message_id", responseMessageId],
+      ["push_notify_url", pushNotifyUrl],
+      ["push_notify_token", pushNotifyToken],
       ["prompt.txt", promptText],
       ["command.b64", typeof command === "string" ? toBase64Utf8(JSON.stringify({ kind: "powershell", script: command })) : toBase64Utf8(JSON.stringify(command || {}))],
     ];
@@ -2291,6 +2363,8 @@ export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metad
   const turnId = String(metadata.turnId || "").trim();
   const requestMessageId = String(metadata.requestMessageId || "").trim();
   const responseMessageId = String(metadata.responseMessageId || "").trim();
+  const pushNotifyUrl = String(metadata.pushNotifyUrl || "").trim();
+  const pushNotifyToken = String(metadata.pushNotifyToken || "").trim();
   return remoteBashCommand(profile, `
 set -e
 AIWB_AGENT_CTL="$HOME/.ai-workbench/agent/aiwbctl"
@@ -2328,6 +2402,12 @@ AIWB_REQUEST_MESSAGE_ID
 cat > "$AIWB_TASK_DIR/response_message_id" <<'AIWB_RESPONSE_MESSAGE_ID'
 ${responseMessageId}
 AIWB_RESPONSE_MESSAGE_ID
+cat > "$AIWB_TASK_DIR/push_notify_url" <<'AIWB_PUSH_NOTIFY_URL'
+${pushNotifyUrl}
+AIWB_PUSH_NOTIFY_URL
+cat > "$AIWB_TASK_DIR/push_notify_token" <<'AIWB_PUSH_NOTIFY_TOKEN'
+${pushNotifyToken}
+AIWB_PUSH_NOTIFY_TOKEN
 cat > "$AIWB_TASK_DIR/prompt.txt" <<'AIWB_CONVERSATION_PROMPT'
 ${promptText}
 AIWB_CONVERSATION_PROMPT

@@ -10,6 +10,12 @@ import {
   reconcileServerMessageLifecycle,
 } from "./controllerMessageLifecycle.js";
 import { shellComponents } from "./shellComponents.jsx";
+import {
+  createIosTaskPushTicket,
+  disableIosPushNotifications,
+  ensureIosPushRegistration,
+  iosPushSupported,
+} from "../core/iosPushNotifications.js";
 
 function nativeDeviceClassForRuntime(platform = Capacitor.getPlatform()) {
   if (typeof window === "undefined") return "phone";
@@ -691,6 +697,55 @@ export function useWorkbenchController() {
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
+
+  useEffect(() => {
+    if (!workspaceLoaded || !iosPushSupported()) return undefined;
+    let cancelled = false;
+    const enabled = normalizeProfile(profile).taskPushNotificationsEnabled === true;
+    const operation = enabled
+      ? ensureIosPushRegistration({
+          endpoint: cloudSyncDefaultEndpoint,
+          requestPermission: true,
+        })
+      : disableIosPushNotifications();
+    Promise.resolve(operation).catch((error) => {
+      if (cancelled) return;
+      void appLog("warn", "ios.push.registration.failed", {
+        error: shortError(error),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.taskPushNotificationsEnabled, workspaceLoaded]);
+
+  useEffect(() => {
+    if (!workspaceLoaded || !iosPushSupported()) return undefined;
+    const handlePush = (event) => {
+      const detail = event?.detail || {};
+      const conversationId = String(detail.conversationId || "").trim();
+      if (!conversationId) return;
+      void (async () => {
+        const target = serversRef.current.find(
+          (server) => String(server?.conversationId || "").trim() === conversationId,
+        );
+        if (!target) {
+          void appLog("warn", "ios.push.conversation_missing", {
+            conversationId,
+            taskId: String(detail.taskId || ""),
+          });
+          return;
+        }
+        if (detail.opened) await selectServer(target.id);
+        await syncAgentConversationForServer(target, {
+          limit: 5,
+          reason: detail.opened ? "push-open" : "push-received",
+        });
+      })();
+    };
+    window.addEventListener("aiwb:ios-push", handlePush);
+    return () => window.removeEventListener("aiwb:ios-push", handlePush);
+  }, [workspaceLoaded]);
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -4494,6 +4549,25 @@ export function useWorkbenchController() {
       for (let attempt = 1; attempt <= maxAgentStartupAttempts; attempt += 1) {
         const remoteTaskId = createRemoteTaskId(conversationId, agent.id);
         const optimisticStartedAt = Date.now();
+        let pushTicket = null;
+        if (currentProfile.taskPushNotificationsEnabled === true && iosPushSupported()) {
+          try {
+            pushTicket = await createIosTaskPushTicket({
+              endpoint: cloudSyncDefaultEndpoint,
+              taskId: remoteTaskId,
+              conversationId,
+              conversationName,
+              agentId: agent.id,
+            });
+          } catch (error) {
+            void appLog("warn", "ios.push.ticket.failed", {
+              serverId,
+              conversationId,
+              remoteTaskId,
+              error: shortError(error),
+            });
+          }
+        }
         setServerTaskMetadata(serverId, {
           backend: "agent",
           conversationId,
@@ -4540,6 +4614,8 @@ export function useWorkbenchController() {
             turnId,
             requestMessageId: userMessageId,
             responseMessageId: assistantMessageId,
+            pushNotifyUrl: pushTicket?.notifyUrl || "",
+            pushNotifyToken: pushTicket?.notifyToken || "",
           }),
           128_000,
           30,

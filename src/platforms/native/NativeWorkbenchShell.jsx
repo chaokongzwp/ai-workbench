@@ -508,6 +508,7 @@ export function NativeWorkbenchShell({
       {settingsOpen ? (
         <SettingsPanel
           servers={servers}
+          platform={platform}
           draftProfile={draftProfile}
           editingServer={editingServer}
           editingServerIndex={editingServerIndex}

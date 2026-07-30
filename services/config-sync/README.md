@@ -70,3 +70,25 @@ curl -s -X POST http://127.0.0.1:18088/v1/shares \
 systemctl status ai-workbench-config-sync
 journalctl -u ai-workbench-config-sync -f
 ```
+
+## iPhone / iPad 任务通知
+
+App 可以把一次性通知票据交给远端 Agent。任务进入完成、失败或已取消状态后，Agent
+只回传任务标识和状态，由本服务通过 APNs 通知对应设备。通知中不包含任务正文、AI
+返回正文、SSH 密码或其他凭据。
+
+在 Apple Developer 创建启用了 APNs 的 `.p8` Provider Key，并把它放到：
+
+```text
+/opt/ai-workbench-config-sync/secrets/apns-auth-key.p8
+```
+
+再创建仅 root 可读的 `/opt/ai-workbench-config-sync/secrets/apns.env`：
+
+```bash
+AIWB_APNS_KEY_ID=YOUR_APNS_KEY_ID
+AIWB_APNS_TEAM_ID=47T37CCFZ2
+AIWB_APNS_KEY_PATH=/opt/ai-workbench-config-sync/secrets/apns-auth-key.p8
+```
+
+重启服务后，`GET /health` 中的 `push.ready` 应为 `true`。

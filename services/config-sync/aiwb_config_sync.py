@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -30,7 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_NAME = "AI Workbench Config Sync"
-SERVICE_VERSION = 3
+SERVICE_VERSION = 4
 MAX_BODY_BYTES = int(os.environ.get("AIWB_CONFIG_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
 DATA_DIR = Path(os.environ.get("AIWB_CONFIG_SYNC_DATA_DIR", "/opt/ai-workbench-config-sync/data"))
 HOST = os.environ.get("AIWB_CONFIG_SYNC_HOST", "0.0.0.0")
@@ -38,11 +39,17 @@ PORT = int(os.environ.get("AIWB_CONFIG_SYNC_PORT", "18088"))
 TOKEN_TTL_SECONDS = int(os.environ.get("AIWB_CONFIG_SYNC_TOKEN_TTL_SECONDS", str(7 * 24 * 60 * 60)))
 PBKDF2_ITERATIONS = int(os.environ.get("AIWB_CONFIG_SYNC_PBKDF2_ITERATIONS", "260000"))
 ACCOUNT_PATTERN = re.compile(r"^[a-zA-Z0-9_.@+-]{2,96}$")
+PUSH_TICKET_TTL_SECONDS = int(os.environ.get("AIWB_PUSH_TICKET_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+APNS_KEY_ID = os.environ.get("AIWB_APNS_KEY_ID", "").strip()
+APNS_TEAM_ID = os.environ.get("AIWB_APNS_TEAM_ID", "").strip()
+APNS_BUNDLE_ID = os.environ.get("AIWB_APNS_BUNDLE_ID", "com.beexofficial.beex.test").strip()
+APNS_KEY_PATH = Path(os.environ.get("AIWB_APNS_KEY_PATH", "/opt/ai-workbench-config-sync/secrets/apns-auth-key.p8"))
 
 
 STATE_LOCK = threading.RLock()
 TOKENS: dict[str, dict[str, Any]] = {}
 SHOULD_EXIT = threading.Event()
+APNS_JWT_CACHE: dict[str, Any] = {"token": "", "createdAt": 0}
 
 
 def utc_now() -> str:
@@ -73,6 +80,299 @@ def safe_mkdir(path: Path) -> None:
         path.chmod(0o700)
     except OSError:
         pass
+
+
+def sha256_hex(value: str) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+
+def base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def read_der_length(value: bytes, offset: int) -> tuple[int, int]:
+    first = value[offset]
+    if first < 0x80:
+        return first, offset + 1
+    count = first & 0x7F
+    if count < 1 or count > 4:
+        raise ValueError("APNs 签名长度无效。")
+    end = offset + 1 + count
+    return int.from_bytes(value[offset + 1 : end], "big"), end
+
+
+def der_ecdsa_signature_to_raw(value: bytes, size: int = 32) -> bytes:
+    if not value or value[0] != 0x30:
+        raise ValueError("APNs 签名格式无效。")
+    _sequence_length, offset = read_der_length(value, 1)
+    integers: list[bytes] = []
+    for _index in range(2):
+        if offset >= len(value) or value[offset] != 0x02:
+            raise ValueError("APNs 签名格式无效。")
+        integer_length, integer_offset = read_der_length(value, offset + 1)
+        integer = value[integer_offset : integer_offset + integer_length].lstrip(b"\x00")
+        integers.append(integer.rjust(size, b"\x00")[-size:])
+        offset = integer_offset + integer_length
+    return integers[0] + integers[1]
+
+
+def apns_ready() -> bool:
+    return bool(APNS_KEY_ID and APNS_TEAM_ID and APNS_BUNDLE_ID and APNS_KEY_PATH.exists())
+
+
+def apns_provider_token() -> str:
+    now = int(time.time())
+    cached = str(APNS_JWT_CACHE.get("token") or "")
+    created_at = int(APNS_JWT_CACHE.get("createdAt") or 0)
+    if cached and now - created_at < 45 * 60:
+        return cached
+    if not apns_ready():
+        raise RuntimeError("APNs 服务尚未配置。")
+
+    header = base64url(json_dumps({"alg": "ES256", "kid": APNS_KEY_ID}))
+    payload = base64url(json_dumps({"iss": APNS_TEAM_ID, "iat": now}))
+    signing_input = f"{header}.{payload}".encode("ascii")
+    completed = subprocess.run(
+        ["openssl", "dgst", "-sha256", "-sign", str(APNS_KEY_PATH)],
+        input=signing_input,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=10,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.decode("utf-8", errors="replace").strip() or "APNs 签名失败。")
+    signature = base64url(der_ecdsa_signature_to_raw(completed.stdout))
+    token = f"{header}.{payload}.{signature}"
+    APNS_JWT_CACHE.update({"token": token, "createdAt": now})
+    return token
+
+
+def push_device_path(installation_id: str) -> Path:
+    return DATA_DIR / "push" / "devices" / f"{sha256_hex(installation_id)}.json"
+
+
+def push_ticket_path(ticket_id: str) -> Path:
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(ticket_id or ""))[:160]
+    return DATA_DIR / "push" / "tickets" / f"{safe_id}.json"
+
+
+def validate_installation_id(value: Any) -> str:
+    installation_id = str(value or "").strip()
+    if not re.fullmatch(r"[a-zA-Z0-9._:-]{16,160}", installation_id):
+        raise ValueError("设备标识无效。")
+    return installation_id
+
+
+def validate_apns_token(value: Any) -> str:
+    token = re.sub(r"[^a-fA-F0-9]", "", str(value or "")).lower()
+    if len(token) < 32 or len(token) > 512:
+        raise ValueError("APNs 设备令牌无效。")
+    return token
+
+
+def register_push_device(body: dict[str, Any]) -> dict[str, Any]:
+    installation_id = validate_installation_id(body.get("installationId"))
+    device_token = validate_apns_token(body.get("deviceToken"))
+    device_secret = secrets.token_urlsafe(36)
+    record = {
+        "version": 1,
+        "installationId": installation_id,
+        "deviceToken": device_token,
+        "deviceSecretHash": sha256_hex(device_secret),
+        "platform": "ios",
+        "deviceName": str(body.get("deviceName") or "iPhone / iPad").strip()[:160],
+        "bundleId": APNS_BUNDLE_ID,
+        "createdAt": utc_now(),
+        "updatedAt": utc_now(),
+        "lastPushAt": None,
+        "lastPushEnvironment": "",
+    }
+    with STATE_LOCK:
+        current = read_json(push_device_path(installation_id), None)
+        if isinstance(current, dict):
+            record["createdAt"] = current.get("createdAt") or record["createdAt"]
+            record["lastPushAt"] = current.get("lastPushAt")
+            record["lastPushEnvironment"] = current.get("lastPushEnvironment") or ""
+        atomic_write_json(push_device_path(installation_id), record)
+    return {
+        "ok": True,
+        "installationId": installation_id,
+        "deviceSecret": device_secret,
+        "pushReady": apns_ready(),
+    }
+
+
+def authenticate_push_device(headers: Any) -> dict[str, Any]:
+    auth = str(headers.get("Authorization") or "").strip()
+    if not auth.lower().startswith("device "):
+        raise PermissionError("缺少设备授权。")
+    credentials = auth[7:].strip()
+    installation_id, separator, device_secret = credentials.partition(":")
+    if not separator or not device_secret:
+        raise PermissionError("设备授权无效。")
+    installation_id = validate_installation_id(installation_id)
+    record = read_json(push_device_path(installation_id), None)
+    if not isinstance(record, dict) or not hmac.compare_digest(
+        str(record.get("deviceSecretHash") or ""),
+        sha256_hex(device_secret),
+    ):
+        raise PermissionError("设备授权已失效，请重新开启任务通知。")
+    return record
+
+
+def create_push_ticket(device: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(body.get("taskId") or "").strip()[:220]
+    conversation_id = str(body.get("conversationId") or "").strip()[:220]
+    if not task_id or not conversation_id:
+        raise ValueError("通知票据缺少任务或会话标识。")
+    ticket_id = f"push-{secrets.token_urlsafe(22)}"
+    notify_token = secrets.token_urlsafe(40)
+    now_epoch = int(time.time())
+    record = {
+        "version": 1,
+        "ticketId": ticket_id,
+        "notifyTokenHash": sha256_hex(notify_token),
+        "installationId": device["installationId"],
+        "taskId": task_id,
+        "conversationId": conversation_id,
+        "conversationName": str(body.get("conversationName") or "AI Workbench").strip()[:160],
+        "agentId": "claude" if body.get("agentId") == "claude" else "codex",
+        "createdAt": utc_now(),
+        "expiresAt": now_epoch + PUSH_TICKET_TTL_SECONDS,
+        "terminalStatus": "",
+        "notifiedAt": None,
+        "delivery": None,
+    }
+    with STATE_LOCK:
+        atomic_write_json(push_ticket_path(ticket_id), record)
+    return {
+        "ok": True,
+        "ticketId": ticket_id,
+        "notifyToken": notify_token,
+        "notifyPath": f"/v1/push/tickets/{ticket_id}/complete",
+        "expiresAt": record["expiresAt"],
+        "pushReady": apns_ready(),
+    }
+
+
+def authenticate_push_ticket(headers: Any, ticket_id: str) -> dict[str, Any]:
+    auth = str(headers.get("Authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        raise PermissionError("缺少通知票据授权。")
+    record = read_json(push_ticket_path(ticket_id), None)
+    if not isinstance(record, dict):
+        raise ValueError("通知票据不存在或已过期。")
+    if int(record.get("expiresAt") or 0) < int(time.time()):
+        raise ValueError("通知票据不存在或已过期。")
+    token = auth[7:].strip()
+    if not hmac.compare_digest(str(record.get("notifyTokenHash") or ""), sha256_hex(token)):
+        raise PermissionError("通知票据授权无效。")
+    return record
+
+
+def send_apns_notification(device: dict[str, Any], ticket: dict[str, Any], status: str) -> dict[str, Any]:
+    if not apns_ready():
+        return {"delivered": False, "reason": "apns_not_configured"}
+    status_text = {
+        "done": "任务已完成",
+        "error": "任务执行失败",
+        "cancelled": "任务已取消",
+    }[status]
+    agent_name = "Claude" if ticket.get("agentId") == "claude" else "Codex"
+    conversation_name = str(ticket.get("conversationName") or "AI Workbench").strip()
+    payload = {
+        "aps": {
+            "alert": {
+                "title": conversation_name,
+                "body": f"{agent_name} {status_text}",
+            },
+            "sound": "default",
+            "thread-id": str(ticket.get("conversationId") or "")[:64],
+        },
+        "conversationId": ticket.get("conversationId"),
+        "taskId": ticket.get("taskId"),
+        "status": status,
+        "agentId": ticket.get("agentId"),
+    }
+    provider_token = apns_provider_token()
+    attempts = []
+    preferred = str(device.get("lastPushEnvironment") or "")
+    environments = [preferred] if preferred in {"production", "sandbox"} else []
+    environments += [item for item in ("production", "sandbox") if item not in environments]
+    for environment in environments:
+        hostname = "api.push.apple.com" if environment == "production" else "api.sandbox.push.apple.com"
+        command = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--http2",
+            "--max-time",
+            "15",
+            "--write-out",
+            "\n%{http_code}",
+            "--request",
+            "POST",
+            "--header",
+            f"authorization: bearer {provider_token}",
+            "--header",
+            f"apns-topic: {APNS_BUNDLE_ID}",
+            "--header",
+            "apns-push-type: alert",
+            "--header",
+            "apns-priority: 10",
+            "--header",
+            f"apns-collapse-id: {ticket.get('taskId')}",
+            "--data-binary",
+            "@-",
+            f"https://{hostname}/3/device/{device['deviceToken']}",
+        ]
+        completed = subprocess.run(
+            command,
+            input=json_dumps(payload),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=20,
+        )
+        output = completed.stdout.decode("utf-8", errors="replace")
+        response_body, _separator, status_code = output.rpartition("\n")
+        attempts.append({
+            "environment": environment,
+            "status": status_code,
+            "body": response_body[:500],
+            "error": completed.stderr.decode("utf-8", errors="replace")[:500],
+        })
+        if completed.returncode == 0 and status_code == "200":
+            next_device = {**device, "lastPushAt": utc_now(), "lastPushEnvironment": environment}
+            atomic_write_json(push_device_path(str(device["installationId"])), next_device)
+            return {"delivered": True, "environment": environment}
+        if status_code not in {"400", "403"} or "BadDeviceToken" not in response_body:
+            break
+    return {"delivered": False, "reason": "apns_rejected", "attempts": attempts}
+
+
+def complete_push_ticket(headers: Any, ticket_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    ticket = authenticate_push_ticket(headers, ticket_id)
+    status = str(body.get("status") or "").strip().lower()
+    if status not in {"done", "error", "cancelled"}:
+        raise ValueError("通知状态无效。")
+    if ticket.get("notifiedAt") and ticket.get("terminalStatus") == status:
+        return {"ok": True, "delivered": bool((ticket.get("delivery") or {}).get("delivered")), "duplicate": True}
+    device = read_json(push_device_path(str(ticket.get("installationId") or "")), None)
+    if not isinstance(device, dict):
+        raise ValueError("接收通知的设备已不存在。")
+    delivery = send_apns_notification(device, ticket, status)
+    next_ticket = {
+        **ticket,
+        "terminalStatus": status,
+        "notifiedAt": utc_now() if delivery.get("delivered") else None,
+        "lastAttemptAt": utc_now(),
+        "delivery": delivery,
+    }
+    with STATE_LOCK:
+        atomic_write_json(push_ticket_path(ticket_id), next_ticket)
+    return {"ok": True, **delivery}
 
 
 def atomic_write_json(path: Path, value: Any) -> None:
@@ -358,6 +658,10 @@ def public_status() -> dict[str, Any]:
         "version": SERVICE_VERSION,
         "time": utc_now(),
         "dataDir": str(DATA_DIR),
+        "push": {
+            "platforms": ["ios"],
+            "ready": apns_ready(),
+        },
     }
 
 
@@ -409,6 +713,21 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/auth/logout":
                 self.handle_logout()
+                return
+            if path == "/v1/push/devices/register":
+                self.send_json(register_push_device(body))
+                return
+            if path == "/v1/push/tickets":
+                device = authenticate_push_device(self.headers)
+                self.send_json(create_push_ticket(device, body))
+                return
+            push_ticket_match = re.fullmatch(r"/v1/push/tickets/([a-zA-Z0-9_-]+)/complete", path)
+            if push_ticket_match:
+                result = complete_push_ticket(self.headers, push_ticket_match.group(1), body)
+                self.send_json(
+                    result,
+                    status=HTTPStatus.OK if result.get("delivered") else HTTPStatus.SERVICE_UNAVAILABLE,
+                )
                 return
             if path == "/v1/shares":
                 account = authenticate(self.headers)
@@ -591,6 +910,8 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
 def main() -> int:
     safe_mkdir(DATA_DIR)
     safe_mkdir(DATA_DIR / "accounts")
+    safe_mkdir(DATA_DIR / "push" / "devices")
+    safe_mkdir(DATA_DIR / "push" / "tickets")
 
     server = ThreadingHTTPServer((HOST, PORT), ConfigSyncHandler)
     server.timeout = 1

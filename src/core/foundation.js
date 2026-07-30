@@ -407,6 +407,7 @@ export const defaultProfile = {
   ttsModel: "cosyvoice-v3-flash",
   playResultAudio: false,
   resultAudioMode: "summary",
+  taskPushNotificationsEnabled: false,
   useWorkbenchAgent: true,
   executionPermissionMode: "standard",
   appearanceMode: "light",
@@ -1333,6 +1334,10 @@ export function normalizeProfile(profile) {
     playResultAudio:
       profile?.playResultAudio === undefined ? defaultProfile.playResultAudio : Boolean(profile.playResultAudio),
     resultAudioMode: normalizeResultAudioMode(profile?.resultAudioMode),
+    taskPushNotificationsEnabled:
+      profile?.taskPushNotificationsEnabled === undefined
+        ? defaultProfile.taskPushNotificationsEnabled
+        : Boolean(profile.taskPushNotificationsEnabled),
     useWorkbenchAgent:
       profile?.useWorkbenchAgent === undefined
         ? defaultUseWorkbenchAgent
@@ -1406,6 +1411,7 @@ export function globalSettingsFromProfile(profile) {
     ttsModel: normalized.ttsModel,
     playResultAudio: normalized.playResultAudio,
     resultAudioMode: normalized.resultAudioMode,
+    taskPushNotificationsEnabled: normalized.taskPushNotificationsEnabled,
     executionPermissionMode: normalized.executionPermissionMode,
     appearanceMode: normalized.appearanceMode,
     messageFontFamily: normalized.messageFontFamily,
