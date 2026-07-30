@@ -32,6 +32,7 @@ export function NativeWorkbenchShell({
   activeBusy,
   activeTaskRunning,
   activeRunningMessage,
+  sendConnecting,
   hasPendingAction,
   isProfileReady,
   mainAIReady,
@@ -449,6 +450,7 @@ export function NativeWorkbenchShell({
               wakeError={wakeError}
               wakePhrases={wakePhrases}
               runningTask={activeTaskRunning ? activeRunningMessage || { role: "assistant", taskState: "running" } : null}
+              sendConnecting={sendConnecting}
               setComposer={setComposer}
               onOpenSettings={onAddServer}
               onAttachFiles={onAttachFiles || onAttachImages}

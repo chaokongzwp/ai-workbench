@@ -178,6 +178,17 @@
   background: var(--iphone-soft) !important;
 }
 
+.iphone-shell .iphone-send-button:not(.stop).is-sending:disabled {
+  color: #292b30 !important;
+  background: #eceef1 !important;
+  opacity: 1;
+}
+
+.iphone-shell[data-theme="dark"] .iphone-send-button:not(.stop).is-sending:disabled {
+  color: #24262b !important;
+  background: #eef0f3 !important;
+}
+
 .iphone-shell .iphone-send-button.stop {
   align-self: center;
   width: 32px !important;

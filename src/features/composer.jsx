@@ -356,6 +356,7 @@ export function Composer({
   wakeError,
   wakePhrases,
   runningTask,
+  sendConnecting = false,
   setComposer,
   onOpenSettings,
   onAttachFiles,
@@ -389,7 +390,7 @@ export function Composer({
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !ready;
-  const sendDisabled = inputLock.sendBlocked || !hasPayload;
+  const sendDisabled = sendConnecting || inputLock.sendBlocked || !hasPayload;
   const showVoiceControls = voiceInputEnabled || showVoiceControlsWhenDisabled;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const downloadDisabled = !ready;
@@ -638,14 +639,20 @@ export function Composer({
                 ) : null}
                 <button
                   type="button"
-                  className={`send-button composer-icon-button send-icon-button ${stopMode ? "stop-icon-button" : ""}`}
+                  className={`send-button composer-icon-button send-icon-button ${
+                    stopMode ? "stop-icon-button" : sendConnecting ? "is-sending" : ""
+                  }`}
                   onClick={() => {
                     if (stopMode) onCancelRunningTask?.();
                     else onSend();
                   }}
                   disabled={stopMode ? stopDisabled : sendDisabled}
-                  aria-label={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
-                  title={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
+                  aria-label={
+                    stopMode ? "停止当前任务" : sendConnecting ? "正在发送" : inputLock.sendBlocked ? inputLock.text : "发送"
+                  }
+                  title={
+                    stopMode ? "停止当前任务" : sendConnecting ? "正在发送" : inputLock.sendBlocked ? inputLock.text : "发送"
+                  }
                 >
                   {stopMode ? (
                     macIcons ? (
@@ -653,6 +660,8 @@ export function Composer({
                     ) : (
                       <Stop size={18} weight="fill" aria-hidden="true" />
                     )
+                  ) : sendConnecting ? (
+                    <span className="send-progress-spinner" aria-hidden="true" />
                   ) : macIcons ? (
                     <LucideArrowUp size={toolIconSize} strokeWidth={2.1} aria-hidden="true" />
                   ) : (

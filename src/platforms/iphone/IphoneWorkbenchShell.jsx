@@ -163,6 +163,7 @@ function IphoneComposer({
   wakeError,
   wakePhrases,
   runningTask,
+  sendConnecting = false,
   setComposer,
   onOpenSettings,
   onOpenVoiceSettings,
@@ -191,7 +192,7 @@ function IphoneComposer({
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !profileReady;
-  const sendDisabled = inputLock.sendBlocked || !hasPayload;
+  const sendDisabled = sendConnecting || inputLock.sendBlocked || !hasPayload;
   const voiceActive = voiceState === "listening" || voiceState === "stopping";
   const wakeActive =
     wakeState === "listening" ||
@@ -400,16 +401,26 @@ function IphoneComposer({
             <div className="iphone-composer-actions iphone-composer-primary-action">
               <button
                 type="button"
-                className={`iphone-send-button ${stopMode ? "stop" : ""}`}
+                className={`iphone-send-button ${stopMode ? "stop" : sendConnecting ? "is-sending" : ""}`}
                 onClick={() => {
                   if (stopMode) onCancelRunningTask?.();
                   else onSend?.();
                 }}
                 disabled={stopMode ? stopDisabled : sendDisabled}
-                aria-label={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
-                title={stopMode ? "停止当前任务" : inputLock.sendBlocked ? inputLock.text : "发送"}
+                aria-label={
+                  stopMode ? "停止当前任务" : sendConnecting ? "正在发送" : inputLock.sendBlocked ? inputLock.text : "发送"
+                }
+                title={
+                  stopMode ? "停止当前任务" : sendConnecting ? "正在发送" : inputLock.sendBlocked ? inputLock.text : "发送"
+                }
               >
-                {stopMode ? <Stop size={17} weight="fill" aria-hidden="true" /> : <ArrowUp size={17} weight="bold" aria-hidden="true" />}
+                {stopMode ? (
+                  <Stop size={17} weight="fill" aria-hidden="true" />
+                ) : sendConnecting ? (
+                  <span className="send-progress-spinner" aria-hidden="true" />
+                ) : (
+                  <ArrowUp size={17} weight="bold" aria-hidden="true" />
+                )}
               </button>
             </div>
           ) : null}
@@ -450,6 +461,7 @@ export function IphoneWorkbenchShell({
   activeBusy,
   activeTaskRunning,
   activeRunningMessage,
+  sendConnecting,
   hasPendingAction,
   isProfileReady,
   mainAIReady,
@@ -841,6 +853,7 @@ export function IphoneWorkbenchShell({
             wakeError={wakeError}
             wakePhrases={wakePhrases}
             runningTask={activeTaskRunning ? activeRunningMessage || { role: "assistant", taskState: "running" } : null}
+            sendConnecting={sendConnecting}
             setComposer={setComposer}
 	            onOpenSettings={onAddServer}
 	            onOpenVoiceSettings={onOpenVoiceSettings}

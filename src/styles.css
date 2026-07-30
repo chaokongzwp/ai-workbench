@@ -6476,6 +6476,29 @@ body {
   background: rgba(118, 118, 128, 0.12);
 }
 
+.send-progress-spinner {
+  display: block;
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  border: 1.8px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: send-progress-spin 720ms linear infinite;
+}
+
+.composer .input-actions .send-button.composer-icon-button.is-sending:disabled,
+.conversation .input-actions .send-button.composer-icon-button.is-sending:disabled,
+.iphone-send-button.is-sending:disabled {
+  opacity: 1;
+}
+
+@keyframes send-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .composer .input-actions .send-button.composer-icon-button::before,
 .conversation .input-actions .send-button.composer-icon-button::before,
 .composer .input-actions .composer-add-button::before,

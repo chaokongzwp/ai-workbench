@@ -623,6 +623,14 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
   .native-composer-dock
   .composer.compact
   .input-actions
+  .send-button.composer-icon-button.is-sending:disabled {
+  color: #303238 !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  .native-composer-dock
+  .composer.compact
+  .input-actions
   .send-button.stop-icon-button {
   color: #ffffff !important;
   background: #ff453a !important;

@@ -484,6 +484,7 @@ export function useWorkbenchController() {
   const [wakeState, setWakeState] = useState("idle");
   const [wakeError, setWakeError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sendConnectingServerId, setSendConnectingServerId] = useState("");
   const [taskNotice, setTaskNotice] = useState(null);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const [systemDarkMode, setSystemDarkMode] = useState(false);
@@ -5906,7 +5907,12 @@ export function useWorkbenchController() {
       return;
     }
     if (!connectionIsLive(sourceServer.connection)) {
-      await connectExistingSession(serverId);
+      setSendConnectingServerId(serverId);
+      try {
+        await connectExistingSession(serverId);
+      } finally {
+        setSendConnectingServerId((current) => (current === serverId ? "" : current));
+      }
       sourceServer = serverById(serverId) || sourceServer;
       currentProfile = withKnownPassword(sourceServer.profile);
       if (!connectionIsLive(sourceServer.connection)) {
@@ -6916,6 +6922,7 @@ export function useWorkbenchController() {
     activeBusy,
     activeTaskRunning,
     activeRunningMessage,
+    sendConnecting: sendConnectingServerId === activeServerId,
     hasPendingAction,
     isProfileReady,
     mainAIReady: mainAIRouterReady(profile),

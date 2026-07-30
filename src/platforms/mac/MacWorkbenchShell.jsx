@@ -35,6 +35,7 @@ export function MacWorkbenchShell({
   activeBusy,
   activeTaskRunning,
   activeRunningMessage,
+  sendConnecting,
   hasPendingAction,
   isProfileReady,
   mainAIReady,
@@ -330,6 +331,7 @@ export function MacWorkbenchShell({
               wakeError={wakeError}
               wakePhrases={wakePhrases}
               runningTask={activeTaskRunning ? activeRunningMessage || { role: "assistant", taskState: "running" } : null}
+              sendConnecting={sendConnecting}
               setComposer={setComposer}
               onOpenSettings={onAddServer}
               onAttachFiles={onAttachFiles || onAttachImages}

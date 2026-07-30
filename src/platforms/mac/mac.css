@@ -776,6 +776,15 @@
   opacity: 0.58;
 }
 
+.mac-shell .composer.compact .input-actions .send-button.composer-icon-button.is-sending:disabled,
+.app-shell[data-theme="dark"].mac-shell
+  .composer.compact
+  .input-actions
+  .send-button.composer-icon-button.is-sending:disabled {
+  color: var(--mac-text) !important;
+  opacity: 1;
+}
+
 .mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button,
 .app-shell[data-theme="dark"].mac-shell .composer.compact .input-actions .send-button.composer-icon-button.stop-icon-button {
   color: #ffffff !important;
