@@ -523,7 +523,7 @@ export function useWorkbenchController() {
   const [remoteDirectoryOpen, setRemoteDirectoryOpen] = useState(false);
   const [remoteDirectory, setRemoteDirectory] = useState(null);
   const [activeAgentId, setActiveAgentId] = useState("codex");
-  const [composer, setComposer] = useState("");
+  const [composer, setComposerState] = useState("");
   const [imageAttachments, setImageAttachments] = useState([]);
   const [voiceState, setVoiceState] = useState("idle");
   const [voiceError, setVoiceError] = useState("");
@@ -565,6 +565,8 @@ export function useWorkbenchController() {
   const activeServerIdRef = useRef(activeServerId);
   const primaryActiveServerIdRef = useRef("");
   const composerRef = useRef(composer);
+  const composerDraftsRef = useRef(new Map());
+  const composerServerIdRef = useRef("");
   const imageAttachmentsRef = useRef(imageAttachments);
   const voiceBaseTextRef = useRef("");
   const voiceRecognitionSessionIdRef = useRef("");
@@ -583,6 +585,17 @@ export function useWorkbenchController() {
   const profileReadyRef = useRef(isProfileReady);
   const workspaceLoadedRef = useRef(workspaceLoaded);
   const workspaceSaveTimerRef = useRef(null);
+
+  // Composer drafts deliberately stay in memory only: they belong to one open session, not its saved configuration.
+  function setComposer(nextValue) {
+    const currentValue = composerRef.current;
+    const nextText = typeof nextValue === "function" ? nextValue(currentValue) : nextValue;
+    const normalized = String(nextText ?? "");
+    const serverId = activeServerIdRef.current;
+    if (serverId) composerDraftsRef.current.set(serverId, normalized);
+    composerRef.current = normalized;
+    setComposerState(normalized);
+  }
   const applyingExternalProfileRef = useRef(false);
   const noticeQueueRef = useRef([]);
   const noticeSpeakingRef = useRef(false);
@@ -784,6 +797,18 @@ export function useWorkbenchController() {
 
   useEffect(() => {
     activeServerIdRef.current = activeServerId;
+  }, [activeServerId]);
+
+  useLayoutEffect(() => {
+    const previousServerId = composerServerIdRef.current;
+    if (previousServerId && previousServerId !== activeServerId) {
+      composerDraftsRef.current.set(previousServerId, composerRef.current);
+    }
+
+    composerServerIdRef.current = activeServerId;
+    const nextDraft = activeServerId ? composerDraftsRef.current.get(activeServerId) || "" : "";
+    composerRef.current = nextDraft;
+    setComposerState(nextDraft);
   }, [activeServerId]);
 
   useEffect(() => {
