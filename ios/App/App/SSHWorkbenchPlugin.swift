@@ -18,6 +18,10 @@ private struct SSHConnectionConfig {
     let stdin: String
     let uploadScript: Bool
 
+    var connectionFingerprint: String {
+        [host, String(port), username, password].joined(separator: "\u{0}")
+    }
+
     init(call: CAPPluginCall) throws {
         guard let host = call.getString("host")?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty else {
             throw SSHWorkbenchError.missingField("host")
@@ -42,32 +46,124 @@ private struct SSHConnectionConfig {
 }
 
 private actor NativeCommandSessionStore {
-    private var sessions: [String: SSHClient] = [:]
-
-    func client(for sessionId: String) -> SSHClient? {
-        sessions[sessionId]
+    private struct PooledConnection {
+        let client: SSHClient
+        var sessionIds: Set<String>
+        var idleCloseTask: Task<Void, Never>?
     }
 
-    func replace(_ client: SSHClient, for sessionId: String) async {
-        if let previous = sessions.removeValue(forKey: sessionId) {
-            try? await previous.close()
+    private var connections: [String: PooledConnection] = [:]
+    private var sessionFingerprints: [String: String] = [:]
+
+    func client(for sessionId: String, fingerprint: String) async -> SSHClient? {
+        var staleClient: SSHClient?
+        if let previousFingerprint = sessionFingerprints[sessionId], previousFingerprint != fingerprint {
+            staleClient = detachMapping(sessionId, closeWhenUnused: true)
         }
-        sessions[sessionId] = client
+        guard var connection = connections[fingerprint] else {
+            if let staleClient {
+                try? await staleClient.close()
+            }
+            return nil
+        }
+        connection.idleCloseTask?.cancel()
+        connection.idleCloseTask = nil
+        connection.sessionIds.insert(sessionId)
+        connections[fingerprint] = connection
+        sessionFingerprints[sessionId] = fingerprint
+        if let staleClient {
+            try? await staleClient.close()
+        }
+        return connection.client
     }
 
-    func remove(_ sessionId: String) async {
-        guard let client = sessions.removeValue(forKey: sessionId) else {
-            return
+    func store(_ client: SSHClient, fingerprint: String, sessionId: String) async -> SSHClient {
+        if let existing = await self.client(for: sessionId, fingerprint: fingerprint) {
+            try? await client.close()
+            return existing
         }
-        try? await client.close()
+        connections[fingerprint] = PooledConnection(
+            client: client,
+            sessionIds: [sessionId],
+            idleCloseTask: nil
+        )
+        sessionFingerprints[sessionId] = fingerprint
+        return client
+    }
+
+    func detach(_ sessionId: String, preserveTransport: Bool) async -> Bool {
+        guard let fingerprint = sessionFingerprints[sessionId] else {
+            return false
+        }
+        let clientToClose = detachMapping(sessionId, closeWhenUnused: !preserveTransport)
+        if let clientToClose {
+            try? await clientToClose.close()
+            return true
+        }
+        if preserveTransport, var connection = connections[fingerprint], connection.sessionIds.isEmpty {
+            connection.idleCloseTask?.cancel()
+            connection.idleCloseTask = Task {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self.closeIfIdle(fingerprint)
+            }
+            connections[fingerprint] = connection
+        }
+        return true
+    }
+
+    func invalidate(_ sessionId: String) async -> [String] {
+        guard
+            let fingerprint = sessionFingerprints[sessionId],
+            let connection = connections.removeValue(forKey: fingerprint)
+        else {
+            sessionFingerprints.removeValue(forKey: sessionId)
+            return [sessionId]
+        }
+        connection.idleCloseTask?.cancel()
+        for attachedSessionId in connection.sessionIds {
+            sessionFingerprints.removeValue(forKey: attachedSessionId)
+        }
+        try? await connection.client.close()
+        return Array(connection.sessionIds)
     }
 
     func closeAll() async {
-        let clients = Array(sessions.values)
-        sessions.removeAll()
-        for client in clients {
-            try? await client.close()
+        let pooledConnections = Array(connections.values)
+        connections.removeAll()
+        sessionFingerprints.removeAll()
+        for connection in pooledConnections {
+            connection.idleCloseTask?.cancel()
+            try? await connection.client.close()
         }
+    }
+
+    private func detachMapping(_ sessionId: String, closeWhenUnused: Bool) -> SSHClient? {
+        guard
+            let fingerprint = sessionFingerprints.removeValue(forKey: sessionId),
+            var connection = connections[fingerprint]
+        else {
+            return nil
+        }
+        connection.sessionIds.remove(sessionId)
+        if connection.sessionIds.isEmpty, closeWhenUnused {
+            connection.idleCloseTask?.cancel()
+            connections.removeValue(forKey: fingerprint)
+            return connection.client
+        }
+        connections[fingerprint] = connection
+        return nil
+    }
+
+    private func closeIfIdle(_ fingerprint: String) async {
+        guard
+            let connection = connections[fingerprint],
+            connection.sessionIds.isEmpty
+        else {
+            return
+        }
+        connections.removeValue(forKey: fingerprint)
+        try? await connection.client.close()
     }
 }
 
@@ -1190,8 +1286,17 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             notifyConnectionState(sessionId: config.sessionId, state: "connecting", detail: "")
             Task {
                 do {
-                    let client = try await self.createSSHClient(config: config)
-                    await self.commandSessions.replace(client, for: config.sessionId)
+                    if await self.commandSessions.client(
+                        for: config.sessionId,
+                        fingerprint: config.connectionFingerprint
+                    ) == nil {
+                        let client = try await self.createSSHClient(config: config)
+                        _ = await self.commandSessions.store(
+                            client,
+                            fingerprint: config.connectionFingerprint,
+                            sessionId: config.sessionId
+                        )
+                    }
                     self.notifyConnectionState(sessionId: config.sessionId, state: "connected", detail: "")
                     call.resolve(["ok": true, "sessionId": config.sessionId, "state": "connected"])
                 } catch {
@@ -1214,8 +1319,9 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("Missing required field: sessionId", "SSH_CONFIG_INVALID")
             return
         }
+        let preserveTransport = call.getBool("preserveTransport", false)
         Task {
-            await self.commandSessions.remove(sessionId)
+            _ = await self.commandSessions.detach(sessionId, preserveTransport: preserveTransport)
             self.notifyConnectionState(sessionId: sessionId, state: "closed", detail: "已断开")
             call.resolve(["ok": true, "sessionId": sessionId])
         }
@@ -1885,16 +1991,27 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func execute(command: String, config: SSHConnectionConfig, maxResponseSize: Int) async throws -> String {
         let persistent = !config.sessionId.isEmpty
-        let existingClient = persistent ? await commandSessions.client(for: config.sessionId) : nil
+        let existingClient = persistent
+            ? await commandSessions.client(
+                for: config.sessionId,
+                fingerprint: config.connectionFingerprint
+            )
+            : nil
         let client: SSHClient
         if let existingClient {
             client = existingClient
         } else {
-            client = try await createSSHClient(config: config)
-        }
-        if persistent, existingClient == nil {
-            await commandSessions.replace(client, for: config.sessionId)
-            notifyConnectionState(sessionId: config.sessionId, state: "connected", detail: "")
+            let createdClient = try await createSSHClient(config: config)
+            if persistent {
+                client = await commandSessions.store(
+                    createdClient,
+                    fingerprint: config.connectionFingerprint,
+                    sessionId: config.sessionId
+                )
+                notifyConnectionState(sessionId: config.sessionId, state: "connected", detail: "")
+            } else {
+                client = createdClient
+            }
         }
         do {
             if config.uploadScript && !config.stdin.isEmpty {
@@ -1922,12 +2039,14 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             return text
         } catch {
             if persistent {
-                await commandSessions.remove(config.sessionId)
-                notifyConnectionState(
-                    sessionId: config.sessionId,
-                    state: "error",
-                    detail: friendlySSHErrorMessage(error, config: config)
-                )
+                let affectedSessionIds = await commandSessions.invalidate(config.sessionId)
+                for affectedSessionId in affectedSessionIds {
+                    notifyConnectionState(
+                        sessionId: affectedSessionId,
+                        state: "error",
+                        detail: friendlySSHErrorMessage(error, config: config)
+                    )
+                }
             } else {
                 try? await client.close()
             }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   connectionForAppLaunch,
+  profileConnectionKey,
   serializeWorkspaceMigrationStore,
 } from "../src/core/foundation.js";
 
@@ -60,5 +61,15 @@ assert.equal(recovering.task.remoteTaskId, "task-1");
 
 const migration = serializeWorkspaceMigrationStore([recovering], recovering.id);
 assert.equal("connection" in migration.servers[0], false);
+
+const machineProfile = recovering.profile;
+assert.equal(
+  profileConnectionKey({ ...machineProfile, workdir: "/another-project", agentId: "codex" }),
+  profileConnectionKey({ ...machineProfile, workdir: "/workspace", agentId: "claude" }),
+);
+assert.notEqual(
+  profileConnectionKey({ ...machineProfile, username: "another-user" }),
+  profileConnectionKey(machineProfile),
+);
 
 console.log("session connection lifecycle regression: ok");

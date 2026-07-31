@@ -2842,7 +2842,7 @@ export function useWorkbenchController() {
     await saveWorkspace(nextServers, serverId);
     if (previousServerId && previousServerId !== serverId) {
       manualDisconnectSessionIdsRef.current.add(previousServerId);
-      SSHWorkbench.disconnectSession({ sessionId: previousServerId })
+      SSHWorkbench.disconnectSession({ sessionId: previousServerId, preserveTransport: true })
         .catch(() => {})
         .finally(() => manualDisconnectSessionIdsRef.current.delete(previousServerId));
     }

@@ -25,6 +25,8 @@ let activeSpeechOutputRun;
 let profileSaveChain = Promise.resolve();
 const embeddedTerminals = new Map();
 const sshCommandSessions = new Map();
+const sshCommandConnections = new Map();
+const sshConnectionIdleTtlMs = 30_000;
 
 function isBrokenPipeError(error) {
   return error?.code === "EPIPE" || String(error?.message || error || "").includes("EPIPE");
@@ -2252,20 +2254,67 @@ function sshSessionFingerprint(config) {
     .digest("hex");
 }
 
-function removeSshCommandSession(sessionId, record, state = "closed", detail = "") {
-  if (!record || sshCommandSessions.get(sessionId) !== record) return;
-  sshCommandSessions.delete(sessionId);
-  broadcastSshConnectionState({ sessionId, state, detail });
+function broadcastSshRecordState(record, state, detail = "") {
+  for (const sessionId of record?.sessionIds || []) {
+    broadcastSshConnectionState({ sessionId, state, detail });
+  }
 }
 
-function closeSshCommandSession(sessionId, { emit = true, detail = "已断开" } = {}) {
-  const record = sshCommandSessions.get(String(sessionId || ""));
-  if (!record) return false;
+function closeSshConnectionRecord(record, { emit = true, state = "closed", detail = "已断开" } = {}) {
+  if (!record || record.closed) return false;
+  record.closed = true;
   record.intentional = true;
-  sshCommandSessions.delete(record.sessionId);
-  record.client.end();
-  if (emit) broadcastSshConnectionState({ sessionId: record.sessionId, state: "closed", detail });
+  if (record.idleTimer) clearTimeout(record.idleTimer);
+  record.idleTimer = null;
+  if (sshCommandConnections.get(record.fingerprint) === record) {
+    sshCommandConnections.delete(record.fingerprint);
+  }
+  const sessionIds = [...record.sessionIds];
+  record.sessionIds.clear();
+  for (const sessionId of sessionIds) {
+    if (sshCommandSessions.get(sessionId) === record) sshCommandSessions.delete(sessionId);
+    if (emit) broadcastSshConnectionState({ sessionId, state, detail });
+  }
+  record.client?.end();
   return true;
+}
+
+function detachSshCommandSession(
+  sessionId,
+  { emit = true, detail = "已断开", preserveTransport = false } = {},
+) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const record = sshCommandSessions.get(normalizedSessionId);
+  if (!record) return false;
+  sshCommandSessions.delete(normalizedSessionId);
+  record.sessionIds.delete(normalizedSessionId);
+  if (emit) broadcastSshConnectionState({ sessionId: normalizedSessionId, state: "closed", detail });
+  if (record.sessionIds.size > 0) return true;
+  if (!preserveTransport) {
+    closeSshConnectionRecord(record, { emit: false });
+    return true;
+  }
+  if (record.idleTimer) clearTimeout(record.idleTimer);
+  record.idleTimer = setTimeout(() => {
+    if (record.sessionIds.size === 0) closeSshConnectionRecord(record, { emit: false });
+  }, sshConnectionIdleTtlMs);
+  return true;
+}
+
+function attachSshCommandSession(record, sessionId) {
+  const previous = sshCommandSessions.get(sessionId);
+  if (previous && previous !== record) {
+    detachSshCommandSession(sessionId, { emit: false });
+  }
+  if (record.idleTimer) clearTimeout(record.idleTimer);
+  record.idleTimer = null;
+  record.sessionIds.add(sessionId);
+  sshCommandSessions.set(sessionId, record);
+}
+
+function invalidateSshCommandSession(sessionId, state = "error", detail = "连接异常") {
+  const record = sshCommandSessions.get(String(sessionId || "").trim());
+  return closeSshConnectionRecord(record, { emit: true, state, detail });
 }
 
 function createConnectedSshClient(config) {
@@ -2308,45 +2357,77 @@ function createConnectedSshClient(config) {
 async function ensureSshCommandSession(payload) {
   const config = normalizeSshSessionRequest(payload);
   const fingerprint = sshSessionFingerprint(config);
-  const existing = sshCommandSessions.get(config.sessionId);
-  if (existing?.fingerprint === fingerprint) {
-    if (existing.state === "connected") return existing.client;
-    if (existing.connectPromise) return existing.connectPromise;
+  const mappedRecord = sshCommandSessions.get(config.sessionId);
+  if (mappedRecord?.fingerprint === fingerprint) {
+    if (mappedRecord.state === "connected") return mappedRecord.client;
+    if (mappedRecord.connectPromise) return mappedRecord.connectPromise;
   }
-  if (existing) closeSshCommandSession(config.sessionId, { emit: false });
+  if (mappedRecord) {
+    detachSshCommandSession(config.sessionId, { emit: false });
+  }
+
+  const pooledRecord = sshCommandConnections.get(fingerprint);
+  if (pooledRecord && !pooledRecord.closed) {
+    attachSshCommandSession(pooledRecord, config.sessionId);
+    if (pooledRecord.state === "connected") {
+      broadcastSshConnectionState({ sessionId: config.sessionId, state: "connected", detail: "" });
+      return pooledRecord.client;
+    }
+    if (pooledRecord.connectPromise) {
+      broadcastSshConnectionState({ sessionId: config.sessionId, state: "connecting", detail: "" });
+      return pooledRecord.connectPromise;
+    }
+  }
 
   const record = {
-    sessionId: config.sessionId,
     fingerprint,
     client: null,
     state: "connecting",
     intentional: false,
+    closed: false,
+    idleTimer: null,
+    sessionIds: new Set(),
     connectPromise: null,
   };
+  sshCommandConnections.set(fingerprint, record);
+  attachSshCommandSession(record, config.sessionId);
   broadcastSshConnectionState({ sessionId: config.sessionId, state: "connecting", detail: "" });
   const connectPromise = createConnectedSshClient(config)
     .then((client) => {
+      if (record.closed) {
+        client.end();
+        throw new Error("SSH connection cancelled");
+      }
       record.client = client;
       record.state = "connected";
       record.connectPromise = null;
       client.on("error", (error) => {
         if (record.intentional) return;
-        removeSshCommandSession(config.sessionId, record, "error", String(error?.message || error || "连接异常"));
+        closeSshConnectionRecord(record, {
+          emit: true,
+          state: "error",
+          detail: String(error?.message || error || "连接异常"),
+        });
       });
       client.on("close", () => {
         if (record.intentional) return;
-        removeSshCommandSession(config.sessionId, record, "closed", "连接断开");
+        closeSshConnectionRecord(record, { emit: true, state: "closed", detail: "连接断开" });
       });
-      broadcastSshConnectionState({ sessionId: config.sessionId, state: "connected", detail: "" });
+      broadcastSshRecordState(record, "connected");
       return client;
     })
     .catch((error) => {
       record.connectPromise = null;
-      removeSshCommandSession(config.sessionId, record, "error", String(error?.message || error || "连接异常"));
+      if (!record.intentional) {
+        closeSshConnectionRecord(record, {
+          emit: true,
+          state: "error",
+          detail: String(error?.message || error || "连接异常"),
+        });
+      }
       throw error;
     });
   record.connectPromise = connectPromise;
-  sshCommandSessions.set(config.sessionId, record);
   return connectPromise;
 }
 
@@ -2459,7 +2540,9 @@ async function runSshCommand(payload) {
       level: error?.level,
       message: error?.message,
     });
-    if (persistent) closeSshCommandSession(config.sessionId, { emit: true, detail: "连接断开" });
+    if (persistent) {
+      invalidateSshCommandSession(config.sessionId, "error", String(error?.message || error || "连接断开"));
+    }
     throw error;
   } finally {
     if (!persistent) client?.end();
@@ -2652,7 +2735,9 @@ ipcMain.handle("aiwb:session-connect", async (_event, payload) => {
 ipcMain.handle("aiwb:session-disconnect", async (_event, payload = {}) => {
   const sessionId = String(payload.sessionId || "").trim();
   if (!sessionId) throw new Error("Missing required field: sessionId");
-  const disconnected = closeSshCommandSession(sessionId);
+  const disconnected = detachSshCommandSession(sessionId, {
+    preserveTransport: payload.preserveTransport === true,
+  });
   return { ok: true, sessionId, alreadyDisconnected: !disconnected };
 });
 
@@ -2871,8 +2956,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   for (const record of [...embeddedTerminals.values()]) closeEmbeddedTerminalRecord(record);
-  for (const sessionId of [...sshCommandSessions.keys()]) {
-    closeSshCommandSession(sessionId, { emit: false });
+  for (const record of [...sshCommandConnections.values()]) {
+    closeSshConnectionRecord(record, { emit: false });
   }
   appendPersistentLogSync("info", "app.before_quit", {
     windowCount: BrowserWindow.getAllWindows().length,

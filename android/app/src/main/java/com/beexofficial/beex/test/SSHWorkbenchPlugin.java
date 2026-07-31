@@ -40,15 +40,20 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -59,7 +64,10 @@ public class SSHWorkbenchPlugin extends Plugin {
     private static final String PROFILE_KEY = "profile";
     private static final int MAX_RESPONSE_LIMIT = 83_886_080;
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    private final ConcurrentHashMap<String, Session> commandSessions = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService connectionScheduler = Executors.newSingleThreadScheduledExecutor();
+    private final Object commandConnectionLock = new Object();
+    private final ConcurrentHashMap<String, String> commandSessionFingerprints = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PooledCommandConnection> commandConnections = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, TerminalSession> terminalSessions = new ConcurrentHashMap<>();
 
     @Override
@@ -67,11 +75,13 @@ public class SSHWorkbenchPlugin extends Plugin {
         for (TerminalSession terminal : terminalSessions.values()) {
             terminal.close();
         }
-        for (Session session : commandSessions.values()) {
-            if (session != null && session.isConnected()) session.disconnect();
+        for (PooledCommandConnection connection : commandConnections.values()) {
+            connection.close();
         }
-        commandSessions.clear();
+        commandConnections.clear();
+        commandSessionFingerprints.clear();
         terminalSessions.clear();
+        connectionScheduler.shutdownNow();
         executor.shutdownNow();
         super.handleOnDestroy();
     }
@@ -109,8 +119,8 @@ public class SSHWorkbenchPlugin extends Plugin {
             call.reject("Missing required field: sessionId", "SSH_CONFIG_INVALID");
             return;
         }
-        Session session = commandSessions.remove(sessionId);
-        if (session != null && session.isConnected()) session.disconnect();
+        boolean preserveTransport = Boolean.TRUE.equals(call.getBoolean("preserveTransport", false));
+        detachCommandSession(sessionId, preserveTransport);
         emitConnectionState(sessionId, "closed", "已断开");
         JSObject result = new JSObject();
         result.put("ok", true);
@@ -567,9 +577,9 @@ public class SSHWorkbenchPlugin extends Plugin {
             return runExec(session, config.command, config.stdin, config.stdin.isEmpty(), config.commandTimeoutSeconds, config.maxResponseSize);
         } catch (Exception error) {
             if (persistent) {
-                Session removed = commandSessions.remove(config.sessionId);
-                if (removed != null && removed.isConnected()) removed.disconnect();
-                emitConnectionState(config.sessionId, "error", friendlySSHError(error, config));
+                for (String affectedSessionId : invalidateCommandConnection(config.sessionId)) {
+                    emitConnectionState(affectedSessionId, "error", friendlySSHError(error, config));
+                }
             }
             throw error;
         } finally {
@@ -592,13 +602,97 @@ public class SSHWorkbenchPlugin extends Plugin {
     }
 
     private Session ensureCommandSession(SSHConfig config) throws Exception {
-        Session existing = commandSessions.get(config.sessionId);
-        if (existing != null && existing.isConnected()) return existing;
-        if (existing != null) commandSessions.remove(config.sessionId, existing);
+        String fingerprint = config.connectionFingerprint();
+        synchronized (commandConnectionLock) {
+            String previousFingerprint = commandSessionFingerprints.get(config.sessionId);
+            if (fingerprint.equals(previousFingerprint)) {
+                PooledCommandConnection existing = commandConnections.get(fingerprint);
+                if (existing != null && existing.session.isConnected()) {
+                    existing.attach(config.sessionId);
+                    return existing.session;
+                }
+            }
+            if (previousFingerprint != null) detachCommandSessionLocked(config.sessionId, false);
+            PooledCommandConnection pooled = commandConnections.get(fingerprint);
+            if (pooled != null && pooled.session.isConnected()) {
+                pooled.attach(config.sessionId);
+                commandSessionFingerprints.put(config.sessionId, fingerprint);
+                return pooled.session;
+            }
+            if (pooled != null) {
+                commandConnections.remove(fingerprint, pooled);
+                pooled.close();
+            }
+        }
+
         Session connected = createCommandSession(config);
-        Session previous = commandSessions.put(config.sessionId, connected);
-        if (previous != null && previous != connected && previous.isConnected()) previous.disconnect();
-        return connected;
+        synchronized (commandConnectionLock) {
+            PooledCommandConnection pooled = commandConnections.get(fingerprint);
+            if (pooled != null && pooled.session.isConnected()) {
+                connected.disconnect();
+                pooled.attach(config.sessionId);
+                commandSessionFingerprints.put(config.sessionId, fingerprint);
+                return pooled.session;
+            }
+            PooledCommandConnection created = new PooledCommandConnection(connected);
+            created.attach(config.sessionId);
+            commandConnections.put(fingerprint, created);
+            commandSessionFingerprints.put(config.sessionId, fingerprint);
+            return connected;
+        }
+    }
+
+    private boolean detachCommandSession(String sessionId, boolean preserveTransport) {
+        synchronized (commandConnectionLock) {
+            return detachCommandSessionLocked(sessionId, preserveTransport);
+        }
+    }
+
+    private boolean detachCommandSessionLocked(String sessionId, boolean preserveTransport) {
+        String fingerprint = commandSessionFingerprints.remove(sessionId);
+        if (fingerprint == null) return false;
+        PooledCommandConnection connection = commandConnections.get(fingerprint);
+        if (connection == null) return true;
+        connection.sessionIds.remove(sessionId);
+        if (!connection.sessionIds.isEmpty()) return true;
+        if (!preserveTransport) {
+            commandConnections.remove(fingerprint, connection);
+            connection.close();
+            return true;
+        }
+        connection.scheduleIdleClose(() -> {
+            synchronized (commandConnectionLock) {
+                PooledCommandConnection current = commandConnections.get(fingerprint);
+                if (current != connection || !connection.sessionIds.isEmpty()) return;
+                commandConnections.remove(fingerprint, connection);
+                connection.close();
+            }
+        });
+        return true;
+    }
+
+    private Set<String> invalidateCommandConnection(String sessionId) {
+        synchronized (commandConnectionLock) {
+            String fingerprint = commandSessionFingerprints.get(sessionId);
+            if (fingerprint == null) {
+                Set<String> fallback = new HashSet<>();
+                fallback.add(sessionId);
+                return fallback;
+            }
+            PooledCommandConnection connection = commandConnections.remove(fingerprint);
+            if (connection == null) {
+                commandSessionFingerprints.remove(sessionId);
+                Set<String> fallback = new HashSet<>();
+                fallback.add(sessionId);
+                return fallback;
+            }
+            Set<String> affectedSessionIds = new HashSet<>(connection.sessionIds);
+            for (String affectedSessionId : affectedSessionIds) {
+                commandSessionFingerprints.remove(affectedSessionId, fingerprint);
+            }
+            connection.close();
+            return affectedSessionIds;
+        }
     }
 
     private String runUploadedPowerShellScript(Session session, SSHConfig config) throws Exception {
@@ -1095,6 +1189,37 @@ public class SSHWorkbenchPlugin extends Plugin {
         return raw;
     }
 
+    private final class PooledCommandConnection {
+        final Session session;
+        final Set<String> sessionIds = ConcurrentHashMap.newKeySet();
+        volatile ScheduledFuture<?> idleCloseTask;
+
+        PooledCommandConnection(Session session) {
+            this.session = session;
+        }
+
+        void attach(String sessionId) {
+            ScheduledFuture<?> task = idleCloseTask;
+            if (task != null) task.cancel(false);
+            idleCloseTask = null;
+            sessionIds.add(sessionId);
+        }
+
+        void scheduleIdleClose(Runnable closeAction) {
+            ScheduledFuture<?> task = idleCloseTask;
+            if (task != null) task.cancel(false);
+            idleCloseTask = connectionScheduler.schedule(closeAction, 30, TimeUnit.SECONDS);
+        }
+
+        void close() {
+            ScheduledFuture<?> task = idleCloseTask;
+            if (task != null) task.cancel(false);
+            idleCloseTask = null;
+            sessionIds.clear();
+            if (session.isConnected()) session.disconnect();
+        }
+    }
+
     private static class SSHConfig {
         final String sessionId;
         final String host;
@@ -1132,6 +1257,10 @@ public class SSHWorkbenchPlugin extends Plugin {
             this.connectTimeoutSeconds = connectTimeoutSeconds;
             this.commandTimeoutSeconds = commandTimeoutSeconds;
             this.maxResponseSize = maxResponseSize;
+        }
+
+        String connectionFingerprint() {
+            return host + "\u0000" + port + "\u0000" + username + "\u0000" + password;
         }
 
         static SSHConfig from(PluginCall call) {
