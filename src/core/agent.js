@@ -2428,8 +2428,8 @@ fi
 }
 
 export function buildWorkbenchAgentConversationStatusCommand(profile, conversationId, options = {}) {
-  const rawLimit = Number(options?.limit ?? 5);
-  const historyLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.min(20, Math.floor(rawLimit))) : 5;
+  const rawLimit = Number(options?.limit ?? 1);
+  const historyLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.min(1, Math.floor(rawLimit))) : 1;
   const historyBefore = String(options?.before || "").trim();
   if (isWindowsProfile(profile)) {
     return buildWindowsAgentControlCommand(profile, ["conversation-status", conversationId, String(historyLimit), historyBefore]);

@@ -738,7 +738,7 @@ export function useWorkbenchController() {
         }
         if (detail.opened) await selectServer(target.id);
         await syncAgentConversationForServer(target, {
-          limit: 5,
+          limit: 1,
           reason: detail.opened ? "push-open" : "push-received",
         });
       })();
@@ -5487,7 +5487,7 @@ export function useWorkbenchController() {
       const output = await runRemoteCommandForProfile(
         currentProfile,
         buildWorkbenchAgentConversationStatusCommand(currentProfile, conversationId, {
-          limit: options.limit ?? 5,
+          limit: 1,
           before,
         }),
         2_097_152,
