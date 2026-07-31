@@ -10,6 +10,7 @@ export function useSessionReorder(onReorder) {
   const timerRef = useRef(null);
   const suppressClickRef = useRef(false);
   const lastTargetRef = useRef("");
+  const blockTouchMoveRef = useRef((event) => event.preventDefault());
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
@@ -18,6 +19,7 @@ export function useSessionReorder(onReorder) {
 
   const finish = useCallback(() => {
     clearTimer();
+    document.removeEventListener("touchmove", blockTouchMoveRef.current, true);
     const press = pressRef.current;
     if (press?.active) {
       suppressClickRef.current = true;
@@ -53,6 +55,10 @@ export function useSessionReorder(onReorder) {
           if (!press || press.id !== sessionId) return;
           press.active = true;
           press.element?.setPointerCapture?.(press.pointerId);
+          document.addEventListener("touchmove", blockTouchMoveRef.current, {
+            capture: true,
+            passive: false,
+          });
           setDraggingId(sessionId);
           globalThis.navigator?.vibrate?.(10);
         }, LONG_PRESS_DELAY_MS);
