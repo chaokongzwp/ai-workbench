@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   connectionForAppLaunch,
+  serializeWorkspaceMigrationStore,
 } from "../src/core/foundation.js";
 
 function loadedServer(connection, task = {}) {
@@ -36,6 +37,7 @@ for (const previousState of ["connected", "testing", "error"]) {
   assert.equal(server.connection.state, "idle");
   assert.equal(server.connection.label, "未连接");
   assert.equal(server.connection.mode, "agent");
+  assert.equal(server.connection.detail, "tester@127.0.0.1");
 }
 
 const recovering = loadedServer(
@@ -55,5 +57,8 @@ const recovering = loadedServer(
 assert.equal(recovering.connection.state, "idle");
 assert.equal("state" in recovering.task, false);
 assert.equal(recovering.task.remoteTaskId, "task-1");
+
+const migration = serializeWorkspaceMigrationStore([recovering], recovering.id);
+assert.equal("connection" in migration.servers[0], false);
 
 console.log("session connection lifecycle regression: ok");

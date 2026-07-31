@@ -8,6 +8,7 @@ import NIOCore
 import UIKit
 
 private struct SSHConnectionConfig {
+    let sessionId: String
     let host: String
     let port: Int
     let username: String
@@ -28,6 +29,7 @@ private struct SSHConnectionConfig {
             throw SSHWorkbenchError.missingField("password")
         }
 
+        self.sessionId = (call.getString("sessionId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         self.host = host
         self.username = username
         self.password = password
@@ -36,6 +38,36 @@ private struct SSHConnectionConfig {
         self.commandTimeoutSeconds = Int64(max(5, min(call.getInt("commandTimeoutSeconds", 180), 7200)))
         self.stdin = call.getString("stdin") ?? ""
         self.uploadScript = call.getBool("uploadScript", false)
+    }
+}
+
+private actor NativeCommandSessionStore {
+    private var sessions: [String: SSHClient] = [:]
+
+    func client(for sessionId: String) -> SSHClient? {
+        sessions[sessionId]
+    }
+
+    func replace(_ client: SSHClient, for sessionId: String) async {
+        if let previous = sessions.removeValue(forKey: sessionId) {
+            try? await previous.close()
+        }
+        sessions[sessionId] = client
+    }
+
+    func remove(_ sessionId: String) async {
+        guard let client = sessions.removeValue(forKey: sessionId) else {
+            return
+        }
+        try? await client.close()
+    }
+
+    func closeAll() async {
+        let clients = Array(sessions.values)
+        sessions.removeAll()
+        for client in clients {
+            try? await client.close()
+        }
     }
 }
 
@@ -1114,6 +1146,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "SSHWorkbenchPlugin"
     public let jsName = "SSHWorkbench"
     public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "connectSession", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "disconnectSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "runCommand", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeTerminal", returnType: CAPPluginReturnPromise),
@@ -1135,6 +1169,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     private let keychainAccount = "default-profile"
     private let simulatorProfileFallbackKey = "com.beexofficial.aiworkbench.simulator-profile"
     private let diagnosticLogQueue = DispatchQueue(label: "com.beexofficial.aiworkbench.diagnostics")
+    private let commandSessions = NativeCommandSessionStore()
     private let terminalSessions = NativeTerminalSessionStore()
     private static let crc32Table: [UInt32] = {
         (0..<256).map { index in
@@ -1145,6 +1180,46 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             return value
         }
     }()
+
+    @objc func connectSession(_ call: CAPPluginCall) {
+        do {
+            let config = try SSHConnectionConfig(call: call)
+            guard !config.sessionId.isEmpty else {
+                throw SSHWorkbenchError.missingField("sessionId")
+            }
+            notifyConnectionState(sessionId: config.sessionId, state: "connecting", detail: "")
+            Task {
+                do {
+                    let client = try await self.createSSHClient(config: config)
+                    await self.commandSessions.replace(client, for: config.sessionId)
+                    self.notifyConnectionState(sessionId: config.sessionId, state: "connected", detail: "")
+                    call.resolve(["ok": true, "sessionId": config.sessionId, "state": "connected"])
+                } catch {
+                    self.notifyConnectionState(
+                        sessionId: config.sessionId,
+                        state: "error",
+                        detail: self.friendlySSHErrorMessage(error, config: config)
+                    )
+                    call.reject(self.friendlySSHErrorMessage(error, config: config), "SSH_CONNECTION_FAILED", error)
+                }
+            }
+        } catch {
+            call.reject(safeErrorMessage(error), "SSH_CONFIG_INVALID", error)
+        }
+    }
+
+    @objc func disconnectSession(_ call: CAPPluginCall) {
+        let sessionId = (call.getString("sessionId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sessionId.isEmpty else {
+            call.reject("Missing required field: sessionId", "SSH_CONFIG_INVALID")
+            return
+        }
+        Task {
+            await self.commandSessions.remove(sessionId)
+            self.notifyConnectionState(sessionId: sessionId, state: "closed", detail: "已断开")
+            call.resolve(["ok": true, "sessionId": sessionId])
+        }
+    }
 
     @objc func runCommand(_ call: CAPPluginCall) {
         let startedAt = Date()
@@ -1795,7 +1870,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         return "SSH command failed: \(raw)"
     }
 
-    private func execute(command: String, config: SSHConnectionConfig, maxResponseSize: Int) async throws -> String {
+    private func createSSHClient(config: SSHConnectionConfig) async throws -> SSHClient {
         var settings = SSHClientSettings(
             host: config.host,
             port: config.port,
@@ -1805,8 +1880,22 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             hostKeyValidator: .acceptAnything()
         )
         settings.connectTimeout = .seconds(config.connectTimeoutSeconds)
+        return try await SSHClient.connect(to: settings)
+    }
 
-        let client = try await SSHClient.connect(to: settings)
+    private func execute(command: String, config: SSHConnectionConfig, maxResponseSize: Int) async throws -> String {
+        let persistent = !config.sessionId.isEmpty
+        let existingClient = persistent ? await commandSessions.client(for: config.sessionId) : nil
+        let client: SSHClient
+        if let existingClient {
+            client = existingClient
+        } else {
+            client = try await createSSHClient(config: config)
+        }
+        if persistent, existingClient == nil {
+            await commandSessions.replace(client, for: config.sessionId)
+            notifyConnectionState(sessionId: config.sessionId, state: "connected", detail: "")
+        }
         do {
             if config.uploadScript && !config.stdin.isEmpty {
                 let output = try await executeUploadedPowerShellScript(
@@ -1814,7 +1903,9 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                     config: config,
                     maxResponseSize: maxResponseSize
                 )
-                try? await client.close()
+                if !persistent {
+                    try? await client.close()
+                }
                 return output
             }
             let executableCommand = prepareExecutableCommand(command, config: config)
@@ -1825,10 +1916,21 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                 inShell: false
             )
             let text = output.readString(length: output.readableBytes) ?? ""
-            try? await client.close()
+            if !persistent {
+                try? await client.close()
+            }
             return text
         } catch {
-            try? await client.close()
+            if persistent {
+                await commandSessions.remove(config.sessionId)
+                notifyConnectionState(
+                    sessionId: config.sessionId,
+                    state: "error",
+                    detail: friendlySSHErrorMessage(error, config: config)
+                )
+            } else {
+                try? await client.close()
+            }
             throw error
         }
     }
@@ -1924,6 +2026,16 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             self.notifyListeners("terminalState", data: [
                 "terminalId": terminalId,
+                "state": state,
+                "detail": detail
+            ])
+        }
+    }
+
+    private func notifyConnectionState(sessionId: String, state: String, detail: String) {
+        DispatchQueue.main.async {
+            self.notifyListeners("connectionState", data: [
+                "sessionId": sessionId,
                 "state": state,
                 "detail": detail
             ])

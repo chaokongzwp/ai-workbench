@@ -161,6 +161,7 @@ assert.equal("state" in legacyWorkspace.servers[0].task, false);
 
 const cleanWorkspace = serializeWorkspaceStore(legacyWorkspace.servers, legacyWorkspace.activeServerId);
 assert.equal(cleanWorkspace.version, workspaceStoreVersion);
+assert.equal("connection" in cleanWorkspace.servers[0], false);
 assert.equal(cleanWorkspace.servers[0].messages.length, 2);
 assert.equal("status" in cleanWorkspace.servers[0].messages[0], false);
 assert.equal("responsePhase" in cleanWorkspace.servers[0].messages[0], false);

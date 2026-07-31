@@ -30,6 +30,16 @@ export function desktopBridge() {
 
 export const SSHWorkbench = registerPlugin("SSHWorkbench", {
   web: () => ({
+    async connectSession(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.connectSession) return bridge.connectSession(payload);
+      throw new Error("浏览器预览不能建立 SSH 长连接，请在 App 中测试。");
+    },
+    async disconnectSession(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.disconnectSession) return bridge.disconnectSession(payload);
+      return { ok: true, alreadyDisconnected: true };
+    },
     async runCommand(payload) {
       const bridge = desktopBridge();
       if (bridge?.runCommand) return bridge.runCommand(payload);
@@ -1664,17 +1674,14 @@ export function dormantConnectionForProfile(profile, previous = {}, label = "未
     mode: previous?.mode || previous?.transport || previous?.backend || "",
     state: "idle",
     label,
-    detail: label === "未连接" ? "上次状态已重置" : String(normalized.workdir || previous?.detail || `${normalized.username}@${normalized.host}`),
+    detail: String(normalized.workdir || `${normalized.username}@${normalized.host}`),
   };
 }
 
 export function connectionForAppLaunch(server) {
   const profile = normalizeProfile(server?.profile);
-  const connection = server?.connection || initialConnectionForProfile(profile);
   if (!profileReady(profile)) return initialConnectionForProfile(profile);
-  // A persisted transport result only describes the previous App process.
-  // server.task keeps recovery metadata; task state lives on the assistant message.
-  return dormantConnectionForProfile(profile, connection, "未连接");
+  return initialConnectionForProfile(profile);
 }
 
 export function readyConnectionForSession(profile, previous = {}) {
@@ -1805,7 +1812,6 @@ export function serializeWorkspaceStore(servers, activeServerId) {
         ...server.profile,
         name: serverDisplayName(server, index),
       },
-      connection: server.connection,
       diagnostics: server.diagnostics || {},
       rawOutput: clipPersistedText(server.rawOutput),
       messages: messagesForStorage(server.messages),
@@ -1835,7 +1841,6 @@ export function serializeWorkspaceMigrationStore(servers, activeServerId) {
           name: displayName,
         },
         agentSessionName: sessionName(profile, profile.agentId),
-        connection: initialConnectionForProfile(profile),
         diagnostics: server.diagnostics || {},
         rawOutput: "",
         messages: [],

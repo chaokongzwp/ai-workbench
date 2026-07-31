@@ -2,6 +2,17 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("aiWorkbench", {
   platform: "mac",
+  connectSession(payload) {
+    return ipcRenderer.invoke("aiwb:session-connect", payload);
+  },
+  disconnectSession(payload) {
+    return ipcRenderer.invoke("aiwb:session-disconnect", payload);
+  },
+  onConnectionState(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("aiwb:connection-state", listener);
+    return () => ipcRenderer.removeListener("aiwb:connection-state", listener);
+  },
   runCommand(payload) {
     return ipcRenderer.invoke("aiwb:run-command", payload);
   },

@@ -24,6 +24,7 @@ let activeWakeRun;
 let activeSpeechOutputRun;
 let profileSaveChain = Promise.resolve();
 const embeddedTerminals = new Map();
+const sshCommandSessions = new Map();
 
 function isBrokenPipeError(error) {
   return error?.code === "EPIPE" || String(error?.message || error || "").includes("EPIPE");
@@ -226,6 +227,14 @@ function mergeWorkspaceProfile(currentProfile = {}, incomingProfile = {}) {
         messages: mergeWorkspaceMessages(current.messages, server.messages),
       };
     }),
+  };
+}
+
+function stripWorkspaceRuntimeState(profile = {}) {
+  if (!Array.isArray(profile.servers)) return profile;
+  return {
+    ...profile,
+    servers: profile.servers.map(({ connection: _connection, ...server }) => server),
   };
 }
 
@@ -535,6 +544,7 @@ function normalizeConnection(input = {}) {
   if (!command) throw new Error("Missing required field: command");
 
   return {
+    sessionId: String(input.sessionId || "").trim(),
     host,
     username,
     password,
@@ -545,6 +555,27 @@ function normalizeConnection(input = {}) {
     connectTimeoutSeconds: Math.max(3, Math.min(Number(input.connectTimeoutSeconds || 15) || 15, 60)),
     commandTimeoutSeconds: Math.max(5, Math.min(Number(input.commandTimeoutSeconds || 180) || 180, 7200)),
     maxResponseSize: Math.max(1024, Math.min(Number(input.maxResponseSize || 1_048_576) || 1_048_576, 83_886_080)),
+  };
+}
+
+function normalizeSshSessionRequest(input = {}) {
+  const sessionId = String(input.sessionId || "").trim();
+  const host = String(input.host || "").trim();
+  const username = String(input.username || "").trim();
+  const password = String(input.password || "");
+
+  if (!sessionId) throw new Error("Missing required field: sessionId");
+  if (!host) throw new Error("Missing required field: host");
+  if (!username) throw new Error("Missing required field: username");
+  if (!password) throw new Error("Missing required field: password");
+
+  return {
+    sessionId,
+    host,
+    username,
+    password,
+    port: Math.max(1, Number(input.port || 22) || 22),
+    connectTimeoutSeconds: Math.max(3, Math.min(Number(input.connectTimeoutSeconds || 15) || 15, 60)),
   };
 }
 
@@ -2209,70 +2240,143 @@ function runUploadedPowerShellScript(
   });
 }
 
-function runSshCommand(payload) {
-  const config = normalizeConnection(payload);
-  const requestId = randomUUID().slice(0, 8);
-  config.requestId = requestId;
-  const commandKind = config.uploadScript ? "uploaded-powershell" : config.stdin ? "stdin" : "exec";
+function broadcastSshConnectionState(payload) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("aiwb:connection-state", payload);
+  }
+}
 
-  console.info("[aiwb:ssh:start]", {
-    requestId,
-    host: config.host,
-    port: config.port,
-    username: config.username,
-    passwordLength: config.password.length,
-    commandKind,
-    stdinLength: config.stdin.length,
-    connectTimeoutSeconds: config.connectTimeoutSeconds,
-    commandTimeoutSeconds: config.commandTimeoutSeconds,
-  });
-  void appendPersistentLog("info", "ssh.native.start", {
-    requestId,
-    host: config.host,
-    port: config.port,
-    username: config.username,
-    passwordLength: config.password.length,
-    commandKind,
-    stdinLength: config.stdin.length,
-    connectTimeoutSeconds: config.connectTimeoutSeconds,
-    commandTimeoutSeconds: config.commandTimeoutSeconds,
-  });
+function sshSessionFingerprint(config) {
+  return createHash("sha256")
+    .update([config.host, config.port, config.username, config.password].join("\0"))
+    .digest("hex");
+}
 
+function removeSshCommandSession(sessionId, record, state = "closed", detail = "") {
+  if (!record || sshCommandSessions.get(sessionId) !== record) return;
+  sshCommandSessions.delete(sessionId);
+  broadcastSshConnectionState({ sessionId, state, detail });
+}
+
+function closeSshCommandSession(sessionId, { emit = true, detail = "已断开" } = {}) {
+  const record = sshCommandSessions.get(String(sessionId || ""));
+  if (!record) return false;
+  record.intentional = true;
+  sshCommandSessions.delete(record.sessionId);
+  record.client.end();
+  if (emit) broadcastSshConnectionState({ sessionId: record.sessionId, state: "closed", detail });
+  return true;
+}
+
+function createConnectedSshClient(config) {
   return new Promise((resolvePromise, reject) => {
     const client = new Client();
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      client.end();
+      reject(new Error("SSH connection timed out"));
+    }, config.connectTimeoutSeconds * 1000);
+
+    client
+      .once("ready", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolvePromise(client);
+      })
+      .once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        client.end();
+        reject(error);
+      })
+      .connect({
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        password: config.password,
+        readyTimeout: config.connectTimeoutSeconds * 1000,
+        keepaliveInterval: 10000,
+        keepaliveCountMax: 3,
+      });
+  });
+}
+
+async function ensureSshCommandSession(payload) {
+  const config = normalizeSshSessionRequest(payload);
+  const fingerprint = sshSessionFingerprint(config);
+  const existing = sshCommandSessions.get(config.sessionId);
+  if (existing?.fingerprint === fingerprint) {
+    if (existing.state === "connected") return existing.client;
+    if (existing.connectPromise) return existing.connectPromise;
+  }
+  if (existing) closeSshCommandSession(config.sessionId, { emit: false });
+
+  const record = {
+    sessionId: config.sessionId,
+    fingerprint,
+    client: null,
+    state: "connecting",
+    intentional: false,
+    connectPromise: null,
+  };
+  broadcastSshConnectionState({ sessionId: config.sessionId, state: "connecting", detail: "" });
+  const connectPromise = createConnectedSshClient(config)
+    .then((client) => {
+      record.client = client;
+      record.state = "connected";
+      record.connectPromise = null;
+      client.on("error", (error) => {
+        if (record.intentional) return;
+        removeSshCommandSession(config.sessionId, record, "error", String(error?.message || error || "连接异常"));
+      });
+      client.on("close", () => {
+        if (record.intentional) return;
+        removeSshCommandSession(config.sessionId, record, "closed", "连接断开");
+      });
+      broadcastSshConnectionState({ sessionId: config.sessionId, state: "connected", detail: "" });
+      return client;
+    })
+    .catch((error) => {
+      record.connectPromise = null;
+      removeSshCommandSession(config.sessionId, record, "error", String(error?.message || error || "连接异常"));
+      throw error;
+    });
+  record.connectPromise = connectPromise;
+  sshCommandSessions.set(config.sessionId, record);
+  return connectPromise;
+}
+
+function executeSshCommand(client, config) {
+  const requestId = config.requestId;
+  const commandKind = config.uploadScript ? "uploaded-powershell" : config.stdin ? "stdin" : "exec";
+  return new Promise((resolvePromise, reject) => {
     let output = "";
     let settled = false;
     let decodersFlushed = false;
     const stdoutDecoder = new StringDecoder("utf8");
     const stderrDecoder = new StringDecoder("utf8");
-
     const finish = (fn) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      client.end();
       fn();
     };
-
     const appendText = (text) => {
       output += String(text || "");
-      if (output.length > config.maxResponseSize) {
-        output = output.slice(output.length - config.maxResponseSize);
-      }
+      if (output.length > config.maxResponseSize) output = output.slice(output.length - config.maxResponseSize);
     };
-    const appendStdout = (chunk) => {
-      appendText(typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk));
-    };
-    const appendStderr = (chunk) => {
-      appendText(typeof chunk === "string" ? chunk : stderrDecoder.write(chunk));
-    };
+    const appendStdout = (chunk) => appendText(typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk));
+    const appendStderr = (chunk) => appendText(typeof chunk === "string" ? chunk : stderrDecoder.write(chunk));
     const flushOutput = () => {
       if (decodersFlushed) return;
       decodersFlushed = true;
       appendText(stdoutDecoder.end());
       appendText(stderrDecoder.end());
     };
-
     const timer = setTimeout(() => {
       void appendPersistentLog("error", "ssh.native.timeout", {
         requestId,
@@ -2282,102 +2386,84 @@ function runSshCommand(payload) {
         commandTimeoutSeconds: config.commandTimeoutSeconds,
       });
       finish(() => reject(new Error("SSH command timed out")));
-    }, (config.connectTimeoutSeconds + config.commandTimeoutSeconds) * 1000);
+    }, config.commandTimeoutSeconds * 1000);
 
-    client
-      .on("ready", () => {
-        console.info("[aiwb:ssh:ready]", {
-          requestId,
-          host: config.host,
-          username: config.username,
-          commandKind,
-        });
-        void appendPersistentLog("info", "ssh.native.ready", {
-          requestId,
-          host: config.host,
-          username: config.username,
-          commandKind,
-        });
+    if (config.uploadScript && config.stdin) {
+      runUploadedPowerShellScript(
+        client,
+        config,
+        appendStdout,
+        appendStderr,
+        flushOutput,
+        finish,
+        () => output,
+        resolvePromise,
+        reject,
+      );
+      return;
+    }
 
-        if (config.uploadScript && config.stdin) {
-          runUploadedPowerShellScript(
-            client,
-            config,
-            appendStdout,
-            appendStderr,
-            flushOutput,
-            finish,
-            () => output,
-            resolvePromise,
-            reject,
-          );
-          return;
-        }
-
-        client.exec(config.command, config.stdin ? {} : { pty: true }, (error, stream) => {
-          if (error) {
-            finish(() => reject(error));
-            return;
-          }
-
-          stream
-            .on("close", () => {
-              flushOutput();
-              console.info("[aiwb:ssh:close]", {
-                requestId,
-                outputLength: output.length,
-              });
-              void appendPersistentLog("info", "ssh.native.close", {
-                requestId,
-                outputLength: output.length,
-              });
-              finish(() => resolvePromise({ ok: true, stdout: output }));
-            })
-            .on("data", appendStdout);
-
-          stream.stderr.on("data", appendStderr);
-
-          if (config.stdin) {
-            stream.end(config.stdin.endsWith("\n") ? config.stdin : `${config.stdin}\n`);
-          }
-        });
-      })
-      .on("error", (error) => {
-        // A successful SFTP/SSH response closes the client before the remote
-        // socket finishes its final teardown. Ignore late EPIPE/ECONNRESET
-        // events after the promise has already been settled.
-        if (settled) return;
-        console.error("[aiwb:ssh:error]", {
-          requestId,
-          host: config.host,
-          port: config.port,
-          username: config.username,
-          passwordLength: config.password.length,
-          code: error?.code,
-          level: error?.level,
-          message: error?.message,
-        });
-        void appendPersistentLog("error", "ssh.native.error", {
-          requestId,
-          host: config.host,
-          port: config.port,
-          username: config.username,
-          passwordLength: config.password.length,
-          code: error?.code,
-          level: error?.level,
-          message: error?.message,
-        });
+    client.exec(config.command, config.stdin ? {} : { pty: true }, (error, stream) => {
+      if (error) {
         finish(() => reject(error));
-      })
-      .connect({
-        host: config.host,
-        port: config.port,
-        username: config.username,
-        password: config.password,
-        readyTimeout: config.connectTimeoutSeconds * 1000,
-        keepaliveInterval: 10000,
-      });
+        return;
+      }
+      stream
+        .on("close", () => {
+          flushOutput();
+          void appendPersistentLog("info", "ssh.native.close", { requestId, outputLength: output.length });
+          finish(() => resolvePromise({ ok: true, stdout: output }));
+        })
+        .on("error", (streamError) => finish(() => reject(streamError)))
+        .on("data", appendStdout);
+      stream.stderr.on("data", appendStderr);
+      if (config.stdin) stream.end(config.stdin.endsWith("\n") ? config.stdin : `${config.stdin}\n`);
+    });
   });
+}
+
+async function runSshCommand(payload) {
+  const config = normalizeConnection(payload);
+  const requestId = randomUUID().slice(0, 8);
+  config.requestId = requestId;
+  const commandKind = config.uploadScript ? "uploaded-powershell" : config.stdin ? "stdin" : "exec";
+  void appendPersistentLog("info", "ssh.native.start", {
+    requestId,
+    sessionId: config.sessionId,
+    host: config.host,
+    port: config.port,
+    username: config.username,
+    commandKind,
+    stdinLength: config.stdin.length,
+    connectTimeoutSeconds: config.connectTimeoutSeconds,
+    commandTimeoutSeconds: config.commandTimeoutSeconds,
+  });
+
+  let client;
+  let persistent = false;
+  try {
+    if (config.sessionId) {
+      persistent = true;
+      client = await ensureSshCommandSession(config);
+    } else {
+      client = await createConnectedSshClient(config);
+    }
+    return await executeSshCommand(client, config);
+  } catch (error) {
+    void appendPersistentLog("error", "ssh.native.error", {
+      requestId,
+      sessionId: config.sessionId,
+      host: config.host,
+      port: config.port,
+      code: error?.code,
+      level: error?.level,
+      message: error?.message,
+    });
+    if (persistent) closeSshCommandSession(config.sessionId, { emit: true, detail: "连接断开" });
+    throw error;
+  } finally {
+    if (!persistent) client?.end();
+  }
 }
 
 async function routeIntent(payload = {}) {
@@ -2557,6 +2643,19 @@ ipcMain.handle("aiwb:run-command", async (_event, payload) => {
   return runSshCommand(payload);
 });
 
+ipcMain.handle("aiwb:session-connect", async (_event, payload) => {
+  const config = normalizeSshSessionRequest(payload);
+  await ensureSshCommandSession(config);
+  return { ok: true, sessionId: config.sessionId, state: "connected" };
+});
+
+ipcMain.handle("aiwb:session-disconnect", async (_event, payload = {}) => {
+  const sessionId = String(payload.sessionId || "").trim();
+  if (!sessionId) throw new Error("Missing required field: sessionId");
+  const disconnected = closeSshCommandSession(sessionId);
+  return { ok: true, sessionId, alreadyDisconnected: !disconnected };
+});
+
 ipcMain.handle("aiwb:open-terminal", async (_event, payload) => {
   return openSshTerminal(payload);
 });
@@ -2652,7 +2751,9 @@ ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
         throw new Error("本地会话配置暂时无法读取，已停止覆盖写入以保护现有记录。");
       }
     }
-    const rawProfile = replaceMessages ? incomingProfile : mergeWorkspaceProfile(currentProfile, incomingProfile);
+    const rawProfile = stripWorkspaceRuntimeState(
+      replaceMessages ? incomingProfile : mergeWorkspaceProfile(currentProfile, incomingProfile),
+    );
     const { passwordEncrypted, payloadEncrypted, insecurePasswordStorage, ...rest } = rawProfile;
     const profile = encryptProfilePayload(rest);
     await appendPersistentLog("info", "profile.native.save.start", {
@@ -2770,6 +2871,9 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   for (const record of [...embeddedTerminals.values()]) closeEmbeddedTerminalRecord(record);
+  for (const sessionId of [...sshCommandSessions.keys()]) {
+    closeSshCommandSession(sessionId, { emit: false });
+  }
   appendPersistentLogSync("info", "app.before_quit", {
     windowCount: BrowserWindow.getAllWindows().length,
   });

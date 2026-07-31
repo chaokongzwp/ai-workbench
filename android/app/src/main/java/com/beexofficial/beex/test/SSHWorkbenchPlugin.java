@@ -59,6 +59,7 @@ public class SSHWorkbenchPlugin extends Plugin {
     private static final String PROFILE_KEY = "profile";
     private static final int MAX_RESPONSE_LIMIT = 83_886_080;
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ConcurrentHashMap<String, Session> commandSessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, TerminalSession> terminalSessions = new ConcurrentHashMap<>();
 
     @Override
@@ -66,9 +67,55 @@ public class SSHWorkbenchPlugin extends Plugin {
         for (TerminalSession terminal : terminalSessions.values()) {
             terminal.close();
         }
+        for (Session session : commandSessions.values()) {
+            if (session != null && session.isConnected()) session.disconnect();
+        }
+        commandSessions.clear();
         terminalSessions.clear();
         executor.shutdownNow();
         super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void connectSession(PluginCall call) {
+        SSHConfig config;
+        try {
+            config = SSHConfig.fromConnection(call);
+        } catch (Exception error) {
+            call.reject(safeError(error), "SSH_CONFIG_INVALID", error);
+            return;
+        }
+        emitConnectionState(config.sessionId, "connecting", "");
+        executor.execute(() -> {
+            try {
+                ensureCommandSession(config);
+                emitConnectionState(config.sessionId, "connected", "");
+                JSObject result = new JSObject();
+                result.put("ok", true);
+                result.put("sessionId", config.sessionId);
+                result.put("state", "connected");
+                call.resolve(result);
+            } catch (Exception error) {
+                emitConnectionState(config.sessionId, "error", friendlySSHError(error, config));
+                call.reject(friendlySSHError(error, config), "SSH_CONNECTION_FAILED", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void disconnectSession(PluginCall call) {
+        String sessionId = stringValue(call.getString("sessionId")).trim();
+        if (sessionId.isEmpty()) {
+            call.reject("Missing required field: sessionId", "SSH_CONFIG_INVALID");
+            return;
+        }
+        Session session = commandSessions.remove(sessionId);
+        if (session != null && session.isConnected()) session.disconnect();
+        emitConnectionState(sessionId, "closed", "已断开");
+        JSObject result = new JSObject();
+        result.put("ok", true);
+        result.put("sessionId", sessionId);
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -510,23 +557,48 @@ public class SSHWorkbenchPlugin extends Plugin {
 
     private String execute(SSHConfig config) throws Exception {
         Session session = null;
+        boolean persistent = !config.sessionId.isEmpty();
         try {
-            JSch jsch = new JSch();
-            session = jsch.getSession(config.username, config.host, config.port);
-            session.setPassword(config.password);
-            Properties props = new Properties();
-            props.put("StrictHostKeyChecking", "no");
-            props.put("PreferredAuthentications", "password,keyboard-interactive");
-            session.setConfig(props);
-            session.connect(config.connectTimeoutSeconds * 1000);
+            session = persistent ? ensureCommandSession(config) : createCommandSession(config);
 
             if (config.uploadScript && !config.stdin.isEmpty()) {
                 return runUploadedPowerShellScript(session, config);
             }
             return runExec(session, config.command, config.stdin, config.stdin.isEmpty(), config.commandTimeoutSeconds, config.maxResponseSize);
+        } catch (Exception error) {
+            if (persistent) {
+                Session removed = commandSessions.remove(config.sessionId);
+                if (removed != null && removed.isConnected()) removed.disconnect();
+                emitConnectionState(config.sessionId, "error", friendlySSHError(error, config));
+            }
+            throw error;
         } finally {
-            if (session != null && session.isConnected()) session.disconnect();
+            if (!persistent && session != null && session.isConnected()) session.disconnect();
         }
+    }
+
+    private Session createCommandSession(SSHConfig config) throws Exception {
+        JSch jsch = new JSch();
+        Session session = jsch.getSession(config.username, config.host, config.port);
+        session.setPassword(config.password);
+        Properties props = new Properties();
+        props.put("StrictHostKeyChecking", "no");
+        props.put("PreferredAuthentications", "password,keyboard-interactive");
+        session.setConfig(props);
+        session.setServerAliveInterval(10_000);
+        session.setServerAliveCountMax(3);
+        session.connect(config.connectTimeoutSeconds * 1000);
+        return session;
+    }
+
+    private Session ensureCommandSession(SSHConfig config) throws Exception {
+        Session existing = commandSessions.get(config.sessionId);
+        if (existing != null && existing.isConnected()) return existing;
+        if (existing != null) commandSessions.remove(config.sessionId, existing);
+        Session connected = createCommandSession(config);
+        Session previous = commandSessions.put(config.sessionId, connected);
+        if (previous != null && previous != connected && previous.isConnected()) previous.disconnect();
+        return connected;
     }
 
     private String runUploadedPowerShellScript(Session session, SSHConfig config) throws Exception {
@@ -760,6 +832,14 @@ public class SSHWorkbenchPlugin extends Plugin {
         payload.put("state", state);
         payload.put("detail", detail);
         notifyTerminalListeners("terminalState", payload);
+    }
+
+    private void emitConnectionState(String sessionId, String state, String detail) {
+        JSObject payload = new JSObject();
+        payload.put("sessionId", sessionId);
+        payload.put("state", state);
+        payload.put("detail", detail);
+        notifyListeners("connectionState", payload);
     }
 
     private void notifyTerminalListeners(String event, JSObject payload) {
@@ -1000,7 +1080,23 @@ public class SSHWorkbenchPlugin extends Plugin {
         return message.replace("\n", " ");
     }
 
+    private static String friendlySSHError(Exception error, SSHConfig config) {
+        String raw = safeError(error);
+        String message = raw.toLowerCase(Locale.ROOT);
+        if (message.contains("auth fail") || message.contains("authentication") || message.contains("password")) {
+            return "SSH 登录失败：请检查用户名和登录密码。";
+        }
+        if (message.contains("refused")) {
+            return "连接被拒绝：请确认 SSH 已开启，并且端口 " + config.port + " 没有被防火墙拦截。";
+        }
+        if (message.contains("timeout") || message.contains("timed out")) {
+            return "SSH 连接超时：请确认网络可达并稍后重试。";
+        }
+        return raw;
+    }
+
     private static class SSHConfig {
+        final String sessionId;
         final String host;
         final String username;
         final String password;
@@ -1013,6 +1109,7 @@ public class SSHWorkbenchPlugin extends Plugin {
         final int maxResponseSize;
 
         private SSHConfig(
+            String sessionId,
             String host,
             String username,
             String password,
@@ -1024,6 +1121,7 @@ public class SSHWorkbenchPlugin extends Plugin {
             int commandTimeoutSeconds,
             int maxResponseSize
         ) {
+            this.sessionId = sessionId;
             this.host = host;
             this.username = username;
             this.password = password;
@@ -1050,6 +1148,7 @@ public class SSHWorkbenchPlugin extends Plugin {
             if (command.isEmpty()) throw new IllegalArgumentException("Missing required field: command");
 
             return new SSHConfig(
+                stringValue(call.getString("sessionId")).trim(),
                 host,
                 username,
                 password,
@@ -1060,6 +1159,30 @@ public class SSHWorkbenchPlugin extends Plugin {
                 clamp(intValue(call.getInt("connectTimeoutSeconds"), 15), 3, 60),
                 clamp(intValue(call.getInt("commandTimeoutSeconds"), 180), 5, 7200),
                 clamp(intValue(call.getInt("maxResponseSize"), 1_048_576), 1024, MAX_RESPONSE_LIMIT)
+            );
+        }
+
+        static SSHConfig fromConnection(PluginCall call) {
+            String sessionId = stringValue(call.getString("sessionId")).trim();
+            String host = stringValue(call.getString("host")).trim();
+            String username = stringValue(call.getString("username")).trim();
+            String password = stringValue(call.getString("password"));
+            if (sessionId.isEmpty()) throw new IllegalArgumentException("Missing required field: sessionId");
+            if (host.isEmpty()) throw new IllegalArgumentException("Missing required field: host");
+            if (username.isEmpty()) throw new IllegalArgumentException("Missing required field: username");
+            if (password.isEmpty()) throw new IllegalArgumentException("Missing required field: password");
+            return new SSHConfig(
+                sessionId,
+                host,
+                username,
+                password,
+                "true",
+                "",
+                false,
+                clamp(intValue(call.getInt("port"), 22), 1, 65_535),
+                clamp(intValue(call.getInt("connectTimeoutSeconds"), 15), 3, 60),
+                30,
+                16_384
             );
         }
     }

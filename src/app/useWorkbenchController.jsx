@@ -369,6 +369,18 @@ function createClientCommandTimeoutError(commandTimeoutSeconds) {
   return error;
 }
 
+function nativeSshSessionPayload(profile, sessionId) {
+  const current = normalizeProfile(profile);
+  return {
+    sessionId,
+    host: current.host,
+    port: current.port,
+    username: current.username,
+    password: current.password,
+    connectTimeoutSeconds: current.connectTimeoutSeconds,
+  };
+}
+
 async function runNativeCommandWithClientTimeout(payload, commandTimeoutSeconds) {
   let timer = null;
   try {
@@ -584,6 +596,7 @@ export function useWorkbenchController() {
   const agentHealthRefreshKeysRef = useRef(new Set());
   const agentHealthInFlightConnectionsRef = useRef(new Set());
   const startupSessionReconnectRef = useRef("");
+  const manualDisconnectSessionIdsRef = useRef(new Set());
   const agentConnectionPollAtRef = useRef(new Map());
   const agentConversationAutoSyncAtRef = useRef(new Map());
   const agentConversationSyncFailedAtRef = useRef(new Map());
@@ -1920,6 +1933,7 @@ export function useWorkbenchController() {
     void appLog("info", "ssh.command.start", diagnostics);
     try {
       const result = await runNativeCommandWithClientTimeout({
+        sessionId: activeServerIdRef.current || `profile:${profileConnectionKey(current)}`,
         host: current.host,
         port: current.port,
         username: current.username,
@@ -1970,7 +1984,20 @@ export function useWorkbenchController() {
     void appLog("info", "ssh.command.start", diagnostics);
 
     try {
+      const exactServer =
+        serversRef.current.find(
+          (server) =>
+            server.id === activeServerIdRef.current &&
+            profileConnectionKey(server.profile) === profileConnectionKey(current),
+        ) ||
+        serversRef.current.find(
+          (server) =>
+            profileConnectionKey(server.profile) === profileConnectionKey(current) &&
+            String(server.profile?.workdir || "") === String(current.workdir || "") &&
+            String(server.profile?.agentId || "") === String(current.agentId || ""),
+        );
       const result = await runNativeCommandWithClientTimeout({
+        sessionId: exactServer?.id || `profile:${profileConnectionKey(current)}`,
         host: current.host,
         port: current.port,
         username: current.username,
@@ -2746,17 +2773,23 @@ export function useWorkbenchController() {
       }
 
       if (busyRef.current) {
-        if (attempt < 10) scheduleSessionAutoConnect(serverId, attempt + 1);
+        if (attempt < maxSshReconnectAttempts) scheduleSessionAutoConnect(serverId, attempt + 1);
         return;
       }
 
-      connectExistingSession(serverId).catch((error) => {
-        void appLog("warn", "session.switch_auto_connect.failed", {
-          serverId,
-          error: shortError(error),
+      connectExistingSession(serverId)
+        .then((connected) => {
+          if (!connected && activeServerIdRef.current === serverId && attempt < maxSshReconnectAttempts) {
+            scheduleSessionAutoConnect(serverId, attempt + 1);
+          }
+        })
+        .catch((error) => {
+          void appLog("warn", "session.switch_auto_connect.failed", {
+            serverId,
+            error: shortError(error),
+          });
         });
-      });
-    }, attempt ? 300 : 0);
+    }, attempt ? 500 * attempt : 0);
   }
 
   async function selectServer(serverId) {
@@ -2797,6 +2830,7 @@ export function useWorkbenchController() {
     const nextServer = nextServers.find((server) => server.id === serverId);
     if (!nextServer) return;
 
+    const previousServerId = activeServerIdRef.current;
     setActiveServerId(serverId);
     activeServerIdRef.current = serverId;
     const nextProfile = withKnownPassword(nextServer.profile, nextServers);
@@ -2806,6 +2840,12 @@ export function useWorkbenchController() {
     setActiveAgentId(nextProfile.agentId);
     setRawOpen(false);
     await saveWorkspace(nextServers, serverId);
+    if (previousServerId && previousServerId !== serverId) {
+      manualDisconnectSessionIdsRef.current.add(previousServerId);
+      SSHWorkbench.disconnectSession({ sessionId: previousServerId })
+        .catch(() => {})
+        .finally(() => manualDisconnectSessionIdsRef.current.delete(previousServerId));
+    }
     scheduleSessionAutoConnect(serverId);
   }
 
@@ -2866,11 +2906,11 @@ export function useWorkbenchController() {
   );
 
   async function connectExistingSession(serverId = activeServerIdRef.current) {
-    if (busy) return;
+    if (busyRef.current) return false;
 
     const currentServers = serversRef.current.length ? serversRef.current : servers;
     const target = currentServers.find((server) => server.id === serverId) || activeServer;
-    if (!target) return;
+    if (!target) return false;
 
     const targetProfile = withKnownPassword(target.profile, currentServers);
     const issue = profileIssue(targetProfile);
@@ -2886,7 +2926,7 @@ export function useWorkbenchController() {
     if (issue) {
       setServerConnection(target.id, { state: "error", label: "待配置", detail: issue });
       openServerSettings(target.id);
-      return;
+      return false;
     }
 
     const connectionNoticeKey = `connection:${target.id}`;
@@ -2921,9 +2961,15 @@ export function useWorkbenchController() {
 
     try {
       const stdout = await runWithSshReconnect(
-        () => runRemoteCommandForProfile(targetProfile, buildHealthCommand(targetProfile), 512_000, 60),
+        async () => {
+          await SSHWorkbench.connectSession(nativeSshSessionPayload(targetProfile, target.id));
+          return runRemoteCommandForProfile(targetProfile, buildHealthCommand(targetProfile), 512_000, 60);
+        },
         {
-          onRetry: ({ error, reconnectAttempt }) => {
+          onRetry: async ({ error, reconnectAttempt }) => {
+            manualDisconnectSessionIdsRef.current.add(target.id);
+            await SSHWorkbench.disconnectSession({ sessionId: target.id }).catch(() => {});
+            manualDisconnectSessionIdsRef.current.delete(target.id);
             setServerConnection(target.id, {
               state: "testing",
               label: "连接断开",
@@ -2990,6 +3036,7 @@ export function useWorkbenchController() {
           reason: "session-connect-pending-task",
         });
       }
+      return true;
     } catch (error) {
       const message = shortError(error);
       void appLog("error", "connection.failed", {
@@ -3012,6 +3059,7 @@ export function useWorkbenchController() {
         serversRef.current = nextItems;
         return nextItems;
       });
+      return false;
     } finally {
       dismissTaskNoticeByKey(connectionNoticeKey);
       setBusy(false);
@@ -3038,6 +3086,13 @@ export function useWorkbenchController() {
       });
     }
 
+    setServerConnection(target.id, {
+      state: "testing",
+      label: "连接中",
+      detail: target.profile?.workdir || `${target.profile?.username}@${target.profile?.host}`,
+      mode: target.connection?.mode || "",
+    });
+
     const timer = window.setTimeout(() => {
       if (startupSessionReconnectRef.current === reconnectKey) return;
       startupSessionReconnectRef.current = reconnectKey;
@@ -3051,10 +3106,80 @@ export function useWorkbenchController() {
           error: shortError(error),
         });
       });
-    }, 250);
+    }, 0);
 
     return () => window.clearTimeout(timer);
   }, [workspaceLoaded]);
+
+  useEffect(() => {
+    const handleConnectionState = (payload = {}) => {
+      const serverId = String(payload.sessionId || "").trim();
+      const state = String(payload.state || "").trim().toLowerCase();
+      if (!serverId || !state) return;
+
+      const target = serverById(serverId);
+      if (!target) return;
+      const manuallyDisconnected = manualDisconnectSessionIdsRef.current.has(serverId);
+
+      if (state === "connecting") {
+        if (serverId === activeServerIdRef.current) {
+          setServerConnection(serverId, {
+            state: "testing",
+            label: "连接中",
+            detail: "正在建立 SSH 长连接",
+            mode: target.connection?.mode || "ssh",
+          });
+        }
+        return;
+      }
+      if (state === "connected") {
+        manualDisconnectSessionIdsRef.current.delete(serverId);
+        setServerConnection(serverId, {
+          state: "connected",
+          label: "已连接",
+          detail: target.profile?.workdir || `${target.profile?.username}@${target.profile?.host}`,
+          mode: target.connection?.mode || "ssh",
+        });
+        return;
+      }
+      if (state !== "closed" && state !== "error") return;
+
+      if (manuallyDisconnected || serverId !== activeServerIdRef.current) {
+        setServerConnection(serverId, dormantConnectionForProfile(target.profile, target.connection, "未连接"));
+        return;
+      }
+
+      setServerConnection(serverId, {
+        state: "testing",
+        label: "连接断开",
+        detail: "正在自动重连",
+        mode: target.connection?.mode || "ssh",
+      });
+      if (busyRef.current) return;
+      scheduleSessionAutoConnect(serverId, 1);
+    };
+
+    const bridge = Core.desktopBridge?.();
+    const desktopUnsubscribe = bridge?.onConnectionState?.(handleConnectionState);
+    let nativeSubscription;
+    let cancelled = false;
+    if (Capacitor.isNativePlatform() && typeof SSHWorkbench.addListener === "function") {
+      SSHWorkbench.addListener("connectionState", handleConnectionState)
+        .then((subscription) => {
+          if (cancelled) {
+            subscription?.remove?.();
+            return;
+          }
+          nativeSubscription = subscription;
+        })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+      desktopUnsubscribe?.();
+      nativeSubscription?.remove?.();
+    };
+  }, []);
 
   async function disconnectSession(serverId = activeServerIdRef.current) {
     if (busy) return;
@@ -3063,6 +3188,8 @@ export function useWorkbenchController() {
     if (!target || serverTaskRunning(target)) return;
 
     const targetProfile = withKnownPassword(target.profile, currentServers);
+    manualDisconnectSessionIdsRef.current.add(target.id);
+    await SSHWorkbench.disconnectSession({ sessionId: target.id }).catch(() => {});
     const nextConnection = {
       ...dormantConnectionForProfile(targetProfile, target.connection, "未连接"),
       detail: "已断开",
@@ -3084,6 +3211,7 @@ export function useWorkbenchController() {
     serversRef.current = nextServers;
     setServers(nextServers);
     await saveWorkspace(nextServers, activeServerIdRef.current);
+    manualDisconnectSessionIdsRef.current.delete(target.id);
   }
 
   function openServerSettings(serverId = activeServerIdRef.current) {
