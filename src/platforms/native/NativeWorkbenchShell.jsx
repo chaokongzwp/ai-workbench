@@ -68,6 +68,7 @@ export function NativeWorkbenchShell({
   remoteDirectoryOpen,
   remoteDirectory,
   onSelectServer,
+  onReorderServer,
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
@@ -235,6 +236,7 @@ export function NativeWorkbenchShell({
           await onSelectServer?.(serverId);
           closeIfNeeded();
         }}
+        onReorderServer={onReorderServer}
         onConfigureServer={(serverId) => {
           onConfigureServer?.(serverId);
           closeIfNeeded();

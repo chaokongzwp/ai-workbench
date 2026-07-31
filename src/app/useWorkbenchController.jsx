@@ -16,6 +16,7 @@ import {
   ensureIosPushRegistration,
   iosPushSupported,
 } from "../core/iosPushNotifications.js";
+import { reorderSessionsById } from "../core/sessionOrder.js";
 
 function nativeDeviceClassForRuntime(platform = Capacitor.getPlatform()) {
   if (typeof window === "undefined") return "phone";
@@ -2224,6 +2225,16 @@ export function useWorkbenchController() {
         console.warn("[aiwb:queued-save:error]", shortError(error));
       });
     }, delayMs);
+  }
+
+  function reorderServerSessions(sourceId, targetId, placement = "before") {
+    const currentServers = serversRef.current;
+    const nextServers = reorderSessionsById(currentServers, sourceId, targetId, placement);
+    if (nextServers === currentServers) return;
+
+    serversRef.current = nextServers;
+    setServers(nextServers);
+    queueWorkspaceSave(nextServers, activeServerIdRef.current, 180);
   }
 
   function flushWorkspaceSave() {
@@ -7266,6 +7277,7 @@ export function useWorkbenchController() {
     remoteDirectoryOpen,
     remoteDirectory,
     onSelectServer: selectServer,
+    onReorderServer: reorderServerSessions,
     onOpenChatWindow: openDetachedChatWindow,
     onConfigureServer: openServerSettings,
     onAddServer: openNewServerSettings,

@@ -1,0 +1,33 @@
+[data-session-reorder-id] {
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.session-reorder-active {
+  cursor: grabbing;
+  overflow-anchor: none;
+}
+
+[data-session-reorder-id].is-reordering {
+  position: relative;
+  z-index: 4;
+  touch-action: none;
+  cursor: grabbing !important;
+  background: color-mix(in srgb, currentColor 7%, transparent) !important;
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 1px color-mix(in srgb, currentColor 16%, transparent) !important;
+  transform: scale(0.985);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-session-reorder-id].is-reordering {
+    transition: none;
+  }
+}

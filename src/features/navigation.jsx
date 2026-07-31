@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
+import { useSessionReorder } from "./useSessionReorder.js";
 
 const {
   SSHWorkbench,
@@ -387,6 +388,7 @@ export function NavigationPanel({
   collapsed = false,
   onToggleCollapse,
   onSelectServer,
+  onReorderServer,
   onOpenChatWindow,
   onConfigureServer,
   onAddServer,
@@ -406,6 +408,7 @@ export function NavigationPanel({
   const versionCopyResetRef = useRef(null);
   const connected = connectionIsLive(connection);
   const connectLabel = connected ? "断开" : connectionActionLabel(connection);
+  const { draggingId, getReorderProps } = useSessionReorder(onReorderServer);
 
   useEffect(() => {
     if (!macVariant) return undefined;
@@ -515,7 +518,11 @@ export function NavigationPanel({
           </button>
         ) : null}
       </div>
-      <div className={`server-list ${servers.length === 0 && emptyState ? "has-empty-state" : ""}`}>
+      <div
+        className={`server-list ${servers.length === 0 && emptyState ? "has-empty-state" : ""} ${
+          draggingId ? "session-reorder-active" : ""
+        }`}
+      >
         {servers.length === 0 ? emptyState : null}
         {servers.map((server, index) => {
           const isActive = server.id === activeServerId;
@@ -560,7 +567,7 @@ export function NavigationPanel({
               <div
                 className={`mac-session-row ${isActive ? "active" : ""} ${taskRunning ? "running" : ""} ${
                   unreadResult ? "has-unread-result" : ""
-                }`}
+                } ${draggingId === server.id ? "is-reordering" : ""}`}
                 role="button"
                 tabIndex={0}
                 key={server.id}
@@ -568,6 +575,7 @@ export function NavigationPanel({
                 onClick={() => onSelectServer?.(server.id)}
                 onDoubleClick={() => onOpenChatWindow?.(server.id)}
                 onKeyDown={(event) => selectServerFromCard(event, server.id)}
+                {...getReorderProps(server.id)}
               >
                 <span className="mac-session-index">{String(index + 1).padStart(2, "0")}</span>
                 <span className="mac-session-logo">
@@ -579,6 +587,7 @@ export function NavigationPanel({
                     <button
                       type="button"
                       className={`mac-session-state ${macState.tone}`}
+                      data-reorder-ignore
                       title={isActive && connectionIsLive(serverConnection) ? "断开连接" : connectionActionLabel(serverConnection)}
                       onClick={(event) => {
                         event.preventDefault();
@@ -606,6 +615,7 @@ export function NavigationPanel({
                   <button
                     type="button"
                     className="mac-session-more mac-session-detach"
+                    data-reorder-ignore
                     aria-label={`${taskName}在新窗口打开`}
                     title="在新窗口打开"
                     onClick={(event) => {
@@ -621,6 +631,7 @@ export function NavigationPanel({
                   <button
                     type="button"
                     className="mac-session-more"
+                    data-reorder-ignore
                     aria-label={`${taskName}设置`}
                     title="会话设置"
                     onClick={(event) => {
@@ -652,13 +663,14 @@ export function NavigationPanel({
               <div
                 className={`ipad-session-row ${isActive ? "active" : ""} ${taskRunning ? "running" : ""} ${
                   unreadResult ? "has-unread-result" : ""
-                }`}
+                } ${draggingId === server.id ? "is-reordering" : ""}`}
                 role="button"
                 tabIndex={0}
                 key={server.id}
                 aria-label={`${taskName}，${ipadStatus.label}`}
                 onClick={() => onSelectServer?.(server.id)}
                 onKeyDown={(event) => selectServerFromCard(event, server.id)}
+                {...getReorderProps(server.id)}
               >
                 <AgentLogo agentId={server.profile?.agentId || "codex"} compact />
                 <span className="ipad-session-copy">
@@ -673,6 +685,7 @@ export function NavigationPanel({
                   <button
                     type="button"
                     className={`ipad-session-connect ${ipadStatus.tone}`}
+                    data-reorder-ignore
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
@@ -693,6 +706,7 @@ export function NavigationPanel({
                     <button
                       type="button"
                       className="ipad-session-settings"
+                      data-reorder-ignore
                       aria-label={`${taskName}设置`}
                       onClick={(event) => {
                         event.preventDefault();
@@ -712,13 +726,14 @@ export function NavigationPanel({
             <div
               className={`nav-card server-card ${isActive ? "active" : ""} ${taskRunning ? "running" : ""} ${
                 unreadResult ? "has-unread-result" : ""
-              }`}
+              } ${draggingId === server.id ? "is-reordering" : ""}`}
               role="button"
               tabIndex={0}
               key={server.id}
               aria-label={`${taskName}，${server.profile.host || "未添加"}，${serverPlatformLabel(server.profile)}`}
               onClick={() => onSelectServer?.(server.id)}
               onKeyDown={(event) => selectServerFromCard(event, server.id)}
+              {...getReorderProps(server.id)}
             >
               {unreadResult ? (
                 <span
@@ -744,6 +759,7 @@ export function NavigationPanel({
                     <button
                       type="button"
                       className="task-settings-button"
+                      data-reorder-ignore
                       aria-label="会话设置"
                       title="会话设置"
                       onClick={(event) => {
@@ -757,6 +773,7 @@ export function NavigationPanel({
                   ) : null}
                   <button
                     className={`connect-badge ${serverStatus}`}
+                    data-reorder-ignore
                     type="button"
                     onClick={(event) => {
                       event.preventDefault();

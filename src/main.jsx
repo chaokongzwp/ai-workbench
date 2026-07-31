@@ -8,6 +8,7 @@ import "./platforms/ipad/ipad.css";
 import "./utility-controls.css";
 import "./platforms/iphone/iphone.css";
 import "./platforms/mac/mac.css";
+import "./session-reorder.css";
 
 function renderFatalError(error) {
   const root = document.getElementById("root");

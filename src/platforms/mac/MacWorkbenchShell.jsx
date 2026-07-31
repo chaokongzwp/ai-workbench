@@ -71,6 +71,7 @@ export function MacWorkbenchShell({
   remoteDirectoryOpen,
   remoteDirectory,
   onSelectServer,
+  onReorderServer,
   onOpenChatWindow,
   onConfigureServer,
   onAddServer,
@@ -210,6 +211,7 @@ export function MacWorkbenchShell({
             collapsed={sidebarCollapsed}
             onToggleCollapse={onToggleSidebar}
             onSelectServer={onSelectServer}
+            onReorderServer={onReorderServer}
             onOpenChatWindow={onOpenChatWindow}
             onConfigureServer={onConfigureServer}
             onAddServer={onAddServer}
@@ -400,6 +402,7 @@ export function MacWorkbenchShell({
                 await onSelectServer?.(serverId);
                 setMobileNavOpen(false);
               }}
+              onReorderServer={onReorderServer}
               onConfigureServer={(serverId) => {
                 onConfigureServer?.(serverId);
                 setMobileNavOpen(false);

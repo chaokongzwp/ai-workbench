@@ -22,6 +22,7 @@ import {
 import { AgentLogo, StatusDot } from "../../features/primitives.jsx";
 import { NativeSshTerminal } from "../native/NativeSshTerminal.jsx";
 import { useProgressiveMessages } from "../useProgressiveMessages.js";
+import { useSessionReorder } from "../../features/useSessionReorder.js";
 import {
   agentById,
   composerLockPresentation,
@@ -497,6 +498,7 @@ export function IphoneWorkbenchShell({
   remoteDirectoryOpen,
   remoteDirectory,
   onSelectServer,
+  onReorderServer,
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
@@ -590,6 +592,7 @@ export function IphoneWorkbenchShell({
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
   const [exportNotice, setExportNotice] = useState(null);
+  const { draggingId, getReorderProps } = useSessionReorder(onReorderServer);
   const {
     visibleMessages,
     handleProgressiveScroll,
@@ -903,7 +906,11 @@ export function IphoneWorkbenchShell({
               />
             </label>
             <div className="iphone-session-body">
-              <div className="iphone-session-list" role="list" aria-label="工作会话列表">
+              <div
+                className={`iphone-session-list ${draggingId ? "session-reorder-active" : ""}`}
+                role="list"
+                aria-label="工作会话列表"
+              >
                 {visibleSessions.map(({ server, index }) => {
                   const isActive = server.id === activeServerId;
                   const serverConnection = isActive ? connection : server.connection;
@@ -922,7 +929,10 @@ export function IphoneWorkbenchShell({
 	                    <div
 	                      key={server.id}
 	                      role="listitem"
-	                      className={`iphone-session-row ${isActive ? "active" : ""}`}
+	                      className={`iphone-session-row ${isActive ? "active" : ""} ${
+                          draggingId === server.id ? "is-reordering" : ""
+                        }`}
+	                      {...getReorderProps(server.id)}
 	                    >
 	                      <button
 	                        type="button"
@@ -947,6 +957,7 @@ export function IphoneWorkbenchShell({
 	                      <button
 	                        type="button"
 	                        className="iphone-session-edit"
+	                        data-reorder-ignore
 	                        onClick={() => {
 	                          onConfigureServer?.(server.id);
 	                          closeSessionSheet();
