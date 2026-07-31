@@ -595,6 +595,7 @@ export function useWorkbenchController() {
   const startupAgentSyncNoticeRef = useRef(new Set());
   const agentHealthRefreshKeysRef = useRef(new Set());
   const agentHealthInFlightConnectionsRef = useRef(new Set());
+  const sessionConnectionPromisesRef = useRef(new Map());
   const startupSessionReconnectRef = useRef("");
   const manualDisconnectSessionIdsRef = useRef(new Set());
   const agentConnectionPollAtRef = useRef(new Map());
@@ -2905,7 +2906,23 @@ export function useWorkbenchController() {
     [runRemoteCommandForProfile],
   );
 
-  async function connectExistingSession(serverId = activeServerIdRef.current) {
+  function connectExistingSession(serverId = activeServerIdRef.current) {
+    const targetServerId = String(serverId || activeServerIdRef.current || "").trim();
+    if (!targetServerId) return Promise.resolve(false);
+
+    const existingPromise = sessionConnectionPromisesRef.current.get(targetServerId);
+    if (existingPromise) return existingPromise;
+
+    const connectionPromise = connectExistingSessionOnce(targetServerId).finally(() => {
+      if (sessionConnectionPromisesRef.current.get(targetServerId) === connectionPromise) {
+        sessionConnectionPromisesRef.current.delete(targetServerId);
+      }
+    });
+    sessionConnectionPromisesRef.current.set(targetServerId, connectionPromise);
+    return connectionPromise;
+  }
+
+  async function connectExistingSessionOnce(serverId) {
     if (busyRef.current) return false;
 
     const currentServers = serversRef.current.length ? serversRef.current : servers;
