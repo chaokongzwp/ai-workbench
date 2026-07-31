@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   agentPreferredForProfile,
   dedupeRemoteTaskMessages,
@@ -112,5 +113,21 @@ assert.equal(messageTextKey({ promptText: " 继续执行 " }), "继续执行");
 assert.equal(isMessageListDiagnostic({ title: "消息列表已拉取" }), true);
 assert.equal(isMessageListDiagnostic({ title: "Claude 输出已刷新" }), true);
 assert.equal(isMessageListDiagnostic({ title: "Claude 回复" }), false);
+
+const controllerSource = readFileSync(
+  new URL("../src/app/useWorkbenchController.jsx", import.meta.url),
+  "utf8",
+);
+const sendTaskSource = controllerSource.slice(
+  controllerSource.indexOf("  async function sendTask(textOverride) {"),
+  controllerSource.indexOf("  async function startVoiceInput(", controllerSource.indexOf("  async function sendTask(textOverride) {")),
+);
+const optimisticSendIndex = sendTaskSource.indexOf("const selectedAgent = agentById");
+const clearComposerIndex = sendTaskSource.indexOf('setComposer("");', optimisticSendIndex);
+const appendLocalMessagesIndex = sendTaskSource.indexOf("setServerMessages(serverId, (items) => [", optimisticSendIndex);
+const awaitConnectionIndex = sendTaskSource.indexOf("await connectExistingSession(serverId);");
+assert.ok(clearComposerIndex >= 0 && clearComposerIndex < awaitConnectionIndex);
+assert.ok(appendLocalMessagesIndex >= 0 && appendLocalMessagesIndex < awaitConnectionIndex);
+assert.match(sendTaskSource, /消息已保存在本地，但没有发送到远端/);
 
 console.log("controller message lifecycle regression: ok");

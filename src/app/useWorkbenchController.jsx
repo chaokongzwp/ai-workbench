@@ -6132,21 +6132,6 @@ export function useWorkbenchController() {
       enqueueTaskNotice({ serverId, title: "请先选择一个工作目录", tone: "error" });
       return;
     }
-    if (!connectionIsLive(sourceServer.connection)) {
-      setSendConnectingServerId(serverId);
-      try {
-        await connectExistingSession(serverId);
-      } finally {
-        setSendConnectingServerId((current) => (current === serverId ? "" : current));
-      }
-      sourceServer = serverById(serverId) || sourceServer;
-      currentProfile = withKnownPassword(sourceServer.profile);
-      if (!connectionIsLive(sourceServer.connection)) {
-        enqueueTaskNotice({ serverId, title: "连接异常，消息没有发送", tone: "error" });
-        return;
-      }
-    }
-
     const selectedAgent = agentById(currentProfile.agentId, activeAgent);
     sendingServerIdsRef.current.add(serverId);
     const routerEnabled = mainAIRouterReady(currentProfile) && !pendingFiles.length;
@@ -6159,42 +6144,60 @@ export function useWorkbenchController() {
     const initialConversationId = ensureServerConversationId(serverId, currentProfile, selectedAgent.id);
     composerRef.current = "";
     setComposer("");
+    if (pendingFiles.length) clearImageAttachments();
     setRawOpen(false);
     setServerTaskMetadata(serverId, {
       agentId: selectedAgent.id,
       startedAt: Date.now(),
       label: `等待 ${selectedAgent.shortName}`,
     });
-    setServerConnection(serverId, {
-      state: "connected",
-      label: "已连接",
-      detail: selectedAgent.shortName,
-    });
+    setServerConnection(
+      serverId,
+      connectionIsLive(sourceServer.connection)
+        ? {
+            state: "connected",
+            label: "已连接",
+            detail: selectedAgent.shortName,
+          }
+        : {
+            state: "testing",
+            label: "连接中",
+            detail: "正在建立服务器连接",
+          },
+    );
     setServerMessages(serverId, (items) => [
       ...items,
       createMessage({
         id: userMessageId,
-          role: "user",
-          body: pendingFiles.length
-            ? `${text}\n\n${pendingFiles.map((item) => `[${item.isImage ? "图片" : "文件"}] ${item.name}`).join("\n")}`
-            : text,
-          turnId,
-          messagePairId,
-          backend: initialBackend,
-          conversationId: initialConversationId,
-          agentId: selectedAgent.id,
-          promptText: text,
-        }),
+        role: "user",
+        body: pendingFiles.length
+          ? `${text}\n\n${pendingFiles.map((item) => `[${item.isImage ? "图片" : "文件"}] ${item.name}`).join("\n")}`
+          : text,
+        turnId,
+        messagePairId,
+        backend: initialBackend,
+        conversationId: initialConversationId,
+        agentId: selectedAgent.id,
+        promptText: text,
+      }),
       createMessage({
         id: assistantMessageId,
         role: "assistant",
-	        agentId: selectedAgent.id,
-	        title: pendingFiles.length ? "上传中" : routerEnabled ? "判断中" : "提交中",
-	        body: pendingFiles.length
-	          ? `正在上传 ${pendingFiles.length} 个文件。`
-	          : routerEnabled
-	            ? "正在判断这句话该怎么处理。"
-	            : `正在提交给 ${selectedAgent.shortName}。`,
+        agentId: selectedAgent.id,
+        title: connectionIsLive(sourceServer.connection)
+          ? pendingFiles.length
+            ? "上传中"
+            : routerEnabled
+              ? "判断中"
+              : "提交中"
+          : "连接中",
+        body: connectionIsLive(sourceServer.connection)
+          ? pendingFiles.length
+            ? `正在上传 ${pendingFiles.length} 个文件。`
+            : routerEnabled
+              ? "正在判断这句话该怎么处理。"
+              : `正在提交给 ${selectedAgent.shortName}。`
+          : "消息已保存在本地，正在连接服务器。",
         taskState: taskStateSubmitting,
         backend: initialBackend,
         conversationId: initialConversationId,
@@ -6216,6 +6219,51 @@ export function useWorkbenchController() {
       backend: agentPreferredForProfile(currentProfile) ? "agent" : "ssh",
     });
 
+    if (!connectionIsLive(sourceServer.connection)) {
+      setSendConnectingServerId(serverId);
+      try {
+        await connectExistingSession(serverId);
+      } finally {
+        setSendConnectingServerId((current) => (current === serverId ? "" : current));
+      }
+      sourceServer = serverById(serverId) || sourceServer;
+      currentProfile = withKnownPassword(sourceServer.profile);
+      if (!connectionIsLive(sourceServer.connection)) {
+        const finishedAt = Date.now();
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: "连接异常",
+          body: "消息已保存在本地，但没有发送到远端。重新连接后可以编辑并再次发送。",
+          taskState: taskStateFailed,
+          remoteTaskStatus: "connection-failed",
+          completedAt: finishedAt,
+          forceUpdate: true,
+        });
+        setServerTaskMetadata(serverId, {
+          agentId: selectedAgent.id,
+          finishedAt,
+          label: "消息未发送",
+        });
+        sendingServerIdsRef.current.delete(serverId);
+        enqueueTaskNotice({ serverId, title: "连接异常，消息未发送", tone: "error" });
+        void appLog("warn", "send.connection.failed", {
+          serverId,
+          userMessageId,
+          assistantMessageId,
+        });
+        return;
+      }
+      updateAssistantMessageInServer(serverId, assistantMessageId, {
+        title: pendingFiles.length ? "上传中" : routerEnabled ? "判断中" : "提交中",
+        body: pendingFiles.length
+          ? `正在上传 ${pendingFiles.length} 个文件。`
+          : routerEnabled
+            ? "正在判断这句话该怎么处理。"
+            : `正在提交给 ${selectedAgent.shortName}。`,
+        backend: agentPreferredForProfile(currentProfile) ? "agent" : "ssh",
+        forceUpdate: true,
+      });
+    }
+
     let ranRemote = false;
     let completedOk = false;
     let pendingRemoteTask = false;
@@ -6227,7 +6275,6 @@ export function useWorkbenchController() {
       if (pendingFiles.length) {
         uploadedImages = await uploadImageAttachmentsForProfile(currentProfile, pendingFiles);
         promptText = appendUploadedImagesToPrompt(text, uploadedImages);
-        clearImageAttachments();
         updateAssistantMessageInServer(serverId, userMessageId, {
           body: text,
           attachments: uploadedImages,
