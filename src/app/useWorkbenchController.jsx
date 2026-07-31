@@ -257,6 +257,7 @@ const {
   previewLabelFromKind,
   previewMimeFromExtension,
   profileConnectionKey,
+  profileHostCandidates,
   profileIssue,
   profileReady,
   profileWithDetectedTools,
@@ -394,6 +395,20 @@ async function runNativeCommandWithClientTimeout(payload, commandTimeoutSeconds)
   } finally {
     if (timer) window.clearTimeout(timer);
   }
+}
+
+function retryableSshConnectionError(error) {
+  const detail = String(error?.message || error || "");
+  return /ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|no route to host|connection refused|connection timed out|connection lost before handshake/i.test(
+    detail,
+  );
+}
+
+function orderedHostCandidates(profile, preferredHost = "") {
+  const candidates = profileHostCandidates(profile);
+  const preferred = String(preferredHost || "").trim();
+  if (!preferred) return candidates;
+  return [preferred, ...candidates.filter((host) => host.toLocaleLowerCase() !== preferred.toLocaleLowerCase())];
 }
 
 function hapticKindForNoticeTone(tone) {
@@ -615,6 +630,7 @@ export function useWorkbenchController() {
   const agentConnectionPollAtRef = useRef(new Map());
   const agentConversationAutoSyncAtRef = useRef(new Map());
   const agentConversationSyncFailedAtRef = useRef(new Map());
+  const preferredHostByConnectionRef = useRef(new Map());
   const conversationScrollRef = useRef(null);
   const conversationStickToBottomRef = useRef(true);
   const conversationScrollStateRef = useRef({
@@ -628,6 +644,46 @@ export function useWorkbenchController() {
     const resolved = typeof nextProfile === "function" ? nextProfile(current) : nextProfile;
     draftProfileRef.current = resolved;
     setDraftProfile(resolved);
+  }
+
+  async function runCommandWithHostFallback(currentProfile, sessionId, commandPayload, maxResponseSize, commandTimeoutSeconds) {
+    const connectionKey = profileConnectionKey(currentProfile);
+    const preferredHost = preferredHostByConnectionRef.current.get(connectionKey);
+    const hosts = orderedHostCandidates(currentProfile, preferredHost);
+    let lastError = null;
+
+    for (let index = 0; index < hosts.length; index += 1) {
+      const host = hosts[index];
+      try {
+        const result = await runNativeCommandWithClientTimeout(
+          {
+            sessionId,
+            host,
+            port: currentProfile.port,
+            username: currentProfile.username,
+            password: currentProfile.password,
+            connectTimeoutSeconds: currentProfile.connectTimeoutSeconds,
+            commandTimeoutSeconds,
+            ...commandPayload,
+            maxResponseSize,
+          },
+          commandTimeoutSeconds,
+        );
+        preferredHostByConnectionRef.current.set(connectionKey, host);
+        return { result, host, fallbackUsed: index > 0 };
+      } catch (error) {
+        lastError = error;
+        if (!retryableSshConnectionError(error) || index === hosts.length - 1) throw error;
+        void appLog("warn", "ssh.command.host_fallback", {
+          sessionId,
+          failedHost: host,
+          nextHost: hosts[index + 1],
+          error: shortError(error),
+        });
+      }
+    }
+
+    throw lastError || new Error("无法连接到任何服务器地址。");
   }
 
   function revokeImagePreviews(attachments = []) {
@@ -1959,22 +2015,20 @@ export function useWorkbenchController() {
 
     void appLog("info", "ssh.command.start", diagnostics);
     try {
-      const result = await runNativeCommandWithClientTimeout({
-        sessionId: activeServerIdRef.current || `profile:${profileConnectionKey(current)}`,
-        host: current.host,
-        port: current.port,
-        username: current.username,
-        password: current.password,
-        connectTimeoutSeconds: current.connectTimeoutSeconds,
-        commandTimeoutSeconds,
-        ...commandPayload,
+      const executed = await runCommandWithHostFallback(
+        current,
+        activeServerIdRef.current || `profile:${profileConnectionKey(current)}`,
+        commandPayload,
         maxResponseSize,
-      }, commandTimeoutSeconds);
-      const stdout = normalizeRemoteCommandOutput(result);
+        commandTimeoutSeconds,
+      );
+      const stdout = normalizeRemoteCommandOutput(executed.result);
       void appLog("info", "ssh.command.success", {
         ...diagnostics,
         durationMs: Date.now() - startedAt,
         outputLength: stdout.length,
+        connectedHost: executed.host,
+        fallbackUsed: executed.fallbackUsed,
       });
       return stdout;
     } catch (error) {
@@ -2023,22 +2077,20 @@ export function useWorkbenchController() {
             String(server.profile?.workdir || "") === String(current.workdir || "") &&
             String(server.profile?.agentId || "") === String(current.agentId || ""),
         );
-      const result = await runNativeCommandWithClientTimeout({
-        sessionId: exactServer?.id || `profile:${profileConnectionKey(current)}`,
-        host: current.host,
-        port: current.port,
-        username: current.username,
-        password: current.password,
-        connectTimeoutSeconds: current.connectTimeoutSeconds,
-        commandTimeoutSeconds,
-        ...commandPayload,
+      const executed = await runCommandWithHostFallback(
+        current,
+        exactServer?.id || `profile:${profileConnectionKey(current)}`,
+        commandPayload,
         maxResponseSize,
-      }, commandTimeoutSeconds);
-      const stdout = normalizeRemoteCommandOutput(result);
+        commandTimeoutSeconds,
+      );
+      const stdout = normalizeRemoteCommandOutput(executed.result);
       void appLog("info", "ssh.command.success", {
         ...diagnostics,
         durationMs: Date.now() - startedAt,
         outputLength: stdout.length,
+        connectedHost: executed.host,
+        fallbackUsed: executed.fallbackUsed,
       });
       return stdout;
     } catch (error) {

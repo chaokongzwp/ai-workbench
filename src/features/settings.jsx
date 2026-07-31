@@ -1396,7 +1396,21 @@ export function SettingsPanel({
                 options={serverPlatformOptions}
                 onChange={(value) => updateField("platform", value)}
               />
-              <ConfigField label="服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
+              <ConfigField label="主服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
+              <ConfigField
+                label="备用服务器地址"
+                value={(draftProfile.hostAlternates || []).join(", ")}
+                placeholder="多个地址用逗号分隔，按顺序尝试"
+                onChange={(value) =>
+                  updateField(
+                    "hostAlternates",
+                    String(value || "")
+                      .split(/[\n,，;；]/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  )
+                }
+              />
               <ConfigField
                 label="端口"
                 value={draftProfile.port}

@@ -393,6 +393,7 @@ export const defaultProfile = {
   platform: "linux",
   wslDistro: "",
   host: "",
+  hostAlternates: [],
   port: 22,
   username: "root",
   password: "",
@@ -1320,6 +1321,8 @@ export function normalizeProfile(profile) {
     ...platformDefaults,
     ...(profile ?? {}),
     platform,
+    host: String(profile?.host || "").trim(),
+    hostAlternates: normalizeHostAlternates(profile?.hostAlternates, profile?.host),
     wslDistro: String(profile?.wslDistro || "").trim(),
     gitRepoUrl: String(profile?.gitRepoUrl || "").trim(),
     gitTargetDir: String(profile?.gitTargetDir || "").trim(),
@@ -1372,6 +1375,25 @@ export function normalizeProfile(profile) {
   }
 
   return normalized;
+}
+
+export function normalizeHostAlternates(value, primaryHost = "") {
+  const primary = String(primaryHost || "").trim().toLocaleLowerCase();
+  const candidates = Array.isArray(value) ? value : String(value || "").split(/[\n,，;；]/);
+  const seen = new Set(primary ? [primary] : []);
+  return candidates
+    .map((item) => String(item || "").trim())
+    .filter((item) => {
+      const key = item.toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+export function profileHostCandidates(profile) {
+  const normalized = normalizeProfile(profile || {});
+  return [normalized.host, ...normalized.hostAlternates].filter(Boolean);
 }
 
 export function sameWorkdir(left, right, platform = "linux") {
