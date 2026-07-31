@@ -105,7 +105,6 @@ const {
   codeFileExtensions,
   commandDiagnosticPayload,
   commandName,
-  compactInlineText,
   compactMessageForRouter,
   connectionForAppLaunch,
   connectionIsLive,
@@ -180,6 +179,7 @@ const {
   joinWindowsPath,
   lastSpeakableMessageForServer,
   lastActiveTaskMessage,
+  latestWorkbenchAgentConversationTask,
   latestServerMessageSummary,
   latestWorkbenchAgentVersion,
   legacyDefaultWakeWordPhrases,
@@ -1186,27 +1186,11 @@ export function useWorkbenchController() {
       options.existingTaskIds instanceof Set
         ? options.existingTaskIds
         : new Set((options.existingTaskIds || []).map((value) => String(value || "").trim()).filter(Boolean));
-    const fallbackEntry = conversation.taskId
-      ? {
-          taskId: conversation.taskId,
-          sortKey: conversation.historyCursor || "",
-          status: conversation.status,
-          agentId: conversation.agentId || agentId,
-          startedAt: conversation.startedAt,
-          finishedAt: conversation.finishedAt,
-          exitCode: conversation.exitCode,
-          lastPrompt: conversation.lastPrompt,
-          lastResult: conversation.lastResult,
-          mtime: conversation.mtime,
-        }
-      : null;
-    const entries = (Array.isArray(conversation.history) && conversation.history.length ? conversation.history : fallbackEntry ? [fallbackEntry] : [])
-      .filter((entry) => entry?.taskId && !existingTaskIds.has(String(entry.taskId || "").trim()))
-      .sort((a, b) => {
-        const left = Number(a.mtime || timestampFromAgentTime(a.finishedAt || a.startedAt));
-        const right = Number(b.mtime || timestampFromAgentTime(b.finishedAt || b.startedAt));
-        return left - right;
-      });
+    const latestEntry = latestWorkbenchAgentConversationTask(conversation, agentId);
+    const entries =
+      latestEntry?.taskId && !existingTaskIds.has(String(latestEntry.taskId || "").trim())
+        ? [latestEntry]
+        : [];
     const messages = [];
     entries.forEach((entry) => {
       const entryAgentId = entry.agentId || agentId;
@@ -1317,18 +1301,11 @@ export function useWorkbenchController() {
 
   function resolveOrphanAgentPlaceholdersAfterConversationSync(messages = [], conversation, agentId) {
     if (!conversation?.id) return messages;
-    // A missing conversation directory or a truncated history window is not
-    // proof that the task was rejected. Keep the local optimistic message
-    // pending until the Agent returns enough evidence to identify the task.
     if (String(conversation.status || "").trim() === "missing") return messages;
-    if (!Array.isArray(conversation.history) || conversation.history.length === 0) return messages;
-    if (conversation.historyHasMore === true || conversation.history.length >= 5) return messages;
+    const latestEntry = latestWorkbenchAgentConversationTask(conversation, agentId);
+    if (!latestEntry) return messages;
     const now = Date.now();
-    const remotePrompts = new Set(
-      agentConversationHistoryEntries(conversation, agentId)
-        .map((entry) => messageTextKey({ body: entry.lastPrompt || "" }))
-        .filter(Boolean),
-    );
+    const remotePromptKey = messageTextKey({ body: latestEntry.lastPrompt || "" });
     let changed = false;
     const nextMessages = messages.map((message, index) => {
       const isAssistant = message?.role === "assistant";
@@ -1343,7 +1320,7 @@ export function useWorkbenchController() {
 
       const previousUser = [...messages.slice(0, index)].reverse().find((item) => item?.role === "user");
       const promptKey = messageTextKey({ body: message.promptText || previousUser?.body || "" });
-      if (promptKey && remotePrompts.has(promptKey)) return message;
+      if (promptKey && promptKey === remotePromptKey) return message;
 
       const createdAt = Number(message.startedAt || message.createdAtMs || 0);
       if (createdAt && now - createdAt < 15_000) return message;
@@ -1381,77 +1358,6 @@ export function useWorkbenchController() {
       startedAt: timestampFromAgentTime(conversation.startedAt) * 1000 || undefined,
       finishedAt: timestampFromAgentTime(conversation.finishedAt) * 1000 || undefined,
     };
-  }
-
-	  function agentTaskStatusText(status) {
-	    const value = String(status || "").trim().toLowerCase();
-	    if (value === "queued") return "提交中";
-	    if (value === "preparing") return "提交中";
-	    if (value === "running") return "执行中";
-	    if (value === "done") return "已完成";
-	    if (value === "error") return "执行失败";
-	    if (value === "cancelled") return "已取消";
-	    if (value === "missing") return "执行失败";
-	    return value || "状态待确认";
-	  }
-
-  function agentConversationHistoryEntries(conversation, agentId) {
-    const history = Array.isArray(conversation?.history) ? conversation.history : [];
-    if (history.length) return history;
-    if (!conversation?.taskId) return [];
-    return [
-      {
-        taskId: conversation.taskId,
-        status: conversation.status,
-        agentId: conversation.agentId || agentId,
-        startedAt: conversation.startedAt,
-        finishedAt: conversation.finishedAt,
-        lastPrompt: conversation.lastPrompt,
-        lastResult: conversation.lastResult,
-      },
-    ];
-  }
-
-  function createAgentConversationPullResultMessage(conversation, agentId, restoredMessages, options = {}) {
-    const agent = agentById(agentId);
-    const entries = agentConversationHistoryEntries(conversation, agentId);
-    const restoredUserCount = restoredMessages.filter((message) => message.role === "user").length;
-    const restoredAssistantCount = restoredMessages.filter((message) => message.role === "assistant").length;
-    const modeText = options.before ? "更早消息" : "最近消息";
-    const recentLines = entries.slice(0, 5).map((entry, index) => {
-      const prompt = compactInlineText(entry.lastPrompt || "(无任务内容)");
-      const taskId = String(entry.taskId || "").trim();
-      const suffix = taskId ? ` · ${taskId.slice(-8)}` : "";
-      return `${index + 1}. ${agentTaskStatusText(entry.status)}${suffix}\n   ${prompt}`;
-    });
-    const output = [
-      `本次拉取：${modeText}`,
-      `远端返回：${entries.length} 条任务记录`,
-      `新增到本地：${restoredUserCount} 条用户消息，${restoredAssistantCount} 条 AI 回复`,
-      `当前状态：${agentTaskStatusText(conversation.status)}`,
-      `AI：${agent.shortName}`,
-      `会话 ID：${conversation.id}`,
-      conversation.taskId ? `当前任务 ID：${conversation.taskId}` : "",
-      `还有更早消息：${conversation.historyHasMore !== false ? "是" : "否"}`,
-      recentLines.length ? "\n最近记录：" : "\n最近记录：无",
-      ...recentLines,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    return createMessage({
-      role: "assistant",
-      agentId,
-      title: "消息列表已拉取",
-      body: "",
-      output,
-      taskState: taskStateSucceeded,
-      backend: "agent",
-      conversationId: conversation.id,
-      remoteTaskStatus: conversation.status || "",
-      remoteTaskCheckedAt: Date.now(),
-      forceUpdate: true,
-    });
   }
 
   function visibleOutputForStoppedTask(rawOutput, message) {
@@ -5473,8 +5379,7 @@ export function useWorkbenchController() {
     const conversationId = String(latestServer.conversationId || "").trim();
     if (!conversationId) return false;
 
-    const before = String(options.before || "").trim();
-    const lockKey = `${latestServer.id}:${conversationId}:${before || "latest"}`;
+    const lockKey = `${latestServer.id}:${conversationId}:latest`;
     if (syncingAgentConversationsRef.current.has(lockKey)) return false;
     syncingAgentConversationsRef.current.add(lockKey);
 
@@ -5488,7 +5393,6 @@ export function useWorkbenchController() {
         currentProfile,
         buildWorkbenchAgentConversationStatusCommand(currentProfile, conversationId, {
           limit: 1,
-          before,
         }),
         2_097_152,
         45,
@@ -5506,15 +5410,10 @@ export function useWorkbenchController() {
       const restoredMessages = messagesFromAgentConversation(conversation, agentId, {
         existingTaskIds: new Set(),
       });
-      const resultMessage =
-        options.showResult === true
-          ? createAgentConversationPullResultMessage(conversation, agentId, restoredMessages, { before })
-          : null;
       const current = serverById(latestServer.id) || latestServer;
       const mergedMessages = resolveOrphanAgentPlaceholdersAfterConversationSync(dedupeRemoteTaskMessages([
         ...(current.messages || []),
         ...restoredMessages,
-        ...(resultMessage ? [resultMessage] : []),
       ]), conversation, agentId);
       const hasNewMessage = mergedMessages.length !== (current.messages || []).length;
       const nextTask = taskMetadataFromAgentConversation(conversation, agentId);
@@ -5572,10 +5471,6 @@ export function useWorkbenchController() {
     } finally {
       syncingAgentConversationsRef.current.delete(lockKey);
     }
-  }
-
-  async function loadOlderAgentHistoryForServer() {
-    return false;
   }
 
   async function syncRemoteAgentTasks() {

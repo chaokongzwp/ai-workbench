@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildWorkbenchAgentConversationStatusCommand } from "../src/core/agent.js";
+import {
+  buildWorkbenchAgentConversationStatusCommand,
+  latestWorkbenchAgentConversationTask,
+} from "../src/core/agent.js";
 
 function decodePowerShellCommand(command) {
   const encoded = String(command).match(/-EncodedCommand\s+(\S+)/)?.[1] || "";
@@ -28,4 +31,21 @@ test("conversation recovery always requests at most the latest Agent task", () =
     decodePowerShellCommand(windowsCommand),
     /\('conversation-status', 'conversation-test', '1', ''\)/,
   );
+});
+
+test("conversation recovery ignores older Agent task history", () => {
+  const latest = latestWorkbenchAgentConversationTask(
+    {
+      id: "conversation-test",
+      taskId: "task-latest",
+      history: [
+        { taskId: "task-older", lastPrompt: "旧任务" },
+        { taskId: "task-latest", lastPrompt: "最新任务" },
+        { taskId: "task-oldest", lastPrompt: "更旧任务" },
+      ],
+    },
+    "claude",
+  );
+  assert.equal(latest.taskId, "task-latest");
+  assert.equal(latest.lastPrompt, "最新任务");
 });

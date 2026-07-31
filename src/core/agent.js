@@ -3375,6 +3375,29 @@ export function timestampFromAgentTime(value) {
   return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
 }
 
+export function latestWorkbenchAgentConversationTask(conversation, fallbackAgentId = "codex") {
+  if (!conversation?.id) return null;
+  const taskId = String(conversation.taskId || "").trim();
+  const history = Array.isArray(conversation.history) ? conversation.history : [];
+  const latestHistoryTask =
+    history.find((entry) => taskId && String(entry?.taskId || "").trim() === taskId) ||
+    history.find((entry) => entry?.taskId) ||
+    null;
+  if (latestHistoryTask) return latestHistoryTask;
+  if (!taskId) return null;
+  return {
+    taskId,
+    status: conversation.status,
+    agentId: conversation.agentId || fallbackAgentId,
+    startedAt: conversation.startedAt,
+    finishedAt: conversation.finishedAt,
+    exitCode: conversation.exitCode,
+    lastPrompt: conversation.lastPrompt,
+    lastResult: conversation.lastResult,
+    mtime: conversation.mtime,
+  };
+}
+
 export function parseWorkbenchAgentConversations(output) {
   // Native SSH clients commonly return CRLF even when the remote host is
   // Linux. Normalize once so the block protocol behaves identically on Mac,
