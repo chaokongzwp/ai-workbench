@@ -1133,6 +1133,7 @@ export function buildWindowsCodexExecCommand(profile, agent, prompt) {
   const command = agentCommand(profile, agent) || "codex";
   const stateDir = joinWindowsPath(profile.workdir, ".ai-workbench");
   const sessionFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.session`);
+  const pidFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.pid`);
   const model = selectedAgentModel(profile, agent);
   const permissionArgs = codexPermissionArgs(profile).map(psQuote).join(", ");
 
@@ -1140,6 +1141,7 @@ export function buildWindowsCodexExecCommand(profile, agent, prompt) {
 $AIWB_WORKDIR = ${psQuote(profile.workdir)}
 $AIWB_STATE_DIR = ${psQuote(stateDir)}
 $AIWB_SESSION_FILE = ${psQuote(sessionFile)}
+$AIWB_PID_FILE = ${psQuote(pidFile)}
 New-Item -ItemType Directory -Force -Path $AIWB_WORKDIR | Out-Null
 New-Item -ItemType Directory -Force -Path $AIWB_STATE_DIR | Out-Null
 Set-Location -LiteralPath $AIWB_WORKDIR
@@ -1187,8 +1189,10 @@ if ($AIWB_SESSION -match "^[0-9a-fA-F-]{36}$") {
 
 $AIWB_PREVIOUS_ERROR_ACTION = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
+Set-Content -LiteralPath $AIWB_PID_FILE -Value $PID -NoNewline
 & $AIWB_COMMAND @AIWB_ARGS *> $AIWB_LOG
 $AIWB_STATUS = $LASTEXITCODE
+Remove-Item -LiteralPath $AIWB_PID_FILE -Force -ErrorAction SilentlyContinue
 $ErrorActionPreference = $AIWB_PREVIOUS_ERROR_ACTION
 if ($null -eq $AIWB_STATUS) { $AIWB_STATUS = 0 }
 if ($AIWB_STATUS -ne 0) {
@@ -1544,7 +1548,22 @@ fi
 }
 
 export function buildInterruptCommand(profile, agent) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式当前任务由 codex exec 一次性执行，暂不支持 tmux 中断。");
+  if (isWindowsProfile(profile)) {
+    const stateDir = joinWindowsPath(profile.workdir, ".ai-workbench");
+    const pidFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.pid`);
+    return powershellCommand(`
+$AIWB_PID_FILE = ${psQuote(pidFile)}
+$AIWB_PID = if (Test-Path -LiteralPath $AIWB_PID_FILE) { (Get-Content -LiteralPath $AIWB_PID_FILE -Raw).Trim() } else { "" }
+if ($AIWB_PID -match "^\\d+$" -and (Get-Process -Id ([int]$AIWB_PID) -ErrorAction SilentlyContinue)) {
+  & taskkill.exe /PID $AIWB_PID /T /F | Out-Null
+  Remove-Item -LiteralPath $AIWB_PID_FILE -Force -ErrorAction SilentlyContinue
+  Write-Output "AI Workbench 已停止这条 Windows 任务。"
+} else {
+  Remove-Item -LiteralPath $AIWB_PID_FILE -Force -ErrorAction SilentlyContinue
+  Write-Output "任务进程已结束，可以继续输入。"
+}
+`);
+  }
 
   const targetSession = sessionName(profile, agent.id);
   return remoteBashCommand(profile, `
