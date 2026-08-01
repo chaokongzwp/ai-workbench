@@ -1396,13 +1396,16 @@ export function useWorkbenchController() {
     return messages;
   }
 
-  function resolveOrphanAgentPlaceholdersAfterConversationSync(messages = [], conversation, agentId) {
+  function resolveOrphanAgentPlaceholdersAfterConversationSync(messages = [], conversation, agentId, options = {}) {
     if (!conversation?.id) return messages;
     if (String(conversation.status || "").trim() === "missing") return messages;
     const latestEntry = latestWorkbenchAgentConversationTask(conversation, agentId);
-    if (!latestEntry) return messages;
+    // A foreground recovery can explicitly confirm that the Agent has no task
+    // for an older local placeholder. In that case the message was never sent
+    // and must not remain locked in "submitting" forever.
+    if (!latestEntry && options.confirmMissing !== true) return messages;
     const now = Date.now();
-    const remotePromptKey = messageTextKey({ body: latestEntry.lastPrompt || "" });
+    const remotePromptKey = messageTextKey({ body: latestEntry?.lastPrompt || "" });
     let changed = false;
     const nextMessages = messages.map((message, index) => {
       const isAssistant = message?.role === "assistant";
@@ -1417,7 +1420,7 @@ export function useWorkbenchController() {
 
       const previousUser = [...messages.slice(0, index)].reverse().find((item) => item?.role === "user");
       const promptKey = messageTextKey({ body: message.promptText || previousUser?.body || "" });
-      if (promptKey && promptKey === remotePromptKey) return message;
+      if (promptKey && remotePromptKey && promptKey === remotePromptKey) return message;
 
       const createdAt = Number(message.startedAt || message.createdAtMs || 0);
       if (createdAt && now - createdAt < 15_000) return message;
@@ -2757,10 +2760,46 @@ export function useWorkbenchController() {
   useEffect(() => {
     const handlePageHide = () => flushWorkspaceSave();
     const recoveryTimers = new Set();
+    const recoverForegroundTask = async () => {
+      if (document.visibilityState !== "visible" || !workspaceLoadedRef.current) return;
+
+      const active = serverById(activeServerIdRef.current);
+      const message = lastIncompleteAgentResponse(active);
+      if (!active || !message || message.backend !== "agent") return;
+
+      const taskId = String(message.remoteTaskId || "").trim();
+      void appLog("info", "agent.foreground_recovery.begin", {
+        serverId: active.id,
+        messageId: message.id,
+        remoteTaskId: taskId,
+      });
+
+      if (taskId) {
+        await syncRemoteAgentMessage(active.id, message);
+        return;
+      }
+
+      updateAssistantMessageInServer(active.id, message.id, {
+        title: "正在确认提交状态",
+        body: "正在向 Agent 确认这条消息是否已收到。",
+        taskState: taskStateSyncing,
+        remoteTaskStatus: "syncing",
+        remoteTaskCheckedAt: Date.now(),
+        forceUpdate: true,
+      });
+      await syncAgentConversationForServer(active, {
+        limit: 1,
+        reason: "foreground-submission-check",
+        confirmMissing: true,
+      });
+    };
     const scheduleRecoverySync = (delayMs) => {
       const timer = window.setTimeout(() => {
         recoveryTimers.delete(timer);
         if (document.visibilityState !== "visible" || !workspaceLoadedRef.current) return;
+        recoverForegroundTask().catch((error) => {
+          void appLog("warn", "agent.foreground_recovery.failed", { error: shortError(error) });
+        });
         syncRemoteAgentTasks().catch((error) => {
           void appLog("warn", "agent.resume_sync.failed", { error: shortError(error) });
         });
@@ -5634,10 +5673,15 @@ export function useWorkbenchController() {
         existingTaskIds: new Set(),
       });
       const current = serverById(latestServer.id) || latestServer;
-      const mergedMessages = resolveOrphanAgentPlaceholdersAfterConversationSync(dedupeRemoteTaskMessages([
-        ...(current.messages || []),
-        ...restoredMessages,
-      ]), conversation, agentId);
+      const mergedMessages = resolveOrphanAgentPlaceholdersAfterConversationSync(
+        dedupeRemoteTaskMessages([
+          ...(current.messages || []),
+          ...restoredMessages,
+        ]),
+        conversation,
+        agentId,
+        { confirmMissing: options.confirmMissing === true },
+      );
       const hasNewMessage = mergedMessages.length !== (current.messages || []).length;
       const nextTask = taskMetadataFromAgentConversation(conversation, agentId);
       const nextConnection = {
