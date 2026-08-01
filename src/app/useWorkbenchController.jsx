@@ -4673,26 +4673,31 @@ export function useWorkbenchController() {
       const probedAgentHealth = healthFromWorkbenchAgentStatus(probedAgent);
       if (probedAgentHealth.agent || probedAgentHealth.agent_version) {
         const connectionKey = profileConnectionKey(currentProfile);
-        const nextServers = serversRef.current.map((server) => {
-          const serverProfile = normalizeProfile(server.profile);
-          if (profileConnectionKey(serverProfile) !== connectionKey) return server;
-          return {
-            ...server,
-            diagnostics: {
-              ...(server.diagnostics || {}),
-              ...probedAgentHealth,
-              agent: "available",
-              agent_version: probedAgentHealth.agent_version || probedAgent.version || server.diagnostics?.agent_version || "1",
-            },
-            connection: {
-              ...(server.connection || {}),
-              mode: agentPreferredForProfile(serverProfile) ? "agent" : server.connection?.mode || "ssh",
-            },
-          };
+        setServers((items) => {
+          const nextServers = items.map((server) => {
+            const serverProfile = normalizeProfile(server.profile);
+            if (profileConnectionKey(serverProfile) !== connectionKey) return server;
+            return {
+              ...server,
+              diagnostics: {
+                ...(server.diagnostics || {}),
+                ...probedAgentHealth,
+                agent: "available",
+                agent_version: probedAgentHealth.agent_version || probedAgent.version || server.diagnostics?.agent_version || "1",
+              },
+              connection: {
+                ...(server.connection || {}),
+                mode: agentPreferredForProfile(serverProfile) ? "agent" : server.connection?.mode || "ssh",
+              },
+            };
+          });
+          serversRef.current = nextServers;
+          if (workspaceLoadedRef.current) {
+            saveLocalMessageHistory(nextServers);
+            queueWorkspaceSave(nextServers, activeServerIdRef.current, 100);
+          }
+          return nextServers;
         });
-        setServers(nextServers);
-        serversRef.current = nextServers;
-        queueWorkspaceSave(nextServers, activeServerIdRef.current, 100);
       }
 
       const runtimeProfile = agentRuntimeProfile(currentProfile);
@@ -4856,7 +4861,6 @@ export function useWorkbenchController() {
           }
           throw new Error(created.error || trimVisibleText(createOutput) || "Agent 创建任务失败。");
         }
-
         const startedAt = optimisticStartedAt;
         setServerTaskMetadata(serverId, {
           backend: "agent",

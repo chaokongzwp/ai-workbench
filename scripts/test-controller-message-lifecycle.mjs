@@ -150,6 +150,10 @@ assert.match(controllerSource, /await sendTask\(text, \{ retryMessage: message \
 assert.match(controllerSource, /async function sendTask\(textOverride, options = \{\}\)/);
 assert.match(controllerSource, /const reuseMessage = existingRetryMessage \|\| null;/);
 assert.match(controllerSource, /retryCount: Number\(item\.retryCount \|\| 0\) \+ 1/);
+assert.match(
+  controllerSource,
+  /setServers\(\(items\) => \{[\s\S]*?saveLocalMessageHistory\(nextServers\)[\s\S]*?queueWorkspaceSave\(nextServers, activeServerIdRef\.current, 100\)/,
+);
 
 const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
 assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);
