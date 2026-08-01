@@ -536,7 +536,7 @@ export function AgentFailureCard({ message, failure, operationBusy, onRetry, onS
       <div className="agent-failure-actions">
         {canRetry ? (
           <button type="button" className="primary" onClick={() => onRetry?.(message)} disabled={operationBusy}>
-            重新发送
+            重试
           </button>
         ) : null}
         {hasDetail ? (
@@ -672,6 +672,9 @@ export function MessageBubble({
     taskState === taskStateFailed &&
     !taskId &&
     waitingLikeMessage(message);
+  const canRetryFailedMessage = Boolean(
+    !agentFailure && taskState === taskStateFailed && String(message?.promptText || "").trim(),
+  );
   const hasVisibleAssistantContent = Boolean(
     agentFailure ||
       bodyText ||
@@ -806,6 +809,13 @@ export function MessageBubble({
             ? "App 没有拿到这条任务的远端编号，暂时无法确认是否已经提交。请重新发送。"
             : assistantBodyText}
         </p>
+      ) : null}
+      {canRetryFailedMessage ? (
+        <div className="agent-failure-actions message-recovery-actions">
+          <button type="button" className="primary" onClick={() => onRetryMessage?.(message)} disabled={operationBusy}>
+            重试
+          </button>
+        </div>
       ) : null}
       {message.modelChoice ? (
         <div className="model-choice-actions" aria-label="选择 Codex 模型">

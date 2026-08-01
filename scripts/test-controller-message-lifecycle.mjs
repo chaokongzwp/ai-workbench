@@ -119,12 +119,12 @@ const controllerSource = readFileSync(
   "utf8",
 );
 const sendTaskSource = controllerSource.slice(
-  controllerSource.indexOf("  async function sendTask(textOverride) {"),
-  controllerSource.indexOf("  async function startVoiceInput(", controllerSource.indexOf("  async function sendTask(textOverride) {")),
+  controllerSource.indexOf("  async function sendTask(textOverride, options = {}) {"),
+  controllerSource.indexOf("  async function startVoiceInput(", controllerSource.indexOf("  async function sendTask(textOverride, options = {}) {")),
 );
 const optimisticSendIndex = sendTaskSource.indexOf("const selectedAgent = agentById");
 const clearComposerIndex = sendTaskSource.indexOf('setComposer("");', optimisticSendIndex);
-const appendLocalMessagesIndex = sendTaskSource.indexOf("setServerMessages(serverId, (items) => [", optimisticSendIndex);
+const appendLocalMessagesIndex = sendTaskSource.indexOf("setServerMessages(serverId, (items) => {", optimisticSendIndex);
 const awaitConnectionIndex = sendTaskSource.indexOf("await connectExistingSession(serverId);");
 assert.ok(clearComposerIndex >= 0 && clearComposerIndex < awaitConnectionIndex);
 assert.ok(appendLocalMessagesIndex >= 0 && appendLocalMessagesIndex < awaitConnectionIndex);
@@ -146,5 +146,13 @@ const switchFromVoiceSource = controllerSource.slice(
   controllerSource.indexOf("  async function playLastResultForVoiceCommand", controllerSource.indexOf("  async function switchToServerFromVoice(")),
 );
 assert.doesNotMatch(switchFromVoiceSource, /setServerConnection\(/);
+assert.match(controllerSource, /await sendTask\(text, \{ retryMessage: message \}\);/);
+assert.match(controllerSource, /async function sendTask\(textOverride, options = \{\}\)/);
+assert.match(controllerSource, /const reuseMessage = existingRetryMessage \|\| null;/);
+assert.match(controllerSource, /retryCount: Number\(item\.retryCount \|\| 0\) \+ 1/);
+
+const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
+assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);
+assert.match(chatSource, />\s*重试\s*</);
 
 console.log("controller message lifecycle regression: ok");

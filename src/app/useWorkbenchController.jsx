@@ -6087,24 +6087,7 @@ export function useWorkbenchController() {
       return;
     }
 
-    const currentProfile = normalizeProfile(profileRef.current);
-    const agent = agentById(message?.agentId || currentProfile.agentId, activeAgent);
-    const now = Date.now();
-    updateAssistantMessageInServer(serverId, message.id, {
-      title: "已重新发送",
-      body: `已重新交给 ${agent.shortName}，新的任务进度会显示在下面。`,
-      output: "",
-      liveOutput: "",
-      taskState: taskStateSucceeded,
-      agentFailure: undefined,
-      modelChoice: undefined,
-      loginAction: undefined,
-      retryText: text,
-      completedAt: now,
-      durationMs: Number(message.startedAt || message.createdAtMs || 0) ? Math.max(0, now - Number(message.startedAt || message.createdAtMs || now)) : message.durationMs,
-      forceUpdate: true,
-    });
-    await sendTask(text);
+    await sendTask(text, { retryMessage: message });
   }
 
   function showAgentFailureDetails(message, failure) {
@@ -6148,7 +6131,8 @@ export function useWorkbenchController() {
     enqueueTaskNotice({ serverId, title: "任务已停止，可以继续发送新任务", tone: "warning" });
   }
 
-  async function sendTask(textOverride) {
+  async function sendTask(textOverride, options = {}) {
+    const retryMessage = options?.retryMessage && typeof options.retryMessage === "object" ? options.retryMessage : null;
     const pendingFiles = imageAttachmentsRef.current.filter((item) => cleanBase64Payload(item?.base64));
     const rawText = taskTextFromValue(textOverride, composerRef.current || composer);
     const text = rawText || (pendingFiles.length ? "请查看这些附件。" : "");
@@ -6164,14 +6148,14 @@ export function useWorkbenchController() {
     }
     lastSendClickAtRef.current = clickedAt;
 
-    if (!pendingFiles.length && (await handleLocalVoiceCommand(text))) {
+    if (!retryMessage && !pendingFiles.length && (await handleLocalVoiceCommand(text))) {
       composerRef.current = "";
       setComposer("");
       lastSendClickAtRef.current = 0;
       return;
     }
 
-    if (!pendingFiles.length) {
+    if (!retryMessage && !pendingFiles.length) {
       const switchIndex = parseSessionSwitchIndex(text);
       const switchMatch = switchIndex >= 0 ? { index: switchIndex, serverId: serversRef.current[switchIndex]?.id } : taskWakeMatchFromText(text, serversRef.current);
       if (switchMatch?.serverId || switchIndex >= 0) {
@@ -6258,12 +6242,16 @@ export function useWorkbenchController() {
       enqueueTaskNotice({ serverId, title: "请先选择一个工作目录", tone: "error" });
       return;
     }
-    const selectedAgent = agentById(currentProfile.agentId, activeAgent);
+    const selectedAgent = agentById(retryMessage?.agentId || currentProfile.agentId, activeAgent);
     sendingServerIdsRef.current.add(serverId);
     const routerEnabled = mainAIRouterReady(currentProfile) && !pendingFiles.length;
-    const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const userMessageId = `${turnId}-request`;
-    const assistantMessageId = `${turnId}-response`;
+    const existingRetryMessage = retryMessage?.id
+      ? (sourceServer.messages || []).find((item) => item.id === retryMessage.id && item.role === "assistant")
+      : null;
+    const reuseMessage = existingRetryMessage || null;
+    const turnId = String(reuseMessage?.turnId || reuseMessage?.messagePairId || "").trim() || `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userMessageId = String(reuseMessage?.replyToMessageId || "").trim() || `${turnId}-request`;
+    const assistantMessageId = reuseMessage?.id || `${turnId}-response`;
     const messagePairId = turnId;
     const sourceMessages = sourceServer.messages || [];
     const initialBackend = agentPreferredForProfile(currentProfile) ? "agent" : "ssh";
@@ -6291,9 +6279,57 @@ export function useWorkbenchController() {
             detail: "正在建立服务器连接",
           },
     );
-    setServerMessages(serverId, (items) => [
-      ...items,
-      createMessage({
+    setServerMessages(serverId, (items) => {
+      if (reuseMessage) {
+        return items.map((item) =>
+          item.id === assistantMessageId
+            ? {
+                ...item,
+                agentId: selectedAgent.id,
+                title: connectionIsLive(sourceServer.connection)
+                  ? pendingFiles.length
+                    ? "上传中"
+                    : routerEnabled
+                      ? "判断中"
+                      : "提交中"
+                  : "连接中",
+                body: connectionIsLive(sourceServer.connection)
+                  ? pendingFiles.length
+                    ? `正在上传 ${pendingFiles.length} 个文件。`
+                    : routerEnabled
+                      ? "正在判断这句话该怎么处理。"
+                      : `正在重新提交给 ${selectedAgent.shortName}。`
+                  : "正在重新连接服务器。",
+                output: "",
+                liveOutput: "",
+                taskState: taskStateSubmitting,
+                backend: initialBackend,
+                conversationId: initialConversationId,
+                promptText: text,
+                retryText: text,
+                startedAt: Date.now(),
+                completedAt: undefined,
+                durationMs: undefined,
+                remoteTaskId: undefined,
+                remoteTaskStatus: "preparing",
+                remoteTaskCheckedAt: Date.now(),
+                agentFailure: undefined,
+                technicalDetail: undefined,
+                resultMissing: false,
+                remoteSyncError: "",
+                loginAction: undefined,
+                modelChoice: undefined,
+                requiredAction: undefined,
+                cancelledAt: undefined,
+                retryCount: Number(item.retryCount || 0) + 1,
+              }
+            : item,
+        );
+      }
+
+      return [
+        ...items,
+        createMessage({
         id: userMessageId,
         role: "user",
         body: pendingFiles.length
@@ -6335,7 +6371,8 @@ export function useWorkbenchController() {
         messagePairId,
         replyToMessageId: userMessageId,
       }),
-    ]);
+      ];
+    });
     void appLog("info", "send.local_messages.appended", {
       serverId,
       userMessageId,
