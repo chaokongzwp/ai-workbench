@@ -628,6 +628,7 @@ export function useWorkbenchController() {
   const startupSessionReconnectRef = useRef("");
   const manualDisconnectSessionIdsRef = useRef(new Set());
   const agentConnectionPollAtRef = useRef(new Map());
+  const agentRouteProbeByConnectionRef = useRef(new Map());
   const agentConversationAutoSyncAtRef = useRef(new Map());
   const agentConversationSyncFailedAtRef = useRef(new Map());
   const preferredHostByConnectionRef = useRef(new Map());
@@ -2195,6 +2196,10 @@ export function useWorkbenchController() {
 
     if (!needsInstall) {
       const agentHealth = healthFromWorkbenchAgentStatus(probe);
+      agentRouteProbeByConnectionRef.current.set(profileConnectionKey(currentProfile), {
+        checkedAt: Date.now(),
+        output: probeOutput,
+      });
       applyAgentHealthToConnection(currentProfile, agentHealth, probeOutput, serverId);
       publish("connected", "已连接", "Agent 已就绪", "agent");
       return { available: true, skipped: false, installed: false, output: probeOutput, parsed: probe, agentHealth };
@@ -2221,6 +2226,10 @@ export function useWorkbenchController() {
         throw new Error(installed.error || trimVisibleText(installOutput) || "Agent 安装失败。");
       }
       const agentHealth = healthFromWorkbenchAgentStatus(installed);
+      agentRouteProbeByConnectionRef.current.set(profileConnectionKey(currentProfile), {
+        checkedAt: Date.now(),
+        output: installOutput,
+      });
       applyAgentHealthToConnection(currentProfile, agentHealth, installOutput, serverId);
       publish("connected", "已连接", "Agent 已就绪", "agent");
       return { available: true, skipped: false, installed: true, output: installOutput, parsed: installed, agentHealth };
@@ -4551,15 +4560,23 @@ export function useWorkbenchController() {
       });
       if (!agentPreferred) return { used: false };
 
-      let probeOutput = "";
-      try {
-        probeOutput = await runRemoteCommandForProfile(currentProfile, buildWorkbenchAgentStatusCommand(currentProfile), 64_000, 20);
-      } catch (error) {
-        void appLog("warn", "agent.probe.failed", {
-          serverId,
-          agentId: agent.id,
-          error: shortError(error),
-        });
+      const connectionKey = profileConnectionKey(currentProfile);
+      const cachedProbe = agentRouteProbeByConnectionRef.current.get(connectionKey);
+      const probeIsFresh =
+        cachedProbe &&
+        Date.now() - Number(cachedProbe.checkedAt || 0) < 15_000 &&
+        workbenchAgentAvailableFromOutput(cachedProbe.output);
+      let probeOutput = probeIsFresh ? cachedProbe.output : "";
+      if (!probeIsFresh) {
+        try {
+          probeOutput = await runRemoteCommandForProfile(currentProfile, buildWorkbenchAgentStatusCommand(currentProfile), 64_000, 20);
+        } catch (error) {
+          void appLog("warn", "agent.probe.failed", {
+            serverId,
+            agentId: agent.id,
+            error: shortError(error),
+          });
+        }
       }
 
       if (!workbenchAgentAvailableFromOutput(probeOutput)) {
@@ -4614,6 +4631,10 @@ export function useWorkbenchController() {
           return { used: false };
         }
       }
+      agentRouteProbeByConnectionRef.current.set(connectionKey, {
+        checkedAt: Date.now(),
+        output: probeOutput,
+      });
       void appLog("info", "agent.route.ready", {
         serverId,
         agentId: agent.id,
@@ -4646,37 +4667,6 @@ export function useWorkbenchController() {
         setServers(nextServers);
         serversRef.current = nextServers;
         queueWorkspaceSave(nextServers, activeServerIdRef.current, 100);
-      }
-      const latestAgentVersionNumber = workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
-      if (latestAgentVersionNumber > 0 && workbenchAgentVersionNumber(probedAgent.version) < latestAgentVersionNumber) {
-        try {
-          setServerConnection(serverId, {
-            state: "testing",
-            label: "升级 Agent",
-            detail: "同步会话注册表",
-            mode: "agent",
-          });
-          probeOutput = await runRemoteCommandForProfile(
-            currentProfile,
-            buildInstallWorkbenchAgentCommand(currentProfile),
-            256_000,
-            300,
-          );
-          const upgraded = parseWorkbenchAgentOutput(probeOutput);
-          if (workbenchAgentVersionNumber(upgraded.version) < latestAgentVersionNumber) {
-            void appLog("warn", "agent.upgrade.unconfirmed", {
-              serverId,
-              agentId: agent.id,
-              version: upgraded.version || probedAgent.version,
-            });
-          }
-        } catch (upgradeError) {
-          void appLog("warn", "agent.upgrade.failed", {
-            serverId,
-            agentId: agent.id,
-            error: shortError(upgradeError),
-          });
-        }
       }
 
       const runtimeProfile = agentRuntimeProfile(currentProfile);
