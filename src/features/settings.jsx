@@ -1373,7 +1373,6 @@ export function SettingsPanel({
             >
               <ConfigField label="名称" value={draftProfile.name} onChange={(value) => updateField("name", value)} />
               <SettingsStatusRow
-                icon={Robot}
                 title="AI 类型"
                 detail="创建后固定；切换 AI 请新建会话。"
                 value={currentAgent.shortName}
@@ -1439,7 +1438,6 @@ export function SettingsPanel({
               {cliTools.map((tool) => (
                 <SettingsStatusRow
                   key={tool.id}
-                  icon={Terminal}
                   title={`${tool.name} CLI`}
                   detail={tool.path ? `路径：${tool.path}` : `${tool.name} 尚未检测到，可单独安装`}
                   value={tool.available ? "可用" : tool.status === "installing" ? "安装中" : "未安装"}
