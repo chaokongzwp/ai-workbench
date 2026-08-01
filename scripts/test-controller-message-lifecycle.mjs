@@ -150,10 +150,15 @@ assert.match(controllerSource, /await sendTask\(text, \{ retryMessage: message \
 assert.match(controllerSource, /async function sendTask\(textOverride, options = \{\}\)/);
 assert.match(controllerSource, /const reuseMessage = existingRetryMessage \|\| null;/);
 assert.match(controllerSource, /retryCount: Number\(item\.retryCount \|\| 0\) \+ 1/);
-assert.match(
-  controllerSource,
-  /setServers\(\(items\) => \{[\s\S]*?saveLocalMessageHistory\(nextServers\)[\s\S]*?queueWorkspaceSave\(nextServers, activeServerIdRef\.current, 100\)/,
+assert.match(controllerSource, /function commitServerPatch\(patch, \{ persistDelay = 250, persist = true \} = \{\}\)/);
+assert.match(controllerSource, /function patchServersByConnection\(targetProfile, updater, options = \{\}\)/);
+assert.match(controllerSource, /function updateServer\(serverId, updater\)/);
+const agentRouteSource = controllerSource.slice(
+  controllerSource.indexOf("const probedAgent = parseWorkbenchAgentOutput(probeOutput);"),
+  controllerSource.indexOf("const runtimeProfile = agentRuntimeProfile(currentProfile);"),
 );
+assert.match(agentRouteSource, /patchServersByConnection\(/);
+assert.doesNotMatch(agentRouteSource, /setServers\(/);
 
 const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
 assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);

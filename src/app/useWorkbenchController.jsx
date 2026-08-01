@@ -1121,20 +1121,43 @@ export function useWorkbenchController() {
     };
   }, []);
 
+  // Runtime updates must patch the latest session snapshot. Workspace load/import
+  // are the only flows allowed to intentionally replace the full list.
+  function commitServerPatch(patch, { persistDelay = 250, persist = true } = {}) {
+    const currentItems = serversRef.current.length ? serversRef.current : servers;
+    const nextItems = typeof patch === "function" ? patch(currentItems) : patch;
+    if (!Array.isArray(nextItems) || nextItems === currentItems) return currentItems;
+
+    serversRef.current = nextItems;
+    setServers(nextItems);
+    if (persist && workspaceLoadedRef.current) {
+      saveLocalMessageHistory(nextItems);
+      queueWorkspaceSave(nextItems, activeServerIdRef.current, persistDelay);
+    }
+    return nextItems;
+  }
+
+  function patchServersByConnection(targetProfile, updater, options = {}) {
+    const connectionKey = profileConnectionKey(normalizeProfile(targetProfile));
+    return commitServerPatch(
+      (items) =>
+        items.map((server) => {
+          const serverProfile = normalizeProfile(server.profile);
+          if (profileConnectionKey(serverProfile) !== connectionKey) return server;
+          return updater(server, serverProfile);
+        }),
+      options,
+    );
+  }
+
   function updateServer(serverId, updater) {
-    setServers((items) => {
-      const nextItems = items.map((server) => {
+    return commitServerPatch((items) =>
+      items.map((server) => {
         if (server.id !== serverId) return server;
         const patch = typeof updater === "function" ? updater(server) : updater;
         return reconcileServerMessageLifecycle({ ...server, ...patch });
-      });
-      serversRef.current = nextItems;
-      if (workspaceLoadedRef.current) {
-        saveLocalMessageHistory(nextItems);
-        queueWorkspaceSave(nextItems, activeServerIdRef.current, 250);
-      }
-      return nextItems;
-    });
+      }),
+    );
   }
 
   function updateActiveServer(updater) {
@@ -2107,12 +2130,10 @@ export function useWorkbenchController() {
 
   function applyAgentHealthToConnection(targetProfile, agentHealth = {}, rawOutput = "", preferredServerId = "") {
     const normalizedProfile = normalizeProfile(targetProfile);
-    const connectionKey = profileConnectionKey(normalizedProfile);
     const preferAgent = agentPreferredForProfile(normalizedProfile);
-    const nextServers = serversRef.current.map((server) => {
-      const serverProfile = normalizeProfile(server.profile);
-      if (profileConnectionKey(serverProfile) !== connectionKey) return server;
-      return {
+    return patchServersByConnection(
+      normalizedProfile,
+      (server, serverProfile) => ({
         ...server,
         profile:
           isWindowsProfile(serverProfile) && preferAgent
@@ -2137,12 +2158,9 @@ export function useWorkbenchController() {
               }
             : {}),
         },
-      };
-    });
-    setServers(nextServers);
-    serversRef.current = nextServers;
-    queueWorkspaceSave(nextServers, activeServerIdRef.current, 100);
-    return nextServers;
+      }),
+      { persistDelay: 100 },
+    );
   }
 
   async function ensureWorkbenchAgentForProfile(
@@ -3008,10 +3026,9 @@ export function useWorkbenchController() {
         if (parsed.status !== "ready" && !parsed.version) return;
 
         const agentHealth = healthFromWorkbenchAgentStatus(parsed);
-        const nextServers = serversRef.current.map((server) => {
-          const serverProfile = normalizeProfile(server.profile);
-          if (profileConnectionKey(serverProfile) !== connectionKey) return server;
-          return {
+        patchServersByConnection(
+          targetProfile,
+          (server, serverProfile) => ({
             ...server,
             diagnostics: {
               ...(server.diagnostics || {}),
@@ -3024,11 +3041,9 @@ export function useWorkbenchController() {
               ...(server.connection || {}),
               mode: agentPreferredForProfile(serverProfile) ? "agent" : server.connection?.mode || "ssh",
             },
-          };
-        });
-        setServers(nextServers);
-        serversRef.current = nextServers;
-        queueWorkspaceSave(nextServers, activeServerIdRef.current, 100);
+          }),
+          { persistDelay: 100 },
+        );
       } catch (error) {
         void appLog("warn", "agent.health.refresh.failed", {
           serverId,
@@ -3147,9 +3162,7 @@ export function useWorkbenchController() {
         reason: "session-connect",
       });
       const connectionMode = agentSetup.available ? "agent" : "ssh";
-      const nextServers = serversRef.current.map((server) =>
-        server.id === target.id
-          ? {
+      const nextServers = updateServer(target.id, (server) => ({
               ...server,
               profile: detectedProfile,
               connection: {
@@ -3169,11 +3182,7 @@ export function useWorkbenchController() {
               discovery: null,
               rawOutput:
                 [stdout.trim(), agentSetup.output.trim()].filter(Boolean).join("\n\n") || "连接成功。",
-            }
-          : server,
-      );
-      setServers(nextServers);
-      serversRef.current = nextServers;
+            }));
       await saveWorkspace(nextServers, target.id);
       const connectedServer = nextServers.find((server) => server.id === target.id);
       if (agentSetup.available && serverNeedsAgentConversationRecovery(connectedServer)) {
@@ -3191,19 +3200,10 @@ export function useWorkbenchController() {
         attempts: error?.reconnectAttempts || 0,
         error: String(error?.cause?.message || error?.message || error || ""),
       });
-      setServers((items) => {
-        const nextItems = items.map((server) =>
-          server.id === target.id
-            ? {
-                ...server,
-                connection: { state: "error", label: "连接异常", detail: message },
-                discovery: null,
-                rawOutput: "连接异常",
-              }
-            : server,
-        );
-        serversRef.current = nextItems;
-        return nextItems;
+      updateServer(target.id, {
+        connection: { state: "error", label: "连接异常", detail: message },
+        discovery: null,
+        rawOutput: "连接异常",
       });
       return false;
     } finally {
@@ -3345,16 +3345,7 @@ export function useWorkbenchController() {
       setRawOpen(false);
       setRawOutput("已断开当前 App 里的连接状态。配置和历史记录仍然保留。");
     }
-    const nextServers = currentServers.map((server) =>
-      server.id === target.id
-        ? {
-            ...server,
-            connection: nextConnection,
-          }
-        : server,
-    );
-    serversRef.current = nextServers;
-    setServers(nextServers);
+    const nextServers = updateServer(target.id, { connection: nextConnection });
     await saveWorkspace(nextServers, activeServerIdRef.current);
     manualDisconnectSessionIdsRef.current.delete(target.id);
   }
@@ -3568,10 +3559,7 @@ export function useWorkbenchController() {
         throw new Error(parsed.error || trimVisibleText(output) || "Agent 安装失败。");
       }
       const agentHealth = healthFromWorkbenchAgentStatus(parsed);
-      const connectionKey = profileConnectionKey(nextProfile);
-      const nextServers = currentServers.map((server) => {
-        const serverProfile = normalizeProfile(server.profile);
-        if (profileConnectionKey(serverProfile) !== connectionKey) return server;
+      const nextServers = patchServersByConnection(nextProfile, (server) => {
         return {
           ...server,
           diagnostics: {
@@ -3583,8 +3571,6 @@ export function useWorkbenchController() {
           rawOutput: server.id === targetServerId ? output.trim() || "Agent 已安装。" : server.rawOutput,
         };
       });
-      setServers(nextServers);
-      serversRef.current = nextServers;
       await saveWorkspace(nextServers, activeServerIdRef.current);
       window.alert("Agent 已安装到这台远端机器。现在可以在需要后台执行的会话里打开“使用 Agent”。");
     } catch (error) {
@@ -3627,10 +3613,7 @@ export function useWorkbenchController() {
       const cliHealth = healthFromWorkbenchAgentStatus(parsed);
       const cliPath = String(parsed.cliPath || "").trim();
       const readableResult = `${cliName} CLI 已安装并验证可执行。${cliPath ? `\n路径：${cliPath}` : ""}`;
-      const connectionKey = profileConnectionKey(nextProfile);
-      const nextServers = currentServers.map((server) => {
-        const serverProfile = normalizeProfile(server.profile);
-        if (profileConnectionKey(serverProfile) !== connectionKey) return server;
+      const nextServers = patchServersByConnection(nextProfile, (server) => {
         return {
           ...server,
           diagnostics: {
@@ -3640,8 +3623,6 @@ export function useWorkbenchController() {
           rawOutput: server.id === targetServerId ? readableResult : server.rawOutput,
         };
       });
-      setServers(nextServers);
-      serversRef.current = nextServers;
       await saveWorkspace(nextServers, activeServerIdRef.current);
       setRawOutput(readableResult);
       window.alert(`${readableResult}\n\n现在可以重新检测或发送任务。`);
@@ -3677,10 +3658,7 @@ export function useWorkbenchController() {
       if (parsed.status && !["removed", "missing"].includes(parsed.status)) {
         throw new Error(parsed.error || trimVisibleText(output) || "Agent 卸载失败。");
       }
-      const connectionKey = profileConnectionKey(nextProfile);
-      const nextServers = currentServers.map((server) => {
-        const serverProfile = normalizeProfile(server.profile);
-        if (profileConnectionKey(serverProfile) !== connectionKey) return server;
+      const nextServers = patchServersByConnection(nextProfile, (server) => {
         return {
           ...server,
           diagnostics: {
@@ -3701,8 +3679,6 @@ export function useWorkbenchController() {
           rawOutput: server.id === serverId ? output.trim() || "Agent 已卸载。" : server.rawOutput,
         };
       });
-      setServers(nextServers);
-      serversRef.current = nextServers;
       await saveWorkspace(nextServers, activeServerIdRef.current);
       window.alert("Agent 已卸载。后续任务会使用 SSH 直连；不会删除工作目录和 Codex/Claude。 ");
     } catch (error) {
@@ -4393,23 +4369,16 @@ export function useWorkbenchController() {
           : `${parsed.user || detectedProfile.username}@${parsed.host || detectedProfile.host}`,
         mode: agentSetup.available ? "agent" : "ssh",
       };
-      const nextServers = serversRef.current.map((server) =>
-        server.id === activeServerIdRef.current
-          ? {
-              ...server,
-              profile: detectedProfile,
-              diagnostics: {
-                ...parsed,
-                ...(agentSetup.agentHealth || {}),
-              },
-              discovery: scan,
-              rawOutput,
-              connection: connectedState,
-            }
-          : server,
-      );
-      setServers(nextServers);
-      serversRef.current = nextServers;
+      const nextServers = updateServer(activeServerIdRef.current, {
+        profile: detectedProfile,
+        diagnostics: {
+          ...parsed,
+          ...(agentSetup.agentHealth || {}),
+        },
+        discovery: scan,
+        rawOutput,
+        connection: connectedState,
+      });
       try {
         await saveWorkspace(nextServers, activeServerIdRef.current);
       } catch (persistenceError) {
@@ -4672,12 +4641,9 @@ export function useWorkbenchController() {
       const probedAgent = parseWorkbenchAgentOutput(probeOutput);
       const probedAgentHealth = healthFromWorkbenchAgentStatus(probedAgent);
       if (probedAgentHealth.agent || probedAgentHealth.agent_version) {
-        const connectionKey = profileConnectionKey(currentProfile);
-        setServers((items) => {
-          const nextServers = items.map((server) => {
-            const serverProfile = normalizeProfile(server.profile);
-            if (profileConnectionKey(serverProfile) !== connectionKey) return server;
-            return {
+        patchServersByConnection(
+          currentProfile,
+          (server, serverProfile) => ({
               ...server,
               diagnostics: {
                 ...(server.diagnostics || {}),
@@ -4689,17 +4655,10 @@ export function useWorkbenchController() {
                 ...(server.connection || {}),
                 mode: agentPreferredForProfile(serverProfile) ? "agent" : server.connection?.mode || "ssh",
               },
-            };
-          });
-          serversRef.current = nextServers;
-          if (workspaceLoadedRef.current) {
-            saveLocalMessageHistory(nextServers);
-            queueWorkspaceSave(nextServers, activeServerIdRef.current, 100);
-          }
-          return nextServers;
-        });
+            }),
+          { persistDelay: 100 },
+        );
       }
-
       const runtimeProfile = agentRuntimeProfile(currentProfile);
       const command = buildAgentTaskCommand(runtimeProfile, agent, text);
       const maxAgentStartupAttempts = 2;
