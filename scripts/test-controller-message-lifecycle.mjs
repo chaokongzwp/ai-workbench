@@ -136,5 +136,15 @@ const connectSessionSource = controllerSource.slice(
 );
 assert.doesNotMatch(connectSessionSource, /if \(busyRef\.current\) return false;/);
 assert.doesNotMatch(connectSessionSource, /setBusy\(true\)|setBusy\(false\)/);
+assert.doesNotMatch(
+  connectSessionSource,
+  /connectionIsLive\(server\.connection\)[\s\S]*?readyConnectionForSession\(server\.profile, server\.connection\)/,
+);
+
+const switchFromVoiceSource = controllerSource.slice(
+  controllerSource.indexOf("  async function switchToServerFromVoice("),
+  controllerSource.indexOf("  async function playLastResultForVoiceCommand", controllerSource.indexOf("  async function switchToServerFromVoice(")),
+);
+assert.doesNotMatch(switchFromVoiceSource, /setServerConnection\(/);
 
 console.log("controller message lifecycle regression: ok");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   connectionForAppLaunch,
   profileConnectionKey,
@@ -71,5 +72,12 @@ assert.notEqual(
   profileConnectionKey({ ...machineProfile, username: "another-user" }),
   profileConnectionKey(machineProfile),
 );
+
+const electronSource = readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8");
+assert.match(electronSource, /const sshCommandConnections = new Map\(\);/);
+assert.match(electronSource, /const sshCommandSessions = new Map\(\);/);
+assert.match(electronSource, /sshCommandConnections\.get\(fingerprint\)/);
+assert.match(electronSource, /record\.sessionIds\.add\(sessionId\)/);
+assert.match(electronSource, /for \(const sessionId of record\?\.sessionIds \|\| \[\]\)/);
 
 console.log("session connection lifecycle regression: ok");

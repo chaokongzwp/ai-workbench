@@ -1569,12 +1569,6 @@ export function useWorkbenchController() {
 
     await selectServer(target.id);
     const running = serverTaskRunning(target);
-    setServerConnection(target.id, {
-      ...(target.connection || {}),
-      state: running ? "testing" : target.connection?.state || "connected",
-      label: running ? "运行中" : "已切换",
-      detail: serverSessionName(target, targetIndex >= 0 ? targetIndex : 0),
-    });
 
     if (running) {
       voiceSessionActiveRef.current = false;
@@ -3176,12 +3170,7 @@ export function useWorkbenchController() {
               rawOutput:
                 [stdout.trim(), agentSetup.output.trim()].filter(Boolean).join("\n\n") || "连接成功。",
             }
-          : connectionIsLive(server.connection) && !serverTaskRunning(server)
-            ? {
-                ...server,
-                connection: readyConnectionForSession(server.profile, server.connection),
-              }
-            : server,
+          : server,
       );
       setServers(nextServers);
       serversRef.current = nextServers;
@@ -4417,12 +4406,7 @@ export function useWorkbenchController() {
               rawOutput,
               connection: connectedState,
             }
-          : connectionIsLive(server.connection) && !serverTaskRunning(server)
-            ? {
-                ...server,
-                connection: readyConnectionForSession(server.profile, server.connection),
-              }
-            : server,
+          : server,
       );
       setServers(nextServers);
       serversRef.current = nextServers;
