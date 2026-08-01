@@ -564,6 +564,10 @@ export function useWorkbenchController() {
   const rawOutput = activeServer.rawOutput;
   const messages = activeServer.messages;
   const activeRunningMessage = useMemo(() => lastActiveTaskMessage(activeServer.messages || []), [activeServer.messages]);
+  const activeTaskNotice = useMemo(
+    () => (taskNotice && (!taskNotice.serverId || taskNotice.serverId === activeServerId) ? taskNotice : null),
+    [activeServerId, taskNotice],
+  );
   const activeTaskRunning = Boolean(activeRunningMessage);
   const activeBusy = busy || activeTaskRunning;
   const isProfileReady = useMemo(() => profileReady(profile), [profile]);
@@ -2968,6 +2972,9 @@ export function useWorkbenchController() {
     if (!nextServer) return;
 
     const previousServerId = activeServerIdRef.current;
+    // Notices are transient feedback for the visible conversation. A result
+    // from another session remains discoverable through its unread marker.
+    setTaskNotice((current) => (current?.serverId && current.serverId !== serverId ? null : current));
     setActiveServerId(serverId);
     activeServerIdRef.current = serverId;
     const nextProfile = withKnownPassword(nextServer.profile, nextServers);
@@ -7375,7 +7382,7 @@ export function useWorkbenchController() {
     deletingFilePath,
     deletedRemoteFilePaths,
     fileDownload,
-    taskNotice,
+    taskNotice: activeTaskNotice,
     settingsOpen,
     settingsInitialPage,
     settingsDiscovery,
@@ -7432,7 +7439,7 @@ export function useWorkbenchController() {
     onToggleRaw: () => setRawOpen((value) => !value),
     onKillAgentSession: killAgentSession,
     onOpenTaskNotice: async () => {
-      if (taskNotice?.serverId) await selectServer(taskNotice.serverId);
+      if (activeTaskNotice?.serverId) await selectServer(activeTaskNotice.serverId);
       setTaskNotice(null);
     },
     onCloseTaskNotice: () => setTaskNotice(null),
