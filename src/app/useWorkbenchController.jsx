@@ -3066,8 +3066,6 @@ export function useWorkbenchController() {
   }
 
   async function connectExistingSessionOnce(serverId) {
-    if (busyRef.current) return false;
-
     const currentServers = serversRef.current.length ? serversRef.current : servers;
     const target = currentServers.find((server) => server.id === serverId) || activeServer;
     if (!target) return false;
@@ -3097,7 +3095,6 @@ export function useWorkbenchController() {
       persistent: true,
       key: connectionNoticeKey,
     });
-    setBusy(true);
     setServers((items) => {
       const nextItems = items.map((server) =>
         server.id === target.id
@@ -3222,7 +3219,6 @@ export function useWorkbenchController() {
       return false;
     } finally {
       dismissTaskNoticeByKey(connectionNoticeKey);
-      setBusy(false);
     }
   }
 

@@ -130,4 +130,11 @@ assert.ok(clearComposerIndex >= 0 && clearComposerIndex < awaitConnectionIndex);
 assert.ok(appendLocalMessagesIndex >= 0 && appendLocalMessagesIndex < awaitConnectionIndex);
 assert.match(sendTaskSource, /消息已保存在本地，但没有发送到远端/);
 
+const connectSessionSource = controllerSource.slice(
+  controllerSource.indexOf("  async function connectExistingSessionOnce(serverId) {"),
+  controllerSource.indexOf("  useEffect(() => {", controllerSource.indexOf("  async function connectExistingSessionOnce(serverId) {")),
+);
+assert.doesNotMatch(connectSessionSource, /if \(busyRef\.current\) return false;/);
+assert.doesNotMatch(connectSessionSource, /setBusy\(true\)|setBusy\(false\)/);
+
 console.log("controller message lifecycle regression: ok");
