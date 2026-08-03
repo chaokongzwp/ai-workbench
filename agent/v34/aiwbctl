@@ -1,0 +1,1622 @@
+#!/usr/bin/env bash
+AIWB_USER_HOME="$(cd ~ 2>/dev/null && pwd || pwd)"
+set -u
+
+AIWB_HOME="$AIWB_USER_HOME/.ai-workbench/agent"
+AIWB_TASKS="$AIWB_HOME/tasks"
+AIWB_CONVERSATIONS="$AIWB_HOME/conversations"
+AIWB_CONVERSATION_LOCKS="$AIWB_HOME/conversation-locks"
+AIWB_VERSION="34"
+AIWB_DAEMON_PID="$AIWB_HOME/daemon.pid"
+AIWB_DAEMON_LOG="$AIWB_HOME/daemon.log"
+AIWB_DAEMON_HEARTBEAT="$AIWB_HOME/daemon.heartbeat"
+AIWB_DAEMON_LOCK="$AIWB_HOME/daemon.lock"
+AIWB_TICK_LOCK="$AIWB_HOME/tick.lock"
+AIWB_LAUNCH_AGENT_LABEL="com.beexofficial.ai-workbench-agent"
+AIWB_LAUNCH_AGENT_DIR="$AIWB_USER_HOME/Library/LaunchAgents"
+AIWB_LAUNCH_AGENT_PLIST="$AIWB_LAUNCH_AGENT_DIR/$AIWB_LAUNCH_AGENT_LABEL.plist"
+AIWB_MAX_CONCURRENCY="4"
+mkdir -p "$AIWB_TASKS" "$AIWB_CONVERSATIONS" "$AIWB_CONVERSATION_LOCKS"
+
+aiwb_now() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+aiwb_task_dir() {
+  printf "%s/%s\n" "$AIWB_TASKS" "$1"
+}
+
+aiwb_safe_id() {
+  printf "%s\n" "$1" | sed 's/[^A-Za-z0-9_.-]/-/g' | sed 's/--*/-/g' | cut -c 1-120
+}
+
+aiwb_conversation_dir() {
+  local conversation_id
+  conversation_id="$(aiwb_safe_id "$1")"
+  printf "%s/%s\n" "$AIWB_CONVERSATIONS" "$conversation_id"
+}
+
+aiwb_write_file() {
+  local path="$1"
+  shift
+  printf "%s\n" "$*" > "$path"
+}
+
+aiwb_append_log() {
+  printf "[%s] %s\n" "$(aiwb_now)" "$*" >> "$AIWB_DAEMON_LOG"
+}
+
+aiwb_notify_terminal() {
+  local task_dir="$1"
+  local status
+  local notify_url
+  local notify_token
+  local now_epoch
+  local next_epoch
+  local attempts
+  local http_code
+  local lock_dir
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  case "$status" in
+    done|error|cancelled) ;;
+    *) return 0 ;;
+  esac
+  [ -s "$task_dir/push_notify_url" ] || return 0
+  [ -s "$task_dir/push_notify_token" ] || return 0
+  [ ! -s "$task_dir/push_notified_at" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+
+  now_epoch="$(date -u +%s)"
+  next_epoch="$(cat "$task_dir/push_notify_next_at" 2>/dev/null || printf 0)"
+  if [ "$next_epoch" -gt "$now_epoch" ] 2>/dev/null; then
+    return 0
+  fi
+  lock_dir="$task_dir/push_notify.lock"
+  mkdir "$lock_dir" 2>/dev/null || return 0
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT INT TERM
+
+  notify_url="$(cat "$task_dir/push_notify_url" 2>/dev/null || printf "")"
+  notify_token="$(cat "$task_dir/push_notify_token" 2>/dev/null || printf "")"
+  attempts="$(cat "$task_dir/push_notify_attempts" 2>/dev/null || printf 0)"
+  attempts="$((attempts + 1))"
+  aiwb_write_file "$task_dir/push_notify_attempts" "$attempts"
+  http_code="$(
+    printf '{"status":"%s"}' "$status" |
+      curl --silent --show-error --max-time 12         --output "$task_dir/push_notify_response.log"         --write-out '%{http_code}'         --request POST         --header "Authorization: Bearer $notify_token"         --header 'Content-Type: application/json'         --data-binary @-         "$notify_url" 2>>"$task_dir/push_notify_response.log" ||
+      printf 000
+  )"
+  if [ "$http_code" = "200" ]; then
+    aiwb_write_file "$task_dir/push_notified_at" "$(aiwb_now)"
+    aiwb_append_log "push delivered task=$(basename "$task_dir") status=$status"
+  else
+    aiwb_write_file "$task_dir/push_notify_next_at" "$((now_epoch + 30 + attempts * 15))"
+    aiwb_append_log "push retry scheduled task=$(basename "$task_dir") status=$status http=$http_code"
+  fi
+  rmdir "$lock_dir" 2>/dev/null || true
+  trap - EXIT INT TERM
+}
+
+aiwb_schedule_terminal_notification() {
+  aiwb_notify_terminal "$1" >/dev/null 2>&1 &
+}
+
+aiwb_update_conversation_from_task() {
+  local task_dir="$1"
+  local conversation_id
+  local conversation_dir
+  local status
+
+  conversation_id="$(cat "$task_dir/conversation_id" 2>/dev/null || printf "")"
+  [ -n "$conversation_id" ] || return 0
+
+  conversation_dir="$(aiwb_conversation_dir "$conversation_id")"
+  mkdir -p "$conversation_dir"
+  aiwb_write_file "$conversation_dir/id" "$conversation_id"
+  aiwb_write_file "$conversation_dir/task_id" "$(basename "$task_dir")"
+  aiwb_write_file "$conversation_dir/status" "$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
+
+  for name in name workdir agent_id turn_id request_message_id response_message_id created_at started_at runner_started_at finished_at exit_code; do
+    if [ -f "$task_dir/$name" ]; then
+      cp "$task_dir/$name" "$conversation_dir/$name" 2>/dev/null || true
+    fi
+  done
+  if [ -f "$task_dir/prompt.txt" ]; then
+    cp "$task_dir/prompt.txt" "$conversation_dir/last_prompt.txt" 2>/dev/null || true
+  fi
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    if [ -s "$task_dir/output.log" ]; then
+      cp "$task_dir/output.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
+    elif [ -s "$task_dir/bootstrap.log" ]; then
+      cp "$task_dir/bootstrap.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
+    fi
+    if [ -s "$task_dir/execution-summary.txt" ]; then
+      cp "$task_dir/execution-summary.txt" "$conversation_dir/last_execution_summary.txt" 2>/dev/null || true
+    fi
+  fi
+}
+
+aiwb_set_status() {
+  local task_dir="$1"
+  local status="$2"
+  local exit_code="$3"
+  aiwb_write_file "$task_dir/status" "$status"
+  aiwb_write_file "$task_dir/exit_code" "$exit_code"
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    aiwb_write_file "$task_dir/finished_at" "$(aiwb_now)"
+  fi
+  aiwb_update_conversation_from_task "$task_dir"
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    aiwb_schedule_terminal_notification "$task_dir"
+  fi
+}
+
+aiwb_task_age_seconds() {
+  local started_at="$1"
+  local start_epoch
+  local now_epoch
+  start_epoch="$(date -u -d "$started_at" +%s 2>/dev/null || printf 0)"
+  now_epoch="$(date -u +%s)"
+  if [ "$start_epoch" -gt 0 ] 2>/dev/null; then
+    printf "%s\n" "$((now_epoch - start_epoch))"
+  else
+    printf "999999\n"
+  fi
+}
+
+aiwb_path_mtime_epoch() {
+  local path="$1"
+  stat -c %Y "$path" 2>/dev/null || date -u -r "$path" +%s 2>/dev/null || printf 0
+}
+
+aiwb_clear_stale_tick_lock() {
+  local lock_epoch
+  local now_epoch
+  local age
+  [ -d "$AIWB_TICK_LOCK" ] || return 0
+
+  lock_epoch="$(aiwb_path_mtime_epoch "$AIWB_TICK_LOCK")"
+  now_epoch="$(date -u +%s)"
+  age="$((now_epoch - lock_epoch))"
+  if [ "$lock_epoch" -gt 0 ] 2>/dev/null && [ "$age" -gt 30 ] 2>/dev/null; then
+    rm -f "$AIWB_TICK_LOCK/owner.pid" "$AIWB_TICK_LOCK/started_at" 2>/dev/null || true
+    if rmdir "$AIWB_TICK_LOCK" 2>/dev/null; then
+      aiwb_append_log "cleared stale tick lock age=${age}s"
+    fi
+  fi
+}
+
+aiwb_daemon_alive() {
+  local pid
+  pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+aiwb_daemon_lock_owner_alive() {
+  local pid
+  pid="$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+aiwb_release_daemon_lock() {
+  local owner
+  owner="$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")"
+  if [ "$owner" = "$$" ]; then
+    rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+    rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+  fi
+  if [ "$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")" = "$$" ]; then
+    rm -f "$AIWB_DAEMON_PID" 2>/dev/null || true
+  fi
+}
+
+aiwb_acquire_daemon_lock() {
+  if mkdir "$AIWB_DAEMON_LOCK" 2>/dev/null; then
+    aiwb_write_file "$AIWB_DAEMON_LOCK/owner.pid" "$$"
+    aiwb_write_file "$AIWB_DAEMON_LOCK/version" "$AIWB_VERSION"
+    return 0
+  fi
+
+  if aiwb_daemon_lock_owner_alive; then
+    return 1
+  fi
+
+  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+  rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+  if mkdir "$AIWB_DAEMON_LOCK" 2>/dev/null; then
+    aiwb_write_file "$AIWB_DAEMON_LOCK/owner.pid" "$$"
+    aiwb_write_file "$AIWB_DAEMON_LOCK/version" "$AIWB_VERSION"
+    return 0
+  fi
+  return 1
+}
+
+aiwb_installed_version() {
+  if [ -x "$AIWB_HOME/aiwbctl" ]; then
+    "$AIWB_HOME/aiwbctl" --version 2>/dev/null | head -n 1
+  else
+    printf "%s\n" "$AIWB_VERSION"
+  fi
+}
+
+aiwb_stop_daemons() {
+  local pid
+  local candidates
+
+  candidates="$(pgrep -f "$AIWB_HOME/aiwbctl daemon" 2>/dev/null || printf "")"
+  for pid in $candidates; do
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$PPID" ] && continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+
+  sleep 0.2
+  for pid in $candidates; do
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "$PPID" ] && continue
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+
+  rm -f "$AIWB_DAEMON_PID" "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || true
+  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+  rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+}
+
+aiwb_task_pid_alive() {
+  local task_dir="$1"
+  local pid
+  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+aiwb_task_attempts() {
+  local task_dir="$1"
+  cat "$task_dir/attempts" 2>/dev/null || printf 0
+}
+
+aiwb_next_attempt() {
+  local task_dir="$1"
+  local attempts
+  attempts="$(aiwb_task_attempts "$task_dir")"
+  attempts="$((attempts + 1))"
+  aiwb_write_file "$task_dir/attempts" "$attempts"
+  printf "%s\n" "$attempts"
+}
+
+aiwb_mark_stale_if_needed() {
+  local task_dir="$1"
+  local status
+  local started_at
+  local age
+  local pid
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  [ "$status" = "running" ] || return 0
+
+  started_at="$(cat "$task_dir/started_at" 2>/dev/null || printf "")"
+  age="$(aiwb_task_age_seconds "$started_at")"
+  [ "$age" -ge 8 ] 2>/dev/null || return 0
+
+  if aiwb_task_pid_alive "$task_dir"; then
+    return 0
+  fi
+
+  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+  {
+    printf "AI Workbench Agent: task was marked running, but the runner process is not alive.\n"
+    if [ -n "$pid" ]; then
+      printf "runner pid: %s\n" "$pid"
+    else
+      printf "runner pid: missing\n"
+    fi
+    if [ -s "$task_dir/launcher.log" ]; then
+      printf "launcher log:\n"
+      cat "$task_dir/launcher.log"
+      printf "\n"
+    fi
+    printf "checked_at: %s\n" "$(aiwb_now)"
+  } >> "$task_dir/bootstrap.log"
+  aiwb_set_status "$task_dir" "error" "124"
+}
+
+aiwb_mark_queued_stale_if_needed() {
+  local task_dir="$1"
+  local status
+  local queued_at
+  local age
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  [ "$status" = "queued" ] || return 0
+
+  queued_at="$(cat "$task_dir/queued_at" 2>/dev/null || cat "$task_dir/created_at" 2>/dev/null || printf "")"
+  age="$(aiwb_task_age_seconds "$queued_at")"
+  [ "$age" -ge 8 ] 2>/dev/null || return 0
+
+  if aiwb_daemon_alive; then
+    return 0
+  fi
+
+  {
+    printf "AI Workbench Agent: daemon is not running; queued task cannot start.\n"
+    printf "checked_at: %s\n" "$(aiwb_now)"
+  } >> "$task_dir/bootstrap.log"
+  aiwb_set_status "$task_dir" "error" "125"
+}
+
+aiwb_write_runner_script() {
+  local task_dir="$1"
+  cat > "$task_dir/run.sh" <<'AIWB_AGENT_RUNNER'
+#!/usr/bin/env bash
+set +e
+AIWB_TASK_DIR="$1"
+
+aiwb_now() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+aiwb_write_file() {
+  local path="$1"
+  shift
+  printf "%s\n" "$*" > "$path"
+}
+
+aiwb_safe_id() {
+  printf "%s\n" "$1" | sed 's/[^A-Za-z0-9_.-]/-/g' | sed 's/--*/-/g' | cut -c 1-120
+}
+
+aiwb_git_repositories() {
+  local workdir="$1"
+  local root_repo
+  [ -d "$workdir" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+
+  root_repo="$(git -C "$workdir" rev-parse --show-toplevel 2>/dev/null || printf "")"
+  if [ -n "$root_repo" ]; then
+    printf "%s\n" "$root_repo"
+    return 0
+  fi
+
+  find "$workdir" -mindepth 1 -maxdepth 5 -type d -name .git -prune -print0 2>/dev/null |
+    while IFS= read -r -d '' git_dir; do
+      dirname "$git_dir"
+    done |
+    sort -u
+}
+
+aiwb_capture_git_snapshot() {
+  local target="$1"
+  local workdir
+  local repo
+  local head
+  local file
+  local hash
+  local files_path
+
+  : > "$target"
+  workdir="$(cat "$AIWB_TASK_DIR/workdir" 2>/dev/null || printf "")"
+  [ -n "$workdir" ] || return 0
+  files_path="$AIWB_TASK_DIR/git-files-$$.bin"
+
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || printf "")"
+    printf "HEAD\t%s\t%s\n" "$repo" "$head" >> "$target"
+    {
+      git -C "$repo" diff --name-only -z HEAD -- 2>/dev/null || true
+      git -C "$repo" ls-files --others --exclude-standard -z 2>/dev/null || true
+    } | sort -zu > "$files_path"
+
+    while IFS= read -r -d '' file; do
+      [ -n "$file" ] || continue
+      if [ -f "$repo/$file" ] || [ -L "$repo/$file" ]; then
+        hash="$(git -C "$repo" hash-object -- "$file" 2>/dev/null || printf unreadable)"
+      elif [ -e "$repo/$file" ]; then
+        hash="non-file"
+      else
+        hash="deleted"
+      fi
+      printf "FILE\t%s\t%s\t%s\n" "$repo" "$file" "$hash" >> "$target"
+    done < "$files_path"
+  done < <(aiwb_git_repositories "$workdir")
+
+  rm -f "$files_path"
+}
+
+aiwb_snapshot_value() {
+  local snapshot="$1"
+  local kind="$2"
+  local repo="$3"
+  local file="${4:-}"
+  awk -F "$(printf '\t')" -v kind="$kind" -v repo="$repo" -v file="$file" '
+    $1 == kind && $2 == repo && (kind != "FILE" || $3 == file) {
+      print (kind == "FILE" ? $4 : $3)
+      exit
+    }
+  ' "$snapshot" 2>/dev/null
+}
+
+aiwb_build_execution_summary() {
+  local exit_code="$1"
+  local before="$AIWB_TASK_DIR/git-before.tsv"
+  local after="$AIWB_TASK_DIR/git-after.tsv"
+  local summary="$AIWB_TASK_DIR/execution-summary.txt"
+  local keys="$AIWB_TASK_DIR/git-summary-keys.tsv"
+  local repo
+  local file
+  local before_value
+  local after_value
+  local before_head
+  local after_head
+  local repo_name
+  local changed_count=0
+  local commit_count=0
+  local added_repository_count=0
+  local repository_count=0
+  local prompt
+  local git_checkout_requested=0
+
+  aiwb_capture_git_snapshot "$after"
+  {
+    printf "### Agent 执行回执\n"
+    if [ "$exit_code" -eq 0 ] 2>/dev/null; then
+      printf -- "- 进程状态：正常结束（退出码 %s）\n" "$exit_code"
+    else
+      printf -- "- 进程状态：执行失败（退出码 %s）\n" "$exit_code"
+    fi
+  } > "$summary"
+
+  {
+    awk -F "$(printf '\t')" '$1 == "HEAD" { print $2 }' "$before" "$after" 2>/dev/null
+  } | sort -u > "$keys"
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    before_head="$(aiwb_snapshot_value "$before" HEAD "$repo")"
+    after_head="$(aiwb_snapshot_value "$after" HEAD "$repo")"
+    if [ -z "$before_head" ] && [ -n "$after_head" ]; then
+      printf -- "- 新增 Git 仓库：%s\n" "$repo" >> "$summary"
+      added_repository_count="$((added_repository_count + 1))"
+    fi
+    if [ -n "$before_head" ] && [ -n "$after_head" ] && [ "$before_head" != "$after_head" ]; then
+      repo_name="$(basename "$repo")"
+      printf -- "- 新提交（%s）：\n" "$repo_name" >> "$summary"
+      git -C "$repo" log --format='  - %h %s' "$before_head..$after_head" -n 12 2>/dev/null >> "$summary" || true
+      commit_count="$((commit_count + 1))"
+    fi
+  done < "$keys"
+
+  {
+    awk -F "$(printf '\t')" '$1 == "FILE" { print $2 "\t" $3 }' "$before" "$after" 2>/dev/null
+  } | sort -u > "$keys"
+  while IFS=$'\t' read -r repo file; do
+    [ -n "$repo" ] && [ -n "$file" ] || continue
+    before_value="$(aiwb_snapshot_value "$before" FILE "$repo" "$file")"
+    after_value="$(aiwb_snapshot_value "$after" FILE "$repo" "$file")"
+    [ "$before_value" = "$after_value" ] && continue
+    if [ "$changed_count" -eq 0 ]; then
+      printf -- "- 工作区文件变化：\n" >> "$summary"
+    fi
+    repo_name="$(basename "$repo")"
+    if [ -z "$after_value" ]; then
+      printf "  - %s/%s（已恢复为干净状态或已提交）\n" "$repo_name" "$file" >> "$summary"
+    elif [ "$after_value" = "deleted" ]; then
+      printf "  - %s/%s（已删除）\n" "$repo_name" "$file" >> "$summary"
+    else
+      printf "  - %s/%s\n" "$repo_name" "$file" >> "$summary"
+    fi
+    changed_count="$((changed_count + 1))"
+    [ "$changed_count" -ge 80 ] && break
+  done < "$keys"
+
+  if [ "$changed_count" -eq 0 ] && [ "$commit_count" -eq 0 ]; then
+    printf -- "- Git 变化：本任务期间未检测到新增提交或工作区文件变化。\n" >> "$summary"
+  fi
+  repository_count="$(awk -F "$(printf '\t')" '$1 == "HEAD" { count += 1 } END { print count + 0 }' "$after" 2>/dev/null)"
+  prompt="$(cat "$AIWB_TASK_DIR/prompt.txt" 2>/dev/null || printf "")"
+  if printf "%s" "$prompt" | grep -Eiq 'git[[:space:]]+clone|(^|[^[:alpha:]])clone([^[:alpha:]]|$)|克隆|下载.{0,12}(代码|仓库|项目)|拉取.{0,12}(代码|仓库|项目)|(代码|仓库|项目).{0,12}(下载|拉取)'; then
+    git_checkout_requested=1
+    if [ "$repository_count" -eq 0 ]; then
+      printf -- "- 落盘验证：失败。任务结束后工作目录内没有检测到 Git 仓库。\n" >> "$summary"
+    else
+      printf -- "- 落盘验证：通过。任务结束后检测到 %s 个 Git 仓库。\n" "$repository_count" >> "$summary"
+    fi
+  fi
+  printf -- "- 说明：这是 Agent 根据任务开始与结束时的 Git 状态自动生成的执行痕迹。\n" >> "$summary"
+  rm -f "$keys"
+  if [ "$git_checkout_requested" -eq 1 ] && [ "$repository_count" -eq 0 ]; then
+    return 65
+  fi
+  return 0
+}
+
+aiwb_update_conversation_from_task() {
+  local conversation_id
+  local conversation_dir
+  local status
+  local aiwb_home
+  local aiwb_conversations
+
+  conversation_id="$(cat "$AIWB_TASK_DIR/conversation_id" 2>/dev/null || printf "")"
+  [ -n "$conversation_id" ] || return 0
+
+  aiwb_home="$(cd "$AIWB_TASK_DIR/../.." 2>/dev/null && pwd || printf "")"
+  [ -n "$aiwb_home" ] || return 0
+  aiwb_conversations="$aiwb_home/conversations"
+  mkdir -p "$aiwb_conversations"
+  conversation_dir="$aiwb_conversations/$(aiwb_safe_id "$conversation_id")"
+  mkdir -p "$conversation_dir"
+
+  aiwb_write_file "$conversation_dir/id" "$conversation_id"
+  aiwb_write_file "$conversation_dir/task_id" "$(basename "$AIWB_TASK_DIR")"
+  aiwb_write_file "$conversation_dir/status" "$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf unknown)"
+  aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
+
+  for name in name workdir agent_id created_at started_at runner_started_at finished_at exit_code; do
+    if [ -f "$AIWB_TASK_DIR/$name" ]; then
+      cp "$AIWB_TASK_DIR/$name" "$conversation_dir/$name" 2>/dev/null || true
+    fi
+  done
+  if [ -f "$AIWB_TASK_DIR/prompt.txt" ]; then
+    cp "$AIWB_TASK_DIR/prompt.txt" "$conversation_dir/last_prompt.txt" 2>/dev/null || true
+  fi
+
+  status="$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf unknown)"
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    if [ -s "$AIWB_TASK_DIR/output.log" ]; then
+      cp "$AIWB_TASK_DIR/output.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
+    elif [ -s "$AIWB_TASK_DIR/bootstrap.log" ]; then
+      cp "$AIWB_TASK_DIR/bootstrap.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
+    fi
+    if [ -s "$AIWB_TASK_DIR/execution-summary.txt" ]; then
+      cp "$AIWB_TASK_DIR/execution-summary.txt" "$conversation_dir/last_execution_summary.txt" 2>/dev/null || true
+    fi
+  fi
+}
+
+aiwb_set_status() {
+  local status="$1"
+  local exit_code="$2"
+  aiwb_write_file "$AIWB_TASK_DIR/status" "$status"
+  aiwb_write_file "$AIWB_TASK_DIR/exit_code" "$exit_code"
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    aiwb_write_file "$AIWB_TASK_DIR/finished_at" "$(aiwb_now)"
+  fi
+  aiwb_update_conversation_from_task
+}
+
+aiwb_write_file "$AIWB_TASK_DIR/runner_started_at" "$(aiwb_now)"
+: > "$AIWB_TASK_DIR/output.log"
+aiwb_capture_git_snapshot "$AIWB_TASK_DIR/git-before.tsv"
+AIWB_DECODED_COMMAND="$(base64 -d < "$AIWB_TASK_DIR/command.b64" 2>"$AIWB_TASK_DIR/bootstrap.log")"
+AIWB_DECODE_STATUS=$?
+if [ "$AIWB_DECODE_STATUS" -ne 0 ] || [ -z "$AIWB_DECODED_COMMAND" ]; then
+  printf "AI Workbench Agent: command payload decode failed.\n" >> "$AIWB_TASK_DIR/bootstrap.log"
+  aiwb_build_execution_summary "$AIWB_DECODE_STATUS"
+  aiwb_set_status "error" "$AIWB_DECODE_STATUS"
+  exit 0
+fi
+
+# Codex bundled with ChatGPT is executable but is not exposed on the PATH used
+# by remote SSH commands. Keep older saved profiles working on macOS hosts.
+if [ ! -x "/usr/local/bin/codex" ] && [ -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]; then
+  AIWB_DECODED_COMMAND="$(printf "%s" "$AIWB_DECODED_COMMAND" | sed "s#/usr/local/bin/codex#/Applications/ChatGPT.app/Contents/Resources/codex#g")"
+fi
+
+AIWB_TASK_AGENT_ID="$(cat "$AIWB_TASK_DIR/agent_id" 2>/dev/null || printf "")"
+if [ "$AIWB_TASK_AGENT_ID" = "claude" ]; then
+  export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
+fi
+
+eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1
+AIWB_EXIT_CODE=$?
+aiwb_build_execution_summary "$AIWB_EXIT_CODE"
+AIWB_GIT_VERIFICATION_CODE=$?
+if [ "$AIWB_EXIT_CODE" -eq 0 ] && [ "$AIWB_GIT_VERIFICATION_CODE" -eq 65 ]; then
+  cat > "$AIWB_TASK_DIR/output.log" <<'AIWB_GIT_VERIFICATION_FAILED'
+AIWB_FINAL_START
+代码没有下载成功。
+
+远端命令虽然正常结束，但 Agent 检查了当前工作目录，没有发现任何 Git 仓库。
+App 不再把这类情况显示为成功。请检查仓库地址、网络、权限和实际下载路径后重试。
+AIWB_FINAL_END
+AIWB_GIT_VERIFICATION_FAILED
+  AIWB_EXIT_CODE=65
+fi
+if [ "$AIWB_EXIT_CODE" -eq 0 ]; then
+  aiwb_set_status "done" "$AIWB_EXIT_CODE"
+else
+  aiwb_set_status "error" "$AIWB_EXIT_CODE"
+fi
+AIWB_AGENT_RUNNER
+  chmod 700 "$task_dir/run.sh"
+}
+
+aiwb_launch_task() {
+  local task_dir="$1"
+  local task_id
+  local attempt
+
+  task_id="$(basename -- "$task_dir")"
+  if [ ! -s "$task_dir/command.b64" ]; then
+    printf "AI Workbench Agent: missing command payload.\n" >> "$task_dir/bootstrap.log"
+    aiwb_set_status "$task_dir" "error" "2"
+    return 0
+  fi
+
+  attempt="$(aiwb_next_attempt "$task_dir")"
+  aiwb_write_runner_script "$task_dir"
+  aiwb_write_file "$task_dir/started_at" "$(aiwb_now)"
+  aiwb_set_status "$task_dir" "running" ""
+  aiwb_write_file "$task_dir/runner_started_at" ""
+  : > "$task_dir/launcher.log"
+
+  nohup bash "$task_dir/run.sh" "$task_dir" </dev/null >"$task_dir/launcher.log" 2>&1 &
+  aiwb_write_file "$task_dir/pid" "$!"
+  aiwb_append_log "launched task=$task_id attempt=$attempt pid=$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+}
+
+aiwb_running_count() {
+  local count
+  count=0
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    if [ "$(cat "$task_dir/status" 2>/dev/null || printf unknown)" = "running" ] && aiwb_task_pid_alive "$task_dir"; then
+      count="$((count + 1))"
+    fi
+  done
+  printf "%s\n" "$count"
+}
+
+aiwb_conversation_active_task() {
+  local conversation_id="$1"
+  local exclude_task_id=""
+  local task_dir
+  local task_id
+  local task_conversation_id
+  local status
+
+  if [ "$#" -gt 1 ]; then
+    exclude_task_id="$2"
+  fi
+  [ -n "$conversation_id" ] || return 1
+
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    task_id="$(basename -- "$task_dir")"
+    [ "$task_id" = "$exclude_task_id" ] && continue
+    task_conversation_id="$(cat "$task_dir/conversation_id" 2>/dev/null || printf "")"
+    [ "$task_conversation_id" = "$conversation_id" ] || continue
+    aiwb_mark_queued_stale_if_needed "$task_dir"
+    aiwb_mark_stale_if_needed "$task_dir"
+    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    case "$status" in
+      queued|running|preparing)
+        printf "%s\n" "$task_id"
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+aiwb_print_conversation_busy() {
+  local task_id="$1"
+  local conversation_id="$2"
+  printf "__AIWB_AGENT_STATUS__ready\n"
+  printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+  printf "__AIWB_AGENT_DAEMON_STATUS__%s\n" "$(aiwb_daemon_status)"
+  printf "__AIWB_AGENT_TASK_ID__%s\n" "$task_id"
+  printf "__AIWB_AGENT_TASK_CONVERSATION_ID__%s\n" "$conversation_id"
+  printf "__AIWB_AGENT_TASK_TURN_ID__%s\n" "$(cat "$AIWB_TASKS/$task_id/turn_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__%s\n" "$(cat "$AIWB_TASKS/$task_id/request_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__%s\n" "$(cat "$AIWB_TASKS/$task_id/response_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_STATUS__busy\n"
+  printf "__AIWB_AGENT_BLOCKED_BY_TASK_ID__%s\n" "$task_id"
+  printf "__AIWB_AGENT_BLOCKED_BY_CONVERSATION_ID__%s\n" "$conversation_id"
+  printf "__AIWB_AGENT_TASK_OUTPUT_START__\n"
+  printf "AI Workbench Agent: this conversation already has a queued or running task.\n"
+  if [ -n "$task_id" ]; then
+    printf "blocking task id: %s\n" "$task_id"
+  fi
+  printf "conversation id: %s\n" "$conversation_id"
+  printf "new task was rejected to avoid concurrent writes in the same AI session.\n"
+  printf "__AIWB_AGENT_TASK_OUTPUT_END__\n"
+}
+
+aiwb_tick_tasks_unlocked() {
+  local task_dir
+  local status
+  local count
+  count="$(aiwb_running_count)"
+
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    case "$status" in
+      queued)
+        if [ "$count" -lt "$AIWB_MAX_CONCURRENCY" ] 2>/dev/null; then
+          aiwb_launch_task "$task_dir"
+          count="$((count + 1))"
+        fi
+        ;;
+      running)
+        aiwb_mark_stale_if_needed "$task_dir"
+        ;;
+      done|error|cancelled)
+        aiwb_schedule_terminal_notification "$task_dir"
+        ;;
+    esac
+  done
+}
+
+aiwb_tick_tasks() {
+  if ! mkdir "$AIWB_TICK_LOCK" 2>/dev/null; then
+    aiwb_clear_stale_tick_lock
+    if ! mkdir "$AIWB_TICK_LOCK" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  aiwb_write_file "$AIWB_TICK_LOCK/owner.pid" "$$"
+  aiwb_write_file "$AIWB_TICK_LOCK/started_at" "$(aiwb_now)"
+
+  aiwb_tick_tasks_unlocked
+  local rc="$?"
+  rm -f "$AIWB_TICK_LOCK/owner.pid" "$AIWB_TICK_LOCK/started_at" 2>/dev/null || true
+  rmdir "$AIWB_TICK_LOCK" 2>/dev/null || true
+  return "$rc"
+}
+
+aiwb_daemon_loop() {
+  if ! aiwb_acquire_daemon_lock; then
+    aiwb_append_log "daemon duplicate rejected pid=$$ version=$AIWB_VERSION"
+    return 0
+  fi
+  aiwb_write_file "$AIWB_DAEMON_PID" "$$"
+  aiwb_append_log "daemon started pid=$$ version=$AIWB_VERSION"
+  trap 'aiwb_append_log "daemon stopped pid=$$ version=$AIWB_VERSION"; aiwb_release_daemon_lock; exit 0' INT TERM EXIT
+  while true; do
+    if [ "$(aiwb_installed_version)" != "$AIWB_VERSION" ]; then
+      aiwb_append_log "daemon version superseded pid=$$ version=$AIWB_VERSION"
+      return 0
+    fi
+    aiwb_write_file "$AIWB_DAEMON_HEARTBEAT" "$(aiwb_now)"
+    aiwb_tick_tasks
+    sleep 1
+  done
+}
+
+aiwb_start_daemon() {
+  if aiwb_daemon_alive; then
+    return 0
+  fi
+  nohup "$0" daemon </dev/null >> "$AIWB_DAEMON_LOG" 2>&1 &
+  sleep 0.25
+  if aiwb_daemon_alive; then
+    return 0
+  fi
+  printf "AI Workbench Agent: daemon did not start.\n" >> "$AIWB_DAEMON_LOG"
+  return 1
+}
+
+aiwb_daemon_status() {
+  if aiwb_daemon_alive; then
+    printf "running\n"
+  else
+    printf "stopped\n"
+  fi
+}
+
+aiwb_service_status() {
+  local state
+  if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    if launchctl print "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+      printf "active\n"
+    else
+      printf "inactive\n"
+    fi
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    printf "unsupported\n"
+    return 0
+  fi
+
+  state="$(systemctl is-active ai-workbench-agent.service 2>/dev/null || true)"
+  if [ -z "$state" ]; then
+    state="inactive"
+  fi
+  printf "%s\n" "$state"
+}
+
+aiwb_task_count() {
+  local target="$1"
+  local count="0"
+  local task_dir
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    if [ "$(cat "$task_dir/status" 2>/dev/null || printf unknown)" = "$target" ]; then
+      count="$((count + 1))"
+    fi
+  done
+  printf "%s\n" "$count"
+}
+
+aiwb_host_metrics() {
+  local cpu_percent=""
+  local mem_total_kb=""
+  local mem_available_kb=""
+  local mem_used_kb=""
+  local mem_percent=""
+  local disk_line=""
+  local disk_total_kb=""
+  local disk_used_kb=""
+  local disk_percent=""
+  local uptime_seconds=""
+  local process_count=""
+  local load_avg=""
+
+  if [ -r /proc/stat ]; then
+    local cpu_a cpu_b user nice system idle iowait irq softirq steal guest guest_nice
+    local total_a idle_a total_b idle_b total_delta idle_delta
+    read -r _ user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat || true
+    total_a="$((user + nice + system + idle + iowait + irq + softirq + steal))"
+    idle_a="$((idle + iowait))"
+    sleep 0.12
+    read -r _ user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat || true
+    total_b="$((user + nice + system + idle + iowait + irq + softirq + steal))"
+    idle_b="$((idle + iowait))"
+    total_delta="$((total_b - total_a))"
+    idle_delta="$((idle_b - idle_a))"
+    if [ "$total_delta" -gt 0 ] 2>/dev/null; then
+      cpu_percent="$(awk -v total="$total_delta" -v idle="$idle_delta" 'BEGIN { printf "%.1f", (total - idle) * 100 / total }')"
+    fi
+  fi
+
+  if [ -r /proc/meminfo ]; then
+    mem_total_kb="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+    mem_available_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+    if [ -n "$mem_total_kb" ] && [ -n "$mem_available_kb" ] && [ "$mem_total_kb" -gt 0 ] 2>/dev/null; then
+      mem_used_kb="$((mem_total_kb - mem_available_kb))"
+      mem_percent="$(awk -v used="$mem_used_kb" -v total="$mem_total_kb" 'BEGIN { printf "%.1f", used * 100 / total }')"
+    fi
+  fi
+
+  disk_line="$(df -Pk "$AIWB_USER_HOME" 2>/dev/null | awk 'NR==2 { print $2 " " $3 " " $5 }')"
+  if [ -n "$disk_line" ]; then
+    disk_total_kb="$(printf "%s\n" "$disk_line" | awk '{ print $1 }')"
+    disk_used_kb="$(printf "%s\n" "$disk_line" | awk '{ print $2 }')"
+    disk_percent="$(printf "%s\n" "$disk_line" | awk '{ gsub(/%/, "", $3); print $3 }')"
+  fi
+
+  if [ -r /proc/loadavg ]; then
+    load_avg="$(awk '{ print $1 "," $2 "," $3 }' /proc/loadavg)"
+  else
+    load_avg="$(uptime 2>/dev/null | sed 's/.*load averages*: *//' | tr -d ' ' | tr ' ' ',' || true)"
+  fi
+
+  if [ -r /proc/uptime ]; then
+    uptime_seconds="$(awk '{ printf "%d", $1 }' /proc/uptime)"
+  fi
+  process_count="$(ps -e 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
+
+  printf "__AIWB_AGENT_HOST_CPU_PERCENT__%s\n" "$cpu_percent"
+  printf "__AIWB_AGENT_HOST_MEM_PERCENT__%s\n" "$mem_percent"
+  printf "__AIWB_AGENT_HOST_MEM_USED_MB__%s\n" "$(awk -v kb="$mem_used_kb" 'BEGIN { if (kb != "") printf "%.0f", kb / 1024 }')"
+  printf "__AIWB_AGENT_HOST_MEM_TOTAL_MB__%s\n" "$(awk -v kb="$mem_total_kb" 'BEGIN { if (kb != "") printf "%.0f", kb / 1024 }')"
+  printf "__AIWB_AGENT_HOST_DISK_PERCENT__%s\n" "$disk_percent"
+  printf "__AIWB_AGENT_HOST_DISK_USED_GB__%s\n" "$(awk -v kb="$disk_used_kb" 'BEGIN { if (kb != "") printf "%.1f", kb / 1024 / 1024 }')"
+  printf "__AIWB_AGENT_HOST_DISK_TOTAL_GB__%s\n" "$(awk -v kb="$disk_total_kb" 'BEGIN { if (kb != "") printf "%.1f", kb / 1024 / 1024 }')"
+  printf "__AIWB_AGENT_HOST_LOAD_AVG__%s\n" "$load_avg"
+  printf "__AIWB_AGENT_HOST_UPTIME_SECONDS__%s\n" "$uptime_seconds"
+  printf "__AIWB_AGENT_HOST_PROCESS_COUNT__%s\n" "$process_count"
+}
+
+aiwb_print_health() {
+  aiwb_start_daemon >/dev/null 2>&1 || true
+  printf "__AIWB_AGENT_STATUS__ready\n"
+  printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+  printf "__AIWB_AGENT_HOME__%s\n" "$AIWB_HOME"
+  printf "__AIWB_AGENT_SERVICE_STATUS__%s\n" "$(aiwb_service_status)"
+  printf "__AIWB_AGENT_DAEMON_STATUS__%s\n" "$(aiwb_daemon_status)"
+  printf "__AIWB_AGENT_DAEMON_HEARTBEAT__%s\n" "$(cat "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASKS_QUEUED__%s\n" "$(aiwb_task_count queued)"
+  printf "__AIWB_AGENT_TASKS_RUNNING__%s\n" "$(aiwb_task_count running)"
+  printf "__AIWB_AGENT_TASKS_DONE__%s\n" "$(aiwb_task_count done)"
+  printf "__AIWB_AGENT_TASKS_ERROR__%s\n" "$(aiwb_task_count error)"
+  printf "__AIWB_AGENT_TASKS_CANCELLED__%s\n" "$(aiwb_task_count cancelled)"
+  aiwb_host_metrics
+}
+
+aiwb_cancel_task() {
+  local task_id="$1"
+  local task_dir
+  local status
+  local pid
+
+  task_dir="$(aiwb_task_dir "$task_id")"
+  if [ ! -d "$task_dir" ]; then
+    printf "__AIWB_AGENT_STATUS__ready\n"
+    printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+    printf "__AIWB_AGENT_TASK_ID__%s\n" "$task_id"
+    printf "__AIWB_AGENT_TASK_STATUS__missing\n"
+    return 0
+  fi
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  case "$status" in
+    done|error|cancelled)
+      aiwb_print_task "$task_id"
+      return 0
+      ;;
+  esac
+
+  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    sleep 0.4
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  {
+    printf "AI Workbench Agent: task cancelled by user.\n"
+    if [ -n "$pid" ]; then
+      printf "runner pid: %s\n" "$pid"
+    fi
+    printf "cancelled_at: %s\n" "$(aiwb_now)"
+  } >> "$task_dir/bootstrap.log"
+  aiwb_set_status "$task_dir" "cancelled" "130"
+  aiwb_print_task "$task_id"
+}
+
+aiwb_print_task() {
+  local task_id="$1"
+  local task_dir
+  task_dir="$(aiwb_task_dir "$task_id")"
+  if [ ! -d "$task_dir" ]; then
+    printf "__AIWB_AGENT_TASK_ID__%s\n" "$task_id"
+    printf "__AIWB_AGENT_TASK_STATUS__missing\n"
+    return 0
+  fi
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  if [ "$status" = "queued" ] || [ "$status" = "running" ]; then
+    aiwb_start_daemon >/dev/null 2>&1 || true
+  fi
+  aiwb_mark_queued_stale_if_needed "$task_dir"
+  aiwb_mark_stale_if_needed "$task_dir"
+
+  printf "__AIWB_AGENT_STATUS__ready\n"
+  printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+  printf "__AIWB_AGENT_DAEMON_STATUS__%s\n" "$(aiwb_daemon_status)"
+  printf "__AIWB_AGENT_DAEMON_HEARTBEAT__%s\n" "$(cat "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_ID__%s\n" "$task_id"
+  printf "__AIWB_AGENT_TASK_CONVERSATION_ID__%s\n" "$(cat "$task_dir/conversation_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_TURN_ID__%s\n" "$(cat "$task_dir/turn_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__%s\n" "$(cat "$task_dir/request_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__%s\n" "$(cat "$task_dir/response_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_STATUS__%s\n" "$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  printf "__AIWB_AGENT_TASK_EXIT_CODE__%s\n" "$(cat "$task_dir/exit_code" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_PID__%s\n" "$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_ATTEMPTS__%s\n" "$(cat "$task_dir/attempts" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_STARTED_AT__%s\n" "$(cat "$task_dir/started_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_RUNNER_STARTED_AT__%s\n" "$(cat "$task_dir/runner_started_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_FINISHED_AT__%s\n" "$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_OUTPUT_START__\n"
+  local current_status
+  current_status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  if [ -f "$task_dir/output.log" ]; then
+    cat "$task_dir/output.log"
+  fi
+  if [ -f "$task_dir/bootstrap.log" ] && { [ ! -s "$task_dir/output.log" ] || [ "$current_status" != "done" ]; }; then
+    cat "$task_dir/bootstrap.log"
+  fi
+  if [ -s "$task_dir/launcher.log" ] && { [ ! -s "$task_dir/output.log" ] || [ "$current_status" != "done" ]; }; then
+    printf "\nAI Workbench Agent launcher log:\n"
+    cat "$task_dir/launcher.log"
+  fi
+  printf "\n__AIWB_AGENT_TASK_OUTPUT_END__\n"
+  if [ -s "$task_dir/execution-summary.txt" ]; then
+    printf "__AIWB_AGENT_TASK_EXECUTION_SUMMARY_START__\n"
+    cat "$task_dir/execution-summary.txt"
+    printf "\n__AIWB_AGENT_TASK_EXECUTION_SUMMARY_END__\n"
+  fi
+}
+
+aiwb_task_fingerprint() {
+  local task_dir="$1"
+  local status
+  local output_size
+  local output_mtime
+  local bootstrap_size
+  local bootstrap_mtime
+  local launcher_size
+  local launcher_mtime
+  local summary_size
+  local summary_mtime
+  local finished_at
+  local runner_started_at
+  local pid
+
+  if [ ! -d "$task_dir" ]; then
+    printf "missing:0:0:0:0:0:0:::\n"
+    return 0
+  fi
+
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  output_size="$([ -f "$task_dir/output.log" ] && wc -c < "$task_dir/output.log" | tr -d '[:space:]' || printf 0)"
+  output_mtime="$(aiwb_path_mtime_epoch "$task_dir/output.log")"
+  bootstrap_size="$([ -f "$task_dir/bootstrap.log" ] && wc -c < "$task_dir/bootstrap.log" | tr -d '[:space:]' || printf 0)"
+  bootstrap_mtime="$(aiwb_path_mtime_epoch "$task_dir/bootstrap.log")"
+  launcher_size="$([ -f "$task_dir/launcher.log" ] && wc -c < "$task_dir/launcher.log" | tr -d '[:space:]' || printf 0)"
+  launcher_mtime="$(aiwb_path_mtime_epoch "$task_dir/launcher.log")"
+  summary_size="$([ -f "$task_dir/execution-summary.txt" ] && wc -c < "$task_dir/execution-summary.txt" | tr -d '[:space:]' || printf 0)"
+  summary_mtime="$(aiwb_path_mtime_epoch "$task_dir/execution-summary.txt")"
+  finished_at="$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
+  runner_started_at="$(cat "$task_dir/runner_started_at" 2>/dev/null || printf "")"
+  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+
+  printf "%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n" \
+    "$status" \
+    "$output_size" \
+    "$output_mtime" \
+    "$bootstrap_size" \
+    "$bootstrap_mtime" \
+    "$launcher_size" \
+    "$launcher_mtime" \
+    "$summary_size" \
+    "$summary_mtime" \
+    "$finished_at" \
+    "$runner_started_at" \
+    "$pid"
+}
+
+aiwb_wait_task() {
+  local task_id="$1"
+  local previous_fingerprint="${2:-}"
+  local timeout_seconds="${3:-55}"
+  local task_dir
+  local started_epoch
+  local now_epoch
+  local fingerprint
+  local status
+
+  case "$timeout_seconds" in
+    ''|*[!0-9]*) timeout_seconds="55" ;;
+  esac
+  if [ "$timeout_seconds" -lt 5 ] 2>/dev/null; then
+    timeout_seconds="5"
+  fi
+  if [ "$timeout_seconds" -gt 110 ] 2>/dev/null; then
+    timeout_seconds="110"
+  fi
+
+  task_dir="$(aiwb_task_dir "$task_id")"
+  if [ ! -d "$task_dir" ]; then
+    printf "__AIWB_AGENT_EVENT_FINGERPRINT__missing:0:0:0:0:0:0:::\n"
+    aiwb_print_task "$task_id"
+    return 0
+  fi
+
+  aiwb_start_daemon >/dev/null 2>&1 || true
+  started_epoch="$(date -u +%s)"
+
+  while true; do
+    aiwb_mark_queued_stale_if_needed "$task_dir"
+    aiwb_mark_stale_if_needed "$task_dir"
+
+    fingerprint="$(aiwb_task_fingerprint "$task_dir")"
+    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    if [ -z "$previous_fingerprint" ] || [ "$fingerprint" != "$previous_fingerprint" ]; then
+      printf "__AIWB_AGENT_EVENT_FINGERPRINT__%s\n" "$fingerprint"
+      aiwb_print_task "$task_id"
+      return 0
+    fi
+
+    case "$status" in
+      done|error|cancelled|missing)
+        printf "__AIWB_AGENT_EVENT_FINGERPRINT__%s\n" "$fingerprint"
+        aiwb_print_task "$task_id"
+        return 0
+        ;;
+    esac
+
+    now_epoch="$(date -u +%s)"
+    if [ "$((now_epoch - started_epoch))" -ge "$timeout_seconds" ] 2>/dev/null; then
+      printf "__AIWB_AGENT_EVENT_FINGERPRINT__%s\n" "$fingerprint"
+      aiwb_print_task "$task_id"
+      return 0
+    fi
+
+    sleep 1
+  done
+}
+
+aiwb_refresh_conversation_from_task_id() {
+  local task_id="$1"
+  local task_dir
+  [ -n "$task_id" ] || return 0
+  task_dir="$(aiwb_task_dir "$task_id")"
+  [ -d "$task_dir" ] || return 0
+  aiwb_mark_queued_stale_if_needed "$task_dir"
+  aiwb_mark_stale_if_needed "$task_dir"
+  aiwb_update_conversation_from_task "$task_dir"
+}
+
+aiwb_print_conversation_block() {
+  local conversation_dir="$1"
+  local history_limit="${2:-0}"
+  local history_before="${3:-}"
+  local task_id
+  [ -d "$conversation_dir" ] || return 0
+  task_id="$(cat "$conversation_dir/task_id" 2>/dev/null || printf "")"
+  if [ -n "$task_id" ]; then
+    aiwb_refresh_conversation_from_task_id "$task_id"
+  fi
+
+  printf "__AIWB_AGENT_CONVERSATION_START__\n"
+  printf "__AIWB_AGENT_CONVERSATION_ID__%s\n" "$(cat "$conversation_dir/id" 2>/dev/null || basename "$conversation_dir")"
+  printf "__AIWB_AGENT_CONVERSATION_NAME__%s\n" "$(cat "$conversation_dir/name" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_WORKDIR__%s\n" "$(cat "$conversation_dir/workdir" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_AGENT_ID__%s\n" "$(cat "$conversation_dir/agent_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_STATUS__%s\n" "$(cat "$conversation_dir/status" 2>/dev/null || printf unknown)"
+  printf "__AIWB_AGENT_CONVERSATION_TASK_ID__%s\n" "$(cat "$conversation_dir/task_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_CREATED_AT__%s\n" "$(cat "$conversation_dir/created_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_UPDATED_AT__%s\n" "$(cat "$conversation_dir/updated_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_STARTED_AT__%s\n" "$(cat "$conversation_dir/started_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_FINISHED_AT__%s\n" "$(cat "$conversation_dir/finished_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_EXIT_CODE__%s\n" "$(cat "$conversation_dir/exit_code" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_LAST_PROMPT_START__\n"
+  cat "$conversation_dir/last_prompt.txt" 2>/dev/null || true
+  printf "\n__AIWB_AGENT_CONVERSATION_LAST_PROMPT_END__\n"
+  printf "__AIWB_AGENT_CONVERSATION_LAST_RESULT_START__\n"
+  cat "$conversation_dir/last_result.txt" 2>/dev/null || true
+  printf "\n__AIWB_AGENT_CONVERSATION_LAST_RESULT_END__\n"
+  aiwb_print_conversation_history "$conversation_dir" "$history_limit" "$history_before"
+  printf "__AIWB_AGENT_CONVERSATION_END__\n"
+}
+
+aiwb_task_sort_key() {
+  local task_dir="$1"
+  local value
+  local name
+  for name in finished_at runner_started_at started_at queued_at created_at; do
+    value="$(cat "$task_dir/$name" 2>/dev/null || printf "")"
+    if [ -n "$value" ]; then
+      date -u -d "$value" +%s 2>/dev/null && return 0
+    fi
+  done
+  stat -c %Y "$task_dir" 2>/dev/null || printf "0\n"
+}
+
+aiwb_print_conversation_history_item() {
+  local task_dir="$1"
+  local sort_key="$2"
+  local task_id
+  local status
+  task_id="$(basename -- "$task_dir")"
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_ITEM_START__\n"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_TASK_ID__%s\n" "$task_id"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_SORT_KEY__%s:%s\n" "$sort_key" "$task_id"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_STATUS__%s\n" "$status"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_TURN_ID__%s\n" "$(cat "$task_dir/turn_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_REQUEST_MESSAGE_ID__%s\n" "$(cat "$task_dir/request_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_RESPONSE_MESSAGE_ID__%s\n" "$(cat "$task_dir/response_message_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_AGENT_ID__%s\n" "$(cat "$task_dir/agent_id" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_STARTED_AT__%s\n" "$(cat "$task_dir/started_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_FINISHED_AT__%s\n" "$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_EXIT_CODE__%s\n" "$(cat "$task_dir/exit_code" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_PROMPT_START__\n"
+  cat "$task_dir/prompt.txt" 2>/dev/null || true
+  printf "\n__AIWB_AGENT_CONVERSATION_HISTORY_PROMPT_END__\n"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_RESULT_START__\n"
+  if [ -f "$task_dir/output.log" ]; then
+    cat "$task_dir/output.log"
+  fi
+  if [ -f "$task_dir/bootstrap.log" ] && { [ ! -s "$task_dir/output.log" ] || [ "$status" != "done" ]; }; then
+    cat "$task_dir/bootstrap.log"
+  fi
+  if [ -s "$task_dir/launcher.log" ] && { [ ! -s "$task_dir/output.log" ] || [ "$status" != "done" ]; }; then
+    printf "\nAI Workbench Agent launcher log:\n"
+    cat "$task_dir/launcher.log"
+  fi
+  printf "\n__AIWB_AGENT_CONVERSATION_HISTORY_RESULT_END__\n"
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_ITEM_END__\n"
+}
+
+aiwb_print_conversation_history() {
+  local conversation_dir="$1"
+  local limit="${2:-0}"
+  local before="${3:-}"
+  local conversation_id
+  local tmp_file
+  local task_dir
+  local task_conversation_id
+  local sort_key
+
+  if [ "$limit" -le 0 ] 2>/dev/null; then
+    return 0
+  fi
+
+  conversation_id="$(cat "$conversation_dir/id" 2>/dev/null || printf "")"
+  [ -n "$conversation_id" ] || return 0
+
+  tmp_file="$AIWB_HOME/history.$$"
+  : > "$tmp_file"
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    task_conversation_id="$(cat "$task_dir/conversation_id" 2>/dev/null || printf "")"
+    [ "$task_conversation_id" = "$conversation_id" ] || continue
+    aiwb_mark_queued_stale_if_needed "$task_dir"
+    aiwb_mark_stale_if_needed "$task_dir"
+    aiwb_update_conversation_from_task "$task_dir"
+    sort_key="$(aiwb_task_sort_key "$task_dir")"
+    printf "%s|%s|%s\n" "$sort_key" "$(basename -- "$task_dir")" "$task_dir" >> "$tmp_file"
+  done
+
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_START__\n"
+  sort -t '|' -k1,1nr -k2,2r "$tmp_file" 2>/dev/null | {
+    local count="0"
+    local has_more="0"
+    local next_before=""
+    local before_key=""
+    local before_id=""
+    local task_id=""
+    if [ -n "$before" ]; then
+      before_key="${before%%:*}"
+      before_id="${before#*:}"
+    fi
+    while IFS='|' read -r sort_key task_id task_dir; do
+      [ -n "$task_dir" ] || continue
+      if [ -n "$before_key" ]; then
+        if [ "$sort_key" -gt "$before_key" ] 2>/dev/null; then
+          continue
+        fi
+        if [ "$sort_key" -eq "$before_key" ] 2>/dev/null && { [ "$task_id" = "$before_id" ] || [[ "$task_id" > "$before_id" ]]; }; then
+          continue
+        fi
+      fi
+      if [ "$count" -ge "$limit" ] 2>/dev/null; then
+        has_more="1"
+        break
+      fi
+      aiwb_print_conversation_history_item "$task_dir" "$sort_key"
+      next_before="$sort_key:$task_id"
+      count="$((count + 1))"
+    done
+    printf "__AIWB_AGENT_CONVERSATION_HISTORY_NEXT_BEFORE__%s\n" "$next_before"
+    printf "__AIWB_AGENT_CONVERSATION_HISTORY_HAS_MORE__%s\n" "$has_more"
+  }
+  printf "__AIWB_AGENT_CONVERSATION_HISTORY_END__\n"
+  rm -f "$tmp_file" 2>/dev/null || true
+}
+
+aiwb_list_conversations() {
+  local conversation_dir
+  aiwb_rebuild_conversations_from_tasks
+  printf "__AIWB_AGENT_STATUS__ready\n"
+  printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+  for conversation_dir in "$AIWB_CONVERSATIONS"/*; do
+    [ -d "$conversation_dir" ] || continue
+    aiwb_print_conversation_block "$conversation_dir" "0" ""
+  done
+}
+
+aiwb_rebuild_conversations_from_tasks() {
+  local task_dir
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    [ -f "$task_dir/conversation_id" ] || continue
+    aiwb_mark_queued_stale_if_needed "$task_dir"
+    aiwb_mark_stale_if_needed "$task_dir"
+    aiwb_update_conversation_from_task "$task_dir"
+  done
+}
+
+aiwb_print_conversation_status() {
+  local conversation_id="$1"
+  local history_limit="${2:-5}"
+  local history_before="${3:-}"
+  local conversation_dir
+  aiwb_rebuild_conversations_from_tasks
+  conversation_dir="$(aiwb_conversation_dir "$conversation_id")"
+  printf "__AIWB_AGENT_STATUS__ready\n"
+  printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+  if [ ! -d "$conversation_dir" ]; then
+    printf "__AIWB_AGENT_CONVERSATION_ID__%s\n" "$conversation_id"
+    printf "__AIWB_AGENT_CONVERSATION_STATUS__missing\n"
+    return 0
+  fi
+  aiwb_print_conversation_block "$conversation_dir" "$history_limit" "$history_before"
+}
+
+aiwb_install_service() {
+  if command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+    systemctl stop ai-workbench-agent.service >/dev/null 2>&1 || true
+  fi
+  aiwb_stop_daemons
+  if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    mkdir -p "$AIWB_LAUNCH_AGENT_DIR"
+    cat > "$AIWB_LAUNCH_AGENT_PLIST" <<AIWB_LAUNCH_AGENT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$AIWB_LAUNCH_AGENT_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$AIWB_HOME/aiwbctl</string>
+    <string>daemon</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$AIWB_USER_HOME</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>$AIWB_HOME</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>StandardOutPath</key>
+  <string>$AIWB_DAEMON_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$AIWB_DAEMON_LOG</string>
+</dict>
+</plist>
+AIWB_LAUNCH_AGENT
+    chmod 600 "$AIWB_LAUNCH_AGENT_PLIST"
+    launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    if launchctl bootstrap "gui/$(id -u)" "$AIWB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+      launchctl kickstart -k "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+      printf "__AIWB_AGENT_SERVICE__launchd\n"
+      return 0
+    fi
+    printf "__AIWB_AGENT_SERVICE__launchd-fallback\n"
+    aiwb_start_daemon >/dev/null 2>&1 || true
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    printf "__AIWB_AGENT_SERVICE__unsupported\n"
+    aiwb_start_daemon >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  if [ "$(id -u)" = "0" ]; then
+    cat > /etc/systemd/system/ai-workbench-agent.service <<AIWB_SYSTEMD_UNIT
+[Unit]
+Description=AI Workbench Agent
+After=network.target
+
+[Service]
+Type=simple
+Environment=HOME=$AIWB_USER_HOME
+ExecStart=$AIWB_HOME/aiwbctl daemon
+Restart=always
+RestartSec=2
+KillMode=process
+WorkingDirectory=$AIWB_HOME
+
+[Install]
+WantedBy=multi-user.target
+AIWB_SYSTEMD_UNIT
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable ai-workbench-agent.service >/dev/null 2>&1 || true
+    systemctl restart ai-workbench-agent.service >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
+    printf "__AIWB_AGENT_SERVICE__system\n"
+    return 0
+  fi
+
+  aiwb_start_daemon >/dev/null 2>&1 || true
+  printf "__AIWB_AGENT_SERVICE__user-fallback\n"
+}
+
+aiwb_uninstall_service() {
+  local task_dir
+  local task_pid
+  local daemon_pid
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      systemctl disable --now ai-workbench-agent.service >/dev/null 2>&1 || true
+      rm -f /etc/systemd/system/ai-workbench-agent.service
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    else
+      systemctl --user disable --now ai-workbench-agent.service >/dev/null 2>&1 || true
+    fi
+  fi
+  if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    rm -f "$AIWB_LAUNCH_AGENT_PLIST"
+  fi
+
+  daemon_pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
+  if [ -n "$daemon_pid" ]; then
+    kill "$daemon_pid" >/dev/null 2>&1 || true
+  fi
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    task_pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+    if [ -n "$task_pid" ]; then
+      kill "$task_pid" >/dev/null 2>&1 || true
+    fi
+  done
+
+  rm -rf "$AIWB_HOME"
+  printf "__AIWB_AGENT_STATUS__removed\n"
+  printf "__AIWB_AGENT_SERVICE_STATUS__removed\n"
+}
+
+AIWB_CMD="status"
+if [ "$#" -gt 0 ]; then
+  AIWB_CMD="$1"
+fi
+
+case "$AIWB_CMD" in
+  --version|version)
+    printf "%s\n" "$AIWB_VERSION"
+    ;;
+  status)
+    if [ "$#" -gt 1 ]; then
+      aiwb_print_task "$2"
+    else
+      aiwb_print_health
+    fi
+    ;;
+  wait|wait-task)
+    AIWB_TASK_ID=""
+    AIWB_EVENT_FINGERPRINT=""
+    AIWB_WAIT_TIMEOUT="55"
+    if [ "$#" -gt 1 ]; then
+      AIWB_TASK_ID="$2"
+    fi
+    if [ "$#" -gt 2 ]; then
+      AIWB_EVENT_FINGERPRINT="$3"
+    fi
+    if [ "$#" -gt 3 ]; then
+      AIWB_WAIT_TIMEOUT="$4"
+    fi
+    if [ -z "$AIWB_TASK_ID" ]; then
+      printf "__AIWB_AGENT_STATUS__error\n"
+      printf "__AIWB_AGENT_ERROR__missing task id\n"
+      exit 2
+    fi
+    aiwb_wait_task "$AIWB_TASK_ID" "$AIWB_EVENT_FINGERPRINT" "$AIWB_WAIT_TIMEOUT"
+    ;;
+  health)
+    aiwb_print_health
+    ;;
+  daemon)
+    aiwb_daemon_loop
+    ;;
+  install-service)
+    aiwb_install_service
+    "$AIWB_HOME/aiwbctl" status
+    ;;
+  uninstall-service)
+    aiwb_uninstall_service
+    ;;
+  create)
+    AIWB_TASK_ID=""
+    if [ "$#" -gt 1 ]; then
+      AIWB_TASK_ID="$2"
+    fi
+    if [ -z "$AIWB_TASK_ID" ]; then
+      printf "__AIWB_AGENT_STATUS__error\n"
+      printf "__AIWB_AGENT_ERROR__missing task id\n"
+      exit 2
+    fi
+    AIWB_TASK_DIR="$(aiwb_task_dir "$AIWB_TASK_ID")"
+    mkdir -p "$AIWB_TASK_DIR"
+    if [ ! -s "$AIWB_TASK_DIR/command.b64" ]; then
+      printf "__AIWB_AGENT_STATUS__error\n"
+      printf "__AIWB_AGENT_ERROR__missing command payload\n"
+      exit 2
+    fi
+    AIWB_CONVERSATION_ID="$(cat "$AIWB_TASK_DIR/conversation_id" 2>/dev/null || printf "")"
+    if [ -n "$AIWB_CONVERSATION_ID" ]; then
+      AIWB_CONVERSATION_LOCK="$AIWB_CONVERSATION_LOCKS/$(aiwb_safe_id "$AIWB_CONVERSATION_ID").lock"
+      AIWB_LOCK_ACQUIRED="0"
+      if mkdir "$AIWB_CONVERSATION_LOCK" 2>/dev/null; then
+        AIWB_LOCK_ACQUIRED="1"
+      else
+        AIWB_LOCK_EPOCH="$(aiwb_path_mtime_epoch "$AIWB_CONVERSATION_LOCK")"
+        AIWB_NOW_EPOCH="$(date -u +%s)"
+        AIWB_LOCK_AGE="$((AIWB_NOW_EPOCH - AIWB_LOCK_EPOCH))"
+        if [ "$AIWB_LOCK_EPOCH" -gt 0 ] 2>/dev/null && [ "$AIWB_LOCK_AGE" -gt 30 ] 2>/dev/null; then
+          rm -rf "$AIWB_CONVERSATION_LOCK" 2>/dev/null || true
+        fi
+        if mkdir "$AIWB_CONVERSATION_LOCK" 2>/dev/null; then
+          AIWB_LOCK_ACQUIRED="1"
+        fi
+      fi
+      if [ "$AIWB_LOCK_ACQUIRED" != "1" ]; then
+        AIWB_BUSY_TASK_ID="$(aiwb_conversation_active_task "$AIWB_CONVERSATION_ID" "$AIWB_TASK_ID" || printf "")"
+        if [ -z "$AIWB_BUSY_TASK_ID" ]; then
+          AIWB_BUSY_TASK_ID="$(cat "$(aiwb_conversation_dir "$AIWB_CONVERSATION_ID")/task_id" 2>/dev/null || printf "")"
+        fi
+        aiwb_print_conversation_busy "$AIWB_BUSY_TASK_ID" "$AIWB_CONVERSATION_ID"
+        exit 0
+      fi
+      trap 'rm -rf "$AIWB_CONVERSATION_LOCK" 2>/dev/null || true' EXIT
+      AIWB_BUSY_TASK_ID="$(aiwb_conversation_active_task "$AIWB_CONVERSATION_ID" "$AIWB_TASK_ID" || printf "")"
+      if [ -n "$AIWB_BUSY_TASK_ID" ]; then
+        aiwb_print_conversation_busy "$AIWB_BUSY_TASK_ID" "$AIWB_CONVERSATION_ID"
+        exit 0
+      fi
+    fi
+    aiwb_write_file "$AIWB_TASK_DIR/id" "$AIWB_TASK_ID"
+    aiwb_write_file "$AIWB_TASK_DIR/created_at" "$(aiwb_now)"
+    aiwb_write_file "$AIWB_TASK_DIR/queued_at" "$(aiwb_now)"
+    aiwb_write_file "$AIWB_TASK_DIR/attempts" "0"
+    aiwb_write_file "$AIWB_TASK_DIR/pid" ""
+    aiwb_write_file "$AIWB_TASK_DIR/runner_started_at" ""
+    aiwb_write_file "$AIWB_TASK_DIR/finished_at" ""
+    aiwb_set_status "$AIWB_TASK_DIR" "queued" ""
+    aiwb_start_daemon >/dev/null 2>&1 || true
+
+    printf "__AIWB_AGENT_STATUS__ready\n"
+    printf "__AIWB_AGENT_VERSION__%s\n" "$AIWB_VERSION"
+    printf "__AIWB_AGENT_DAEMON_STATUS__%s\n" "$(aiwb_daemon_status)"
+    printf "__AIWB_AGENT_TASK_ID__%s\n" "$AIWB_TASK_ID"
+    printf "__AIWB_AGENT_TASK_CONVERSATION_ID__%s\n" "$(cat "$AIWB_TASK_DIR/conversation_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_TURN_ID__%s\n" "$(cat "$AIWB_TASK_DIR/turn_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__%s\n" "$(cat "$AIWB_TASK_DIR/request_message_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__%s\n" "$(cat "$AIWB_TASK_DIR/response_message_id" 2>/dev/null || printf "")"
+    printf "__AIWB_AGENT_TASK_STATUS__%s\n" "$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf queued)"
+    ;;
+  conversations|conversation-list)
+    aiwb_list_conversations
+    ;;
+  conversation-status)
+    AIWB_CONVERSATION_ID=""
+    AIWB_HISTORY_LIMIT="5"
+    AIWB_HISTORY_BEFORE=""
+    if [ "$#" -gt 1 ]; then
+      AIWB_CONVERSATION_ID="$2"
+    fi
+    if [ "$#" -gt 2 ]; then
+      AIWB_HISTORY_LIMIT="$3"
+    fi
+    if [ "$#" -gt 3 ]; then
+      AIWB_HISTORY_BEFORE="$4"
+    fi
+    if [ -z "$AIWB_CONVERSATION_ID" ]; then
+      printf "__AIWB_AGENT_STATUS__error\n"
+      printf "__AIWB_AGENT_ERROR__missing conversation id\n"
+      exit 2
+    fi
+    aiwb_print_conversation_status "$AIWB_CONVERSATION_ID" "$AIWB_HISTORY_LIMIT" "$AIWB_HISTORY_BEFORE"
+    ;;
+  cancel)
+    AIWB_TASK_ID=""
+    if [ "$#" -gt 1 ]; then
+      AIWB_TASK_ID="$2"
+    fi
+    if [ -z "$AIWB_TASK_ID" ]; then
+      printf "__AIWB_AGENT_STATUS__error\n"
+      printf "__AIWB_AGENT_ERROR__missing task id\n"
+      exit 2
+    fi
+    aiwb_cancel_task "$AIWB_TASK_ID"
+    ;;
+  *)
+    printf "__AIWB_AGENT_STATUS__error\n"
+    printf "__AIWB_AGENT_ERROR__unknown command\n"
+    exit 2
+    ;;
+esac

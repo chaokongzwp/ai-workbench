@@ -19,7 +19,7 @@ export function normalizeAgentDirectEndpoint(value) {
   if (!candidate) return "";
   try {
     const url = new URL(candidate);
-    if (url.protocol !== "https:") return "";
+    if (!["https:", "http:"].includes(url.protocol)) return "";
     url.pathname = url.pathname.replace(/\/+$/, "");
     url.search = "";
     url.hash = "";
@@ -32,10 +32,12 @@ export function normalizeAgentDirectEndpoint(value) {
 export function agentDirectConfig(profile = {}) {
   const endpoint = normalizeAgentDirectEndpoint(profile?.agentDirectEndpoint);
   const accessToken = text(profile?.agentDirectAccessToken);
+  const insecure = endpoint.startsWith("http:");
   return {
     endpoint,
     accessToken,
-    enabled: Boolean(endpoint && accessToken),
+    insecure,
+    enabled: Boolean(endpoint && accessToken && (!insecure || profile?.agentDirectAllowInsecure === true)),
   };
 }
 
@@ -43,7 +45,7 @@ export function agentDirectEventUrl(profile = {}) {
   const { endpoint, enabled } = agentDirectConfig(profile);
   if (!enabled) return "";
   const url = new URL(`${endpoint}/v1/events`);
-  url.protocol = "wss:";
+  url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
   return url.toString();
 }
 
@@ -79,6 +81,8 @@ export function agentDirectTaskRequest({
   prompt,
   requestMessageId,
   responseMessageId,
+  command,
+  name,
 } = {}) {
   return {
     taskId: text(taskId),
@@ -90,6 +94,8 @@ export function agentDirectTaskRequest({
     prompt: text(prompt),
     requestMessageId: text(requestMessageId),
     responseMessageId: text(responseMessageId),
+    command: command && typeof command === "object" ? command : undefined,
+    name: text(name),
   };
 }
 
@@ -106,10 +112,10 @@ export class AgentDirectRequestError extends Error {
 export async function agentDirectRequest(profile, path, { method = "GET", body, timeoutMs = 12_000, fetchImpl = globalThis.fetch } = {}) {
   const { endpoint, accessToken, enabled } = agentDirectConfig(profile);
   if (!enabled) {
-    throw new AgentDirectRequestError("Agent HTTPS 直连尚未配置。", { code: "agent_direct_not_configured" });
+    throw new AgentDirectRequestError("Agent 直连尚未配置。", { code: "agent_direct_not_configured" });
   }
   if (typeof fetchImpl !== "function") {
-    throw new AgentDirectRequestError("当前平台不支持 Agent HTTPS 请求。", { code: "agent_direct_fetch_unavailable" });
+    throw new AgentDirectRequestError("当前平台不支持 Agent 直连请求。", { code: "agent_direct_fetch_unavailable" });
   }
 
   const url = new URL(String(path || ""), `${endpoint}/`);
@@ -139,7 +145,7 @@ export async function agentDirectRequest(profile, path, { method = "GET", body, 
     if (error instanceof AgentDirectRequestError) throw error;
     const aborted = error?.name === "AbortError";
     throw new AgentDirectRequestError(
-      aborted ? "连接 Agent 超时。" : "无法连接 Agent HTTPS 服务。",
+      aborted ? "连接 Agent 超时。" : "无法连接 Agent 直连服务。",
       { code: aborted ? "agent_direct_timeout" : "agent_direct_network_error" },
     );
   } finally {

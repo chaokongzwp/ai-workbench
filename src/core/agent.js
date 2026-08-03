@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "33";
+export const latestWorkbenchAgentVersion = "34";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -1939,6 +1939,14 @@ function Install-AiwbRuntime([object]$Runtime, [string]$Target) {
 }
 Install-AiwbRuntime $AIWB_DIRECT_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-http.mjs")
 Install-AiwbRuntime $AIWB_UPDATER_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs")
+if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-http.mjs") -PathType Leaf) {
+  $direct = Join-Path $AIWB_HOME "aiwb-agent-http.mjs"
+  $directConfig = Join-Path $AIWB_HOME "http.json"
+  if (-not (Test-Path -LiteralPath $directConfig -PathType Leaf)) { '{"listenHost":"0.0.0.0","port":8787,"tls":false}' | Set-Content -LiteralPath $directConfig -Encoding UTF8 }
+  $directRunning = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$direct*" } | Select-Object -First 1
+  if ($directRunning) { Stop-Process -Id $directRunning.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Process -FilePath $AIWB_NODE_COMMAND.Source -ArgumentList @($direct) -WindowStyle Hidden
+}
 if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs") -PathType Leaf) {
   @{ manifestUrl = $AIWB_MANIFEST_URL; controlEndpoint = ${psQuote(workbenchAgentControlEndpoint)} } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $AIWB_HOME "updater.json") -Encoding UTF8
   $updater = Join-Path $AIWB_HOME "aiwb-agent-updater.mjs"
@@ -2099,6 +2107,14 @@ aiwb_install_runtime() {
 }
 aiwb_install_runtime "$AIWB_DIRECT_URL" "$AIWB_DIRECT_SHA" "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" || true
 aiwb_install_runtime "$AIWB_UPDATER_URL" "$AIWB_UPDATER_SHA" "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" || true
+if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" ]; then
+  if [ ! -s "$AIWB_AGENT_HOME/http.json" ]; then
+    printf '%s\n' '{"listenHost":"0.0.0.0","port":8787,"tls":false}' > "$AIWB_AGENT_HOME/http.json"
+    chmod 600 "$AIWB_AGENT_HOME/http.json"
+  fi
+  pkill -f "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" >/dev/null 2>&1 || true
+  nohup node "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" >> "$AIWB_AGENT_HOME/http.log" 2>&1 &
+fi
 if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" ]; then
   cat > "$AIWB_AGENT_HOME/updater.json" <<AIWB_UPDATER_CONFIG
 {"manifestUrl":"$AIWB_AGENT_MANIFEST_URL","controlEndpoint":"${workbenchAgentControlEndpoint}"}
@@ -2289,6 +2305,32 @@ if [ ! -x "$AIWB_AGENT_CTL" ]; then
   exit 0
 fi
 "$AIWB_AGENT_CTL" status ${taskId ? shQuote(taskId) : ""}
+`);
+}
+
+export function buildWorkbenchAgentDirectConfigCommand(profile) {
+  if (isWindowsProfile(profile)) {
+    return powershellCommand(`
+$AIWB_CONFIG = Join-Path $env:USERPROFILE ".ai-workbench\\agent\\http.json"
+if (-not (Test-Path -LiteralPath $AIWB_CONFIG -PathType Leaf)) {
+  Write-Output "__AIWB_AGENT_DIRECT_STATUS__missing"
+  exit 0
+}
+$AIWB_BYTES = [System.IO.File]::ReadAllBytes($AIWB_CONFIG)
+Write-Output "__AIWB_AGENT_DIRECT_STATUS__ready"
+Write-Output ("__AIWB_AGENT_DIRECT_CONFIG_B64__" + [Convert]::ToBase64String($AIWB_BYTES))
+`);
+  }
+  return remoteBashCommand(profile, `
+AIWB_CONFIG="$HOME/.ai-workbench/agent/http.json"
+if [ ! -s "$AIWB_CONFIG" ]; then
+  printf '__AIWB_AGENT_DIRECT_STATUS__missing\\n'
+  exit 0
+fi
+printf '__AIWB_AGENT_DIRECT_STATUS__ready\\n'
+printf '__AIWB_AGENT_DIRECT_CONFIG_B64__'
+base64 "$AIWB_CONFIG" 2>/dev/null | tr -d '\\n' || true
+printf '\\n'
 `);
 }
 

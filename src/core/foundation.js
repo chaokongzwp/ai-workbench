@@ -424,6 +424,7 @@ export const defaultProfile = {
   // HTTPS endpoint and a per-machine access token provisioned by the installer.
   agentDirectEndpoint: "",
   agentDirectAccessToken: "",
+  agentDirectAllowInsecure: false,
   executionPermissionMode: "standard",
   appearanceMode: "light",
   messageFontFamily: "system",
@@ -1361,6 +1362,7 @@ export function normalizeProfile(profile) {
         : Boolean(profile.useWorkbenchAgent),
     agentDirectEndpoint: String(profile?.agentDirectEndpoint || "").trim(),
     agentDirectAccessToken: String(profile?.agentDirectAccessToken || "").trim(),
+    agentDirectAllowInsecure: profile?.agentDirectAllowInsecure === true,
     executionPermissionMode: normalizeExecutionPermissionMode(profile?.executionPermissionMode),
     appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
     messageFontFamily: normalizeMessageFontFamily(profile?.messageFontFamily),

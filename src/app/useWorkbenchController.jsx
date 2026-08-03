@@ -42,6 +42,9 @@ const {
   VoiceWorkbench,
   agentById,
   agentCommand,
+  agentDirectConfig,
+  agentDirectRequest,
+  agentDirectTaskRequest,
   agentRuntimeProfile,
   agents,
   appLog,
@@ -87,6 +90,7 @@ const {
   buildWorkbenchAgentConversationListCommand,
   buildWorkbenchAgentConversationStatusCommand,
   buildWorkbenchAgentCreateCommand,
+  buildWorkbenchAgentDirectConfigCommand,
   buildWorkbenchAgentStatusCommand,
   buildWorkbenchAgentTaskListCommand,
   buildWorkbenchAgentWaitTaskCommand,
@@ -4700,7 +4704,41 @@ export function useWorkbenchController() {
           { persistDelay: 100 },
         );
       }
-      const runtimeProfile = agentRuntimeProfile(currentProfile);
+      // The SSH probe above is only used to bootstrap/repair the Agent. Once its
+      // local direct endpoint is known, task submission no longer waits on SSH.
+      let directProfile = currentProfile;
+      if (!agentDirectConfig(directProfile).enabled) {
+        try {
+          const directConfigOutput = await runRemoteCommandForProfile(
+            currentProfile,
+            buildWorkbenchAgentDirectConfigCommand(currentProfile),
+            30_000,
+            10,
+          );
+          const encoded = String(directConfigOutput || "").match(/__AIWB_AGENT_DIRECT_CONFIG_B64__([^\r\n]+)/)?.[1]?.trim();
+          if (encoded && typeof atob === "function") {
+            const directConfig = JSON.parse(atob(encoded));
+            const port = Number(directConfig?.port) || 8787;
+            const transport = directConfig?.tls ? "https" : "http";
+            const endpoint = `${transport}://${currentProfile.host}:${port}`;
+            const accessToken = String(directConfig?.accessToken || "").trim();
+            if (accessToken) {
+              directProfile = {
+                ...currentProfile,
+                agentDirectEndpoint: endpoint,
+                agentDirectAccessToken: accessToken,
+                agentDirectAllowInsecure: transport === "http",
+              };
+              updateServer(serverId, (server) => ({ ...server, profile: { ...server.profile, ...directProfile } }));
+              void appLog("info", "agent.direct.configured", { serverId, endpoint, transport });
+            }
+          }
+        } catch (error) {
+          void appLog("warn", "agent.direct.config_read_failed", { serverId, error: shortError(error) });
+        }
+      }
+
+      const runtimeProfile = agentRuntimeProfile(directProfile);
       const command = buildAgentTaskCommand(runtimeProfile, agent, text);
       const maxAgentStartupAttempts = 2;
       const conversationId = ensureServerConversationId(serverId, currentProfile, agent.id);
@@ -4762,25 +4800,68 @@ export function useWorkbenchController() {
           remoteSyncError: "",
           forceUpdate: true,
         });
-        const createOutput = await runRemoteCommandForProfile(
-          currentProfile,
-          buildWorkbenchAgentCreateCommand(currentProfile, remoteTaskId, command, {
-            conversationId,
-            name: conversationName,
-            workdir: currentProfile.workdir,
-            agentId: agent.id,
-            model: currentProfile.aiModel,
-            promptText: text,
-            turnId,
-            requestMessageId: userMessageId,
-            responseMessageId: assistantMessageId,
-            pushNotifyUrl: pushTicket?.notifyUrl || "",
-            pushNotifyToken: pushTicket?.notifyToken || "",
-          }),
-          128_000,
-          30,
-        );
-        const created = parseWorkbenchAgentOutput(createOutput);
+        let createOutput = "";
+        let created = null;
+        if (agentDirectConfig(directProfile).enabled) {
+          try {
+            const response = await agentDirectRequest(directProfile, "/v1/tasks", {
+              method: "POST",
+              body: agentDirectTaskRequest({
+                taskId: remoteTaskId,
+                conversationId,
+                turnId,
+                agentId: agent.id,
+                model: currentProfile.aiModel,
+                workdir: currentProfile.workdir,
+                prompt: text,
+                requestMessageId: userMessageId,
+                responseMessageId: assistantMessageId,
+                command,
+                name: conversationName,
+              }),
+              timeoutMs: 20_000,
+            });
+            const task = response?.task || {};
+            created = {
+              status: "ready",
+              taskStatus: String(task.rawStatus || task.status || "queued").toLowerCase(),
+              taskId: task.id || remoteTaskId,
+              pid: "",
+              startedAt: task.startedAt || "",
+              runnerStartedAt: task.runnerStartedAt || "",
+              exitCode: task.exitCode || "",
+              eventFingerprint: "",
+            };
+            void appLog("info", "agent.direct.task_created", { serverId, remoteTaskId });
+          } catch (error) {
+            void appLog("warn", "agent.direct.task_create_failed", {
+              serverId,
+              remoteTaskId,
+              error: shortError(error),
+            });
+          }
+        }
+        if (!created) {
+          createOutput = await runRemoteCommandForProfile(
+            currentProfile,
+            buildWorkbenchAgentCreateCommand(currentProfile, remoteTaskId, command, {
+              conversationId,
+              name: conversationName,
+              workdir: currentProfile.workdir,
+              agentId: agent.id,
+              model: currentProfile.aiModel,
+              promptText: text,
+              turnId,
+              requestMessageId: userMessageId,
+              responseMessageId: assistantMessageId,
+              pushNotifyUrl: pushTicket?.notifyUrl || "",
+              pushNotifyToken: pushTicket?.notifyToken || "",
+            }),
+            128_000,
+            30,
+          );
+          created = parseWorkbenchAgentOutput(createOutput);
+        }
         if (created.taskStatus === "busy") {
           const blockingTaskId = String(created.blockedByTaskId || created.taskId || "").trim();
           const raw = created.output || created.raw || createOutput;

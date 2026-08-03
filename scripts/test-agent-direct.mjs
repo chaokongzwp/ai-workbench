@@ -16,12 +16,16 @@ import {
 } from "../src/core/messageLifecycle.js";
 
 assert.equal(normalizeAgentDirectEndpoint("https://agent.example.com/"), "https://agent.example.com");
-assert.equal(normalizeAgentDirectEndpoint("http://agent.example.com"), "");
+assert.equal(normalizeAgentDirectEndpoint("http://agent.example.com"), "http://agent.example.com");
 assert.equal(normalizeAgentDirectEndpoint("not a url"), "");
 
 const profile = { agentDirectEndpoint: "https://agent.example.com/", agentDirectAccessToken: "secret" };
 assert.equal(agentDirectConfig(profile).enabled, true);
 assert.equal(agentDirectEventUrl(profile), "wss://agent.example.com/v1/events");
+const httpProfile = { agentDirectEndpoint: "http://agent.example.com", agentDirectAccessToken: "secret" };
+assert.equal(agentDirectConfig(httpProfile).enabled, false);
+assert.equal(agentDirectConfig({ ...httpProfile, agentDirectAllowInsecure: true }).enabled, true);
+assert.equal(agentDirectEventUrl({ ...httpProfile, agentDirectAllowInsecure: true }), "ws://agent.example.com/v1/events");
 assert.deepEqual(agentDirectTaskLifecycle({ status: "queued" }), { status: "running", outcome: "" });
 assert.deepEqual(agentDirectTaskLifecycle({ status: "done" }), { status: "completed", outcome: "success" });
 assert.deepEqual(agentDirectTaskLifecycle({ status: "error" }), { status: "completed", outcome: "error" });
