@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const home = mkdtempSync(join(tmpdir(), "aiwb-agent-http-"));
@@ -28,7 +28,22 @@ assert.equal(payload.task.status, "completed");
 assert.equal(payload.task.outcome, "success");
 assert.equal(payload.task.output, "done result");
 
+const created = await fetch(`${baseUrl}/v1/tasks`, {
+  method: "POST",
+  headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+  body: JSON.stringify({
+    taskId: "task-linux-command",
+    conversationId: "conversation-1",
+    command: "printf agent-direct-probe",
+  }),
+});
+assert.equal(created.status, 202);
+assert.equal(
+  Buffer.from(readFileSync(join(home, "tasks", "task-linux-command", "command.b64"), "utf8").trim(), "base64").toString("utf8"),
+  "printf agent-direct-probe",
+);
+
 const latest = await fetch(`${baseUrl}/v1/conversations/conversation-1/latest-task`, { headers: { Authorization: "Bearer test-token" } });
-assert.equal((await latest.json()).task.id, "task-1");
+assert.equal((await latest.json()).task.id, "task-linux-command");
 server.close();
 console.log("agent direct server regression: ok");

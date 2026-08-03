@@ -94,7 +94,7 @@ export function agentDirectTaskRequest({
     prompt: text(prompt),
     requestMessageId: text(requestMessageId),
     responseMessageId: text(responseMessageId),
-    command: command && typeof command === "object" ? command : undefined,
+    command: typeof command === "string" || (command && typeof command === "object") ? command : undefined,
     name: text(name),
   };
 }
