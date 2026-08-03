@@ -1472,12 +1472,12 @@ export function SettingsPanel({
                 title="当前机器 Agent"
                 detail={
                   agentAvailable
-                    ? `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 已安装 v${agentVersion || "未知"}${agentNeedsUpdate ? "，建议升级" : "，运行正常"}${currentMachineHostHealth !== "未检测" ? ` · ${currentMachineHostHealth}` : ""}`
+                    ? `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 已安装 v${agentVersion || "未知"} · 最新 v${latestAgentVersion || "未知"}${agentNeedsUpdate ? "，连接后会自动更新" : "，已是最新版"}${currentMachineHostHealth !== "未检测" ? ` · ${currentMachineHostHealth}` : ""}`
                     : agentUnsupported
                       ? "当前连接环境暂不支持，将使用 SSH 直连"
                       : `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 未检测到；SSH 可用，但无法可靠恢复长任务`
                 }
-                value={agentAvailable ? (agentNeedsUpdate ? "可升级" : "可用") : agentUnsupported ? "不支持" : "未安装"}
+                value={agentAvailable ? (agentNeedsUpdate ? "自动升级" : "已是最新") : agentUnsupported ? "不支持" : "未安装"}
                 tone={agentAvailable ? (agentNeedsUpdate ? "warning" : "success") : "neutral"}
               />
               <SettingsButtonRow>
