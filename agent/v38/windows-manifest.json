@@ -1,10 +1,11 @@
 {
   "kind": "ai-workbench-agent",
+  "platform": "windows",
   "version": "38",
-  "scriptUrl": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v38/aiwbctl",
-  "scriptKey": "agent/v38/aiwbctl",
-  "sha256": "1011b0821124b74ea566772ea2208c66c4f8681cf9e54f6607ac263ea56672b8",
-  "runtime": "linux-shell",
+  "scriptUrl": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v38/aiwb-agent.mjs",
+  "scriptKey": "agent/v38/aiwb-agent.mjs",
+  "sha256": "fa638bda7fd10e15d9378b565e8fc9a0f509114e6220c88d15276167297e0c7a",
+  "runtime": "windows-node",
   "source": "github",
   "publishedAt": "2026-08-03T12:22:53Z",
   "directRuntime": {
