@@ -7,7 +7,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const agentHome = process.env.AIWB_AGENT_HOME || join(homedir(), ".ai-workbench", "agent");
 const configPath = process.env.AIWB_AGENT_HTTP_CONFIG || join(agentHome, "http.json");
@@ -101,14 +101,34 @@ function loadConfig() {
     raw = JSON.parse(readFileSync(configPath, "utf8"));
   } catch {}
   const token = text(raw.accessToken) || randomBytes(32).toString("base64url");
+  const certificatesDirectory = join(agentHome, "certificates");
+  const defaultKeyPath = join(certificatesDirectory, "agent.key.pem");
+  const defaultCertPath = join(certificatesDirectory, "agent.cert.pem");
+  const requestedTls = raw.tls && typeof raw.tls === "object" ? raw.tls : {};
+  const certPath = text(requestedTls.certPath) || defaultCertPath;
+  const keyPath = text(requestedTls.keyPath) || defaultKeyPath;
+  let tls = existsSync(certPath) && existsSync(keyPath) ? { certPath, keyPath } : null;
+  if (!tls) {
+    try {
+      mkdirSync(certificatesDirectory, { recursive: true, mode: 0o700 });
+      const result = spawnSync(
+        "openssl",
+        ["req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes", "-days", "825", "-subj", "/CN=AI Workbench Agent", "-keyout", keyPath, "-out", certPath],
+        { stdio: "ignore" },
+      );
+      if (result.status === 0 && existsSync(certPath) && existsSync(keyPath)) tls = { certPath, keyPath };
+    } catch {
+      // HTTP fallback is intentional when this host cannot generate a certificate.
+    }
+  }
   const next = {
     listenHost: text(raw.listenHost) || "127.0.0.1",
     port: Math.max(1, Math.min(65535, Number(raw.port) || 8787)),
     accessToken: token,
-    tls: raw.tls && typeof raw.tls === "object" ? { certPath: text(raw.tls.certPath), keyPath: text(raw.tls.keyPath) } : null,
+    tls,
   };
   mkdirSync(dirname(configPath), { recursive: true });
-  if (!raw.accessToken) writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  if (!raw.accessToken || !raw.tls) writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   return next;
 }
 
