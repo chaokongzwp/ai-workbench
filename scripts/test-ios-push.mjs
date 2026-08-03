@@ -28,8 +28,8 @@ async function waitForHealth(endpoint, child) {
   throw new Error("Push 测试服务启动超时。");
 }
 
-test("Agent v31 contains terminal Push callbacks", () => {
-  assert.equal(latestWorkbenchAgentVersion, "31");
+test("latest Agent contains terminal Push callbacks", () => {
+  assert.ok(Number(latestWorkbenchAgentVersion) >= 1);
   const linux = workbenchAgentScript();
   const windows = windowsWorkbenchAgentScript(latestWorkbenchAgentVersion);
   for (const source of [linux, windows]) {

@@ -3048,6 +3048,18 @@ export function useWorkbenchController() {
         const parsed = parseWorkbenchAgentOutput(stdout);
         if (parsed.status !== "ready" && !parsed.version) return;
 
+        // A cached ready flag makes session switching immediate. Version checks
+        // remain asynchronous, but an older installed Agent is upgraded on the
+        // first successful App connection instead of waiting for manual repair.
+        if (workbenchAgentVersionNumber(parsed.version) < workbenchAgentVersionNumber(latestWorkbenchAgentVersion)) {
+          await ensureWorkbenchAgentForProfile(targetProfile, {
+            serverId,
+            reason: "background-connect-upgrade",
+            allowCachedReady: false,
+          });
+          return;
+        }
+
         const agentHealth = healthFromWorkbenchAgentStatus(parsed);
         patchServersByConnection(
           targetProfile,

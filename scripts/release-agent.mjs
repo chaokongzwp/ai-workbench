@@ -12,6 +12,8 @@ const manifestPath = join(repoRoot, "agent", "latest.json");
 const scriptPath = join(repoRoot, "agent", `v${version}`, "aiwbctl");
 const windowsManifestPath = join(repoRoot, "agent", "windows-latest.json");
 const windowsScriptPath = join(repoRoot, "agent", `v${version}`, "aiwb-agent.mjs");
+const directRuntimePath = join(repoRoot, "agent", `v${version}`, "aiwb-agent-http.mjs");
+const updaterRuntimePath = join(repoRoot, "agent", `v${version}`, "aiwb-agent-updater.mjs");
 const remote = String(process.env.AIWB_AGENT_GIT_REMOTE || "origin").trim();
 const branch = String(process.env.AIWB_AGENT_GIT_BRANCH || "main").trim();
 
@@ -41,6 +43,13 @@ const windowsSha256 = createHash("sha256").update(windowsScript).digest("hex");
 if (windowsManifest.version !== version || windowsManifest.sha256 !== windowsSha256) {
   throw new Error("Generated Windows Agent manifest does not match the published script.");
 }
+for (const [runtime, path] of [[manifest.directRuntime, directRuntimePath], [manifest.updaterRuntime, updaterRuntimePath]]) {
+  const file = await readFile(path);
+  const runtimeSha256 = createHash("sha256").update(file).digest("hex");
+  if (!runtime?.url || runtime.sha256 !== runtimeSha256) {
+    throw new Error(`Generated Agent runtime manifest does not match ${path}.`);
+  }
+}
 
 git(["add", "agent/latest.json", "agent/windows-latest.json", `agent/v${version}`]);
 const allowedStagedPaths = new Set([
@@ -48,6 +57,8 @@ const allowedStagedPaths = new Set([
   "agent/windows-latest.json",
   `agent/v${version}/aiwbctl`,
   `agent/v${version}/aiwb-agent.mjs`,
+  `agent/v${version}/aiwb-agent-http.mjs`,
+  `agent/v${version}/aiwb-agent-updater.mjs`,
   `agent/v${version}/manifest.json`,
   `agent/v${version}/windows-manifest.json`,
 ]);

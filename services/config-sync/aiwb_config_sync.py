@@ -44,6 +44,11 @@ APNS_KEY_ID = os.environ.get("AIWB_APNS_KEY_ID", "").strip()
 APNS_TEAM_ID = os.environ.get("AIWB_APNS_TEAM_ID", "").strip()
 APNS_BUNDLE_ID = os.environ.get("AIWB_APNS_BUNDLE_ID", "com.beexofficial.beex.test").strip()
 APNS_KEY_PATH = Path(os.environ.get("AIWB_APNS_KEY_PATH", "/opt/ai-workbench-config-sync/secrets/apns-auth-key.p8"))
+AGENT_CONTROL_ADMIN_TOKEN = os.environ.get("AIWB_AGENT_CONTROL_ADMIN_TOKEN", "").strip()
+AGENT_CONTROL_DEFAULT_MANIFEST_URL = os.environ.get(
+    "AIWB_AGENT_CONTROL_DEFAULT_MANIFEST_URL",
+    "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/latest.json",
+).strip()
 
 
 STATE_LOCK = threading.RLock()
@@ -665,6 +670,44 @@ def public_status() -> dict[str, Any]:
     }
 
 
+def agent_control_record_path() -> Path:
+    return DATA_DIR / "agent-control" / "latest.json"
+
+
+def agent_control_latest() -> dict[str, Any]:
+    record = read_json(agent_control_record_path(), None)
+    if isinstance(record, dict) and str(record.get("manifestUrl") or "").strip():
+        return record
+    return {
+        "version": "bootstrap",
+        "manifestUrl": AGENT_CONTROL_DEFAULT_MANIFEST_URL,
+        "publishedAt": None,
+        "source": "default",
+    }
+
+
+def publish_agent_control(headers: Any, body: dict[str, Any]) -> dict[str, Any]:
+    if not AGENT_CONTROL_ADMIN_TOKEN:
+        raise PermissionError("Agent 控制平面尚未配置发布令牌。")
+    auth = str(headers.get("Authorization") or "").strip()
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if not token or not hmac.compare_digest(token, AGENT_CONTROL_ADMIN_TOKEN):
+        raise PermissionError("Agent 控制平面发布授权无效。")
+    manifest_url = str(body.get("manifestUrl") or "").strip()
+    if not manifest_url.startswith("https://"):
+        raise ValueError("Agent manifestUrl 必须是 HTTPS 地址。")
+    record = {
+        "version": str(body.get("version") or "").strip()[:80] or "published",
+        "manifestUrl": manifest_url[:1024],
+        "windowsManifestUrl": str(body.get("windowsManifestUrl") or "").strip()[:1024],
+        "publishedAt": utc_now(),
+        "source": "published",
+    }
+    with STATE_LOCK:
+        atomic_write_json(agent_control_record_path(), record)
+    return {"ok": True, "agent": record}
+
+
 class ConfigSyncHandler(BaseHTTPRequestHandler):
     server_version = "AIWorkbenchConfigSync/1"
 
@@ -679,6 +722,10 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
             path, query = self.path_and_query()
             if path in {"/", "/health", "/v1/health", "/v1/version"}:
                 self.send_json(public_status())
+                return
+            if path == "/v1/agent-control/latest":
+                latest = agent_control_latest()
+                self.send_json({"ok": True, "agent": latest, "manifestUrl": latest.get("manifestUrl", ""), "windowsManifestUrl": latest.get("windowsManifestUrl", "")})
                 return
             account = authenticate(self.headers)
             if path == "/v1/config":
@@ -713,6 +760,9 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/auth/logout":
                 self.handle_logout()
+                return
+            if path == "/v1/agent-control/publish":
+                self.send_json(publish_agent_control(self.headers, body))
                 return
             if path == "/v1/push/devices/register":
                 self.send_json(register_push_device(body))

@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "31";
+export const latestWorkbenchAgentVersion = "33";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -10,6 +10,7 @@ export const workbenchAgentOssBucket = "limpet-ai-workbench-47t37ccfz2";
 export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
 export const workbenchAgentManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${latestWorkbenchAgentVersion}/manifest.json`;
+export const workbenchAgentControlEndpoint = "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control";
 
 const {
   SSHWorkbench,
@@ -1925,6 +1926,25 @@ if ([string]::IsNullOrWhiteSpace($AIWB_EXPECTED_SHA) -or $AIWB_ACTUAL_SHA -ne $A
 }
 
 Move-Item -LiteralPath $AIWB_SCRIPT_TMP -Destination $AIWB_SCRIPT -Force
+$AIWB_DIRECT_RUNTIME = $AIWB_MANIFEST.directRuntime
+$AIWB_UPDATER_RUNTIME = $AIWB_MANIFEST.updaterRuntime
+function Install-AiwbRuntime([object]$Runtime, [string]$Target) {
+  if (-not $Runtime -or [string]::IsNullOrWhiteSpace([string]$Runtime.url)) { return }
+  $temporary = $Target + ".download-" + $PID
+  if (-not (Invoke-AiwbCloudDownload ([string]$Runtime.url) $temporary)) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue; return }
+  $expected = ([string]$Runtime.sha256).ToLowerInvariant()
+  $actual = ([string](Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash).ToLowerInvariant()
+  if ($expected -and $actual -ne $expected) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue; return }
+  Move-Item -LiteralPath $temporary -Destination $Target -Force
+}
+Install-AiwbRuntime $AIWB_DIRECT_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-http.mjs")
+Install-AiwbRuntime $AIWB_UPDATER_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs")
+if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs") -PathType Leaf) {
+  @{ manifestUrl = $AIWB_MANIFEST_URL; controlEndpoint = ${psQuote(workbenchAgentControlEndpoint)} } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $AIWB_HOME "updater.json") -Encoding UTF8
+  $updater = Join-Path $AIWB_HOME "aiwb-agent-updater.mjs"
+  $running = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$updater*" } | Select-Object -First 1
+  if (-not $running) { Start-Process -FilePath $AIWB_NODE_COMMAND.Source -ArgumentList @($updater) -WindowStyle Hidden }
+}
 $AIWB_CTL = Join-Path $AIWB_HOME "aiwbctl.cmd"
 $AIWB_CTL_CONTENT = '@echo off' + [Environment]::NewLine + 'node ' + [char]34 + '%~dp0aiwb-agent.mjs' + [char]34 + ' %*' + [Environment]::NewLine
 [System.IO.File]::WriteAllText($AIWB_CTL, $AIWB_CTL_CONTENT, [System.Text.UTF8Encoding]::new($false))
@@ -1981,7 +2001,12 @@ import sys
 
 path, key = sys.argv[1], sys.argv[2]
 with open(path, "r", encoding="utf-8") as handle:
-    value = json.load(handle).get(key, "")
+    value = json.load(handle)
+for part in key.split("."):
+    if not isinstance(value, dict):
+        value = ""
+        break
+    value = value.get(part, "")
 if value is None:
     value = ""
 print(str(value))
@@ -2051,6 +2076,37 @@ fi
 cp "$AIWB_AGENT_DOWNLOAD_TMP" "$AIWB_AGENT_HOME/aiwbctl"
 chmod 700 "$AIWB_AGENT_HOME/aiwbctl"
 AIWB_AGENT_INSTALL_SOURCE="cloud"
+
+AIWB_DIRECT_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.url 2>/dev/null || true)"
+AIWB_DIRECT_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.sha256 2>/dev/null || true)"
+AIWB_UPDATER_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.url 2>/dev/null || true)"
+AIWB_UPDATER_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.sha256 2>/dev/null || true)"
+aiwb_install_runtime() {
+  AIWB_RUNTIME_URL="$1"
+  AIWB_RUNTIME_SHA="$2"
+  AIWB_RUNTIME_TARGET="$3"
+  [ -n "$AIWB_RUNTIME_URL" ] || return 0
+  AIWB_RUNTIME_TMP="$AIWB_RUNTIME_TARGET.download.$$"
+  if ! aiwb_download_url "$AIWB_RUNTIME_URL" "$AIWB_RUNTIME_TMP"; then
+    rm -f "$AIWB_RUNTIME_TMP"
+    return 1
+  fi
+  if [ -n "$AIWB_RUNTIME_SHA" ] && command -v sha256sum >/dev/null 2>&1; then
+    [ "$(sha256sum "$AIWB_RUNTIME_TMP" | awk '{print $1}')" = "$AIWB_RUNTIME_SHA" ] || { rm -f "$AIWB_RUNTIME_TMP"; return 1; }
+  fi
+  mv "$AIWB_RUNTIME_TMP" "$AIWB_RUNTIME_TARGET"
+  chmod 700 "$AIWB_RUNTIME_TARGET"
+}
+aiwb_install_runtime "$AIWB_DIRECT_URL" "$AIWB_DIRECT_SHA" "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" || true
+aiwb_install_runtime "$AIWB_UPDATER_URL" "$AIWB_UPDATER_SHA" "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" || true
+if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" ]; then
+  cat > "$AIWB_AGENT_HOME/updater.json" <<AIWB_UPDATER_CONFIG
+{"manifestUrl":"$AIWB_AGENT_MANIFEST_URL","controlEndpoint":"${workbenchAgentControlEndpoint}"}
+AIWB_UPDATER_CONFIG
+  if ! pgrep -f "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" >/dev/null 2>&1; then
+    nohup node "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" >> "$AIWB_AGENT_HOME/updater.log" 2>&1 &
+  fi
+fi
 
 rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
 printf "__AIWB_AGENT_INSTALL_SOURCE__%s\\n" "$AIWB_AGENT_INSTALL_SOURCE"
