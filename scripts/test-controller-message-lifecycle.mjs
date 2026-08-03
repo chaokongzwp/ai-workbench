@@ -153,6 +153,10 @@ assert.match(controllerSource, /retryCount: Number\(item\.retryCount \|\| 0\) \+
 assert.match(controllerSource, /function commitServerPatch\(patch, \{ persistDelay = 250, persist = true \} = \{\}\)/);
 assert.match(controllerSource, /function patchServersByConnection\(targetProfile, updater, options = \{\}\)/);
 assert.match(controllerSource, /function updateServer\(serverId, updater\)/);
+assert.match(controllerSource, /allowCachedReady = false/);
+assert.match(controllerSource, /agent\.startup\.cached/);
+assert.match(controllerSource, /allowCachedReady: true/);
+assert.match(controllerSource, /refreshAgentHealthForServer\(target\.id, "background-connect"\)/);
 const agentRouteSource = controllerSource.slice(
   controllerSource.indexOf("const probedAgent = parseWorkbenchAgentOutput(probeOutput);"),
   controllerSource.indexOf("const runtimeProfile = agentRuntimeProfile(currentProfile);"),

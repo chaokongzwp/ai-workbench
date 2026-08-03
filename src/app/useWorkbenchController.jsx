@@ -2145,6 +2145,7 @@ export function useWorkbenchController() {
           agent: "available",
           agent_version:
             agentHealth.agent_version || server.diagnostics?.agent_version || latestWorkbenchAgentVersion,
+          agent_checked_at: Date.now(),
         },
         rawOutput: server.id === preferredServerId && rawOutput.trim() ? rawOutput.trim() : server.rawOutput,
         connection: {
@@ -2165,7 +2166,7 @@ export function useWorkbenchController() {
 
   async function ensureWorkbenchAgentForProfile(
     targetProfile,
-    { serverId = "", onProgress = null, reason = "connect" } = {},
+    { serverId = "", onProgress = null, reason = "connect", allowCachedReady = false } = {},
   ) {
     const requestedProfile = normalizeProfile(targetProfile);
     if (!agentPreferredForProfile(requestedProfile)) {
@@ -2182,6 +2183,30 @@ export function useWorkbenchController() {
       if (serverId) setServerConnection(serverId, next);
       if (typeof onProgress === "function") onProgress(next);
     };
+
+    const cachedServer = serverId
+      ? (serversRef.current.length ? serversRef.current : servers).find((server) => server.id === serverId)
+      : null;
+    const cachedDiagnostics = cachedServer?.diagnostics || {};
+    const cachedReady =
+      allowCachedReady &&
+      profileConnectionKey(cachedServer?.profile || {}) === profileConnectionKey(currentProfile) &&
+      (cachedDiagnostics.agent === "available" || Boolean(cachedDiagnostics.agent_version));
+    if (cachedReady) {
+      const agentHealth = {
+        ...cachedDiagnostics,
+        agent: "available",
+        agent_version: cachedDiagnostics.agent_version || latestWorkbenchAgentVersion,
+      };
+      publish("connected", "已连接", "Agent 已就绪", "agent");
+      void appLog("info", "agent.startup.cached", {
+        serverId,
+        reason,
+        host: currentProfile.host,
+        version: agentHealth.agent_version,
+      });
+      return { available: true, cached: true, skipped: false, installed: false, output: "", parsed: null, agentHealth };
+    }
 
     let probeOutput = "";
     let probe = null;
@@ -2207,11 +2232,9 @@ export function useWorkbenchController() {
     const latestVersionNumber = workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
     const installedVersionNumber = workbenchAgentVersionNumber(probe?.version);
     const alreadyReady = Boolean(probe && workbenchAgentAvailableFromOutput(probeOutput));
-    const shouldCheckCloudUpdate = ["connect", "session-connect", "new-session", "startup"].includes(String(reason));
     const needsInstall =
       !alreadyReady ||
-      (latestVersionNumber > 0 && installedVersionNumber < latestVersionNumber) ||
-      shouldCheckCloudUpdate;
+      (latestVersionNumber > 0 && installedVersionNumber < latestVersionNumber);
 
     if (!needsInstall) {
       const agentHealth = healthFromWorkbenchAgentStatus(probe);
@@ -3160,6 +3183,7 @@ export function useWorkbenchController() {
       const agentSetup = await ensureWorkbenchAgentForProfile(detectedProfile, {
         serverId: target.id,
         reason: "session-connect",
+        allowCachedReady: true,
       });
       const connectionMode = agentSetup.available ? "agent" : "ssh";
       const nextServers = updateServer(target.id, (server) => ({
@@ -3190,6 +3214,11 @@ export function useWorkbenchController() {
           limit: 1,
           reason: "session-connect-pending-task",
         });
+      }
+      if (agentSetup.cached) {
+        // A cached Agent lets the chat open immediately; refresh version and task
+        // health after the connection path finishes instead of blocking it.
+        void refreshAgentHealthForServer(target.id, "background-connect");
       }
       return true;
     } catch (error) {
