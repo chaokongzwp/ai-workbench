@@ -10,7 +10,7 @@
 - 每次写入会递增 `revision`，客户端可以带 `baseRevision` 防止覆盖其他设备的更新。
 - 会话分享会包含 SSH 登录密码，方便受信任的接收方直接使用；仍不包含 API Key 和聊天记录。
 - 共享记录只应部署在 HTTPS 和受限访问的环境中，并按敏感凭据管理。
-- Agent 任务不会经过此服务；它只发布 Agent 更新公告。已安装的 Agent 以出站轮询方式检查公告，离线时不会影响任务，恢复网络后会校验哈希并原子升级。
+- Agent 任务不会经过此服务；它只保存 Agent 的升级登记信息。Agent 启动时登记自身 HTTPS/HTTP 地址、版本和独立升级凭证；发布新版本时，中心服务只调用 Agent 固定的自更新接口。离线时不会影响任务，恢复后重新登记即可补齐版本。
 
 ## API
 
@@ -72,11 +72,12 @@ systemctl status ai-workbench-config-sync
 journalctl -u ai-workbench-config-sync -f
 ```
 
-## Agent 更新公告
+## Agent 更新控制面
 
-Agent 默认读取 `GET /v1/agent-control/latest` 获取最新 GitHub manifest。发布脚本可在发布后调用
-`POST /v1/agent-control/publish` 更新公告；服务端需要在 `apns.env` 或独立环境文件中配置
-`AIWB_AGENT_CONTROL_ADMIN_TOKEN`。该令牌只用于发布端，不能放进 App 或 Agent。
+Agent 启动后调用 `POST /v1/agent-control/register` 登记自身可访问地址和升级专用凭证。发布脚本在发布后调用
+`POST /v1/agent-control/publish` 更新目标版本；中心服务异步调用版本落后的 Agent 的 `/v1/control/update`。
+
+服务端需要在 `apns.env` 或独立环境文件中配置 `AIWB_AGENT_CONTROL_ADMIN_TOKEN`。该令牌只用于发布端，不能放进 App 或 Agent。中心保存的是只能触发固定自更新操作的凭证，不是 Agent 的任务 API Token。
 
 ## iPhone / iPad 任务通知
 

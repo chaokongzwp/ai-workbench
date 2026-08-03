@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const home = mkdtempSync(join(tmpdir(), "aiwb-agent-http-"));
@@ -13,7 +14,7 @@ for (const [name, value] of Object.entries({
 })) writeFileSync(join(taskDir, name), value);
 
 process.env.AIWB_AGENT_HOME = home;
-const { createAgentDirectServer } = await import("../agent/runtime/aiwb-agent-http.mjs");
+const { createAgentDirectServer, startAgentDirectServer } = await import("../agent/runtime/aiwb-agent-http.mjs");
 const server = createAgentDirectServer({
   config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
   control: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -46,4 +47,34 @@ assert.equal(
 const latest = await fetch(`${baseUrl}/v1/conversations/conversation-1/latest-task`, { headers: { Authorization: "Bearer test-token" } });
 assert.equal((await latest.json()).task.id, "task-linux-command");
 server.close();
+
+let registration = null;
+const controlPlane = createServer((request, response) => {
+  let body = "";
+  request.on("data", (chunk) => (body += chunk));
+  request.on("end", () => {
+    registration = { method: request.method, path: request.url, body: JSON.parse(body) };
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ ok: true }));
+  });
+});
+await new Promise((resolve) => controlPlane.listen(0, "127.0.0.1", resolve));
+const controlAddress = controlPlane.address();
+writeFileSync(join(home, "updater.json"), JSON.stringify({
+  controlEndpoint: `http://127.0.0.1:${controlAddress.port}/v1/agent-control`,
+  advertisedEndpoint: "http://127.0.0.1:8787",
+}));
+const registeredServer = await startAgentDirectServer({
+  config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
+  control: async () => ({ code: 0, stdout: "__AIWB_AGENT_VERSION__37\n", stderr: "" }),
+});
+for (let attempt = 0; attempt < 40 && !registration; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+assert.equal(registration?.method, "POST");
+assert.equal(registration?.path, "/v1/agent-control/register");
+assert.equal(registration?.body?.endpoint, "http://127.0.0.1:8787");
+assert.equal(registration?.body?.version, "37");
+assert.match(registration?.body?.agentId || "", /^agent-/);
+assert.match(registration?.body?.updateToken || "", /^[A-Za-z0-9_-]{24,}$/);
+await new Promise((resolve) => registeredServer.close(resolve));
+controlPlane.close();
 console.log("agent direct server regression: ok");

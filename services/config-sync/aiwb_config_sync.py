@@ -22,6 +22,8 @@ import sys
 import threading
 import time
 import unicodedata
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,7 +33,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_NAME = "AI Workbench Config Sync"
-SERVICE_VERSION = 4
+SERVICE_VERSION = 5
 MAX_BODY_BYTES = int(os.environ.get("AIWB_CONFIG_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
 DATA_DIR = Path(os.environ.get("AIWB_CONFIG_SYNC_DATA_DIR", "/opt/ai-workbench-config-sync/data"))
 HOST = os.environ.get("AIWB_CONFIG_SYNC_HOST", "0.0.0.0")
@@ -49,6 +51,7 @@ AGENT_CONTROL_DEFAULT_MANIFEST_URL = os.environ.get(
     "AIWB_AGENT_CONTROL_DEFAULT_MANIFEST_URL",
     "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/latest.json",
 ).strip()
+AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS = int(os.environ.get("AIWB_AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS", "12"))
 
 
 STATE_LOCK = threading.RLock()
@@ -674,6 +677,10 @@ def agent_control_record_path() -> Path:
     return DATA_DIR / "agent-control" / "latest.json"
 
 
+def agent_control_agents_path() -> Path:
+    return DATA_DIR / "agent-control" / "agents.json"
+
+
 def agent_control_latest() -> dict[str, Any]:
     record = read_json(agent_control_record_path(), None)
     if isinstance(record, dict) and str(record.get("manifestUrl") or "").strip():
@@ -686,13 +693,108 @@ def agent_control_latest() -> dict[str, Any]:
     }
 
 
-def publish_agent_control(headers: Any, body: dict[str, Any]) -> dict[str, Any]:
+def require_agent_control_admin(headers: Any) -> None:
     if not AGENT_CONTROL_ADMIN_TOKEN:
         raise PermissionError("Agent 控制平面尚未配置发布令牌。")
     auth = str(headers.get("Authorization") or "").strip()
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
     if not token or not hmac.compare_digest(token, AGENT_CONTROL_ADMIN_TOKEN):
         raise PermissionError("Agent 控制平面发布授权无效。")
+
+
+def agent_version_number(value: Any) -> int:
+    matched = re.search(r"\d+", str(value or ""))
+    return int(matched.group(0)) if matched else 0
+
+
+def normalize_agent_callback_endpoint(value: Any) -> str:
+    raw = str(value or "").strip()
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Agent HTTPS 地址无效。")
+    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+        raise ValueError("Agent HTTPS 地址不能包含路径或参数。")
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def read_agent_control_clients() -> list[dict[str, Any]]:
+    records = read_json(agent_control_agents_path(), [])
+    return [item for item in records if isinstance(item, dict)] if isinstance(records, list) else []
+
+
+def update_agent_control_client(agent_id: str, **changes: Any) -> None:
+    with STATE_LOCK:
+        records = read_agent_control_clients()
+        changed = False
+        for record in records:
+            if record.get("agentId") == agent_id:
+                record.update(changes)
+                changed = True
+                break
+        if changed:
+            atomic_write_json(agent_control_agents_path(), records[:2000])
+
+
+def register_agent_control_client(body: dict[str, Any]) -> dict[str, Any]:
+    agent_id = str(body.get("agentId") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{16,160}", agent_id):
+        raise ValueError("Agent 标识无效。")
+    update_token = str(body.get("updateToken") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{24,256}", update_token):
+        raise ValueError("Agent 升级凭证无效。")
+    record = {
+        "agentId": agent_id,
+        "endpoint": normalize_agent_callback_endpoint(body.get("endpoint")),
+        # This token can only trigger the Agent's fixed self-update action;
+        # it is deliberately different from the task API bearer token.
+        "updateToken": update_token,
+        "version": str(body.get("version") or "").strip()[:80],
+        "platform": str(body.get("platform") or "unknown").strip()[:40],
+        "hostname": str(body.get("hostname") or "").strip()[:160],
+        "lastSeenAt": utc_now(),
+    }
+    with STATE_LOCK:
+        records = [item for item in read_agent_control_clients() if item.get("agentId") != agent_id]
+        records.insert(0, record)
+        atomic_write_json(agent_control_agents_path(), records[:2000])
+    latest = agent_control_latest()
+    update_required = agent_version_number(record["version"]) < agent_version_number(latest.get("version"))
+    if update_required:
+        threading.Thread(target=dispatch_agent_updates, args=(latest, {agent_id}), daemon=True).start()
+    return {"ok": True, "agentId": agent_id, "targetVersion": latest.get("version", ""), "updateRequired": update_required}
+
+
+def dispatch_agent_update(client: dict[str, Any], target: dict[str, Any]) -> None:
+    agent_id = str(client.get("agentId") or "")
+    endpoint = str(client.get("endpoint") or "").rstrip("/")
+    try:
+        request = urllib.request.Request(
+            f"{endpoint}/v1/control/update",
+            data=json_dumps({"version": target.get("version", "")}),
+            headers={"Content-Type": "application/json", "X-AIWB-Agent-Update-Token": str(client.get("updateToken") or "")},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=max(3, AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS)) as response:
+            if response.status < 200 or response.status >= 300:
+                raise RuntimeError(f"Agent 返回 HTTP {response.status}")
+            response.read(64 * 1024)
+        update_agent_control_client(agent_id, lastUpdateAt=utc_now(), lastUpdateStatus="accepted", targetVersion=target.get("version", ""))
+    except Exception as error:
+        update_agent_control_client(agent_id, lastUpdateAt=utc_now(), lastUpdateStatus=f"failed: {str(error)[:300]}", targetVersion=target.get("version", ""))
+
+
+def dispatch_agent_updates(target: dict[str, Any], only_agent_ids: set[str] | None = None) -> None:
+    target_version = agent_version_number(target.get("version"))
+    for client in read_agent_control_clients():
+        if only_agent_ids is not None and str(client.get("agentId") or "") not in only_agent_ids:
+            continue
+        if agent_version_number(client.get("version")) >= target_version:
+            continue
+        dispatch_agent_update(client, target)
+
+
+def publish_agent_control(headers: Any, body: dict[str, Any]) -> dict[str, Any]:
+    require_agent_control_admin(headers)
     manifest_url = str(body.get("manifestUrl") or "").strip()
     if not manifest_url.startswith("https://"):
         raise ValueError("Agent manifestUrl 必须是 HTTPS 地址。")
@@ -705,6 +807,7 @@ def publish_agent_control(headers: Any, body: dict[str, Any]) -> dict[str, Any]:
     }
     with STATE_LOCK:
         atomic_write_json(agent_control_record_path(), record)
+    threading.Thread(target=dispatch_agent_updates, args=(record,), daemon=True).start()
     return {"ok": True, "agent": record}
 
 
@@ -726,6 +829,10 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
             if path == "/v1/agent-control/latest":
                 latest = agent_control_latest()
                 self.send_json({"ok": True, "agent": latest, "manifestUrl": latest.get("manifestUrl", ""), "windowsManifestUrl": latest.get("windowsManifestUrl", "")})
+                return
+            if path == "/v1/agent-control/agents":
+                require_agent_control_admin(self.headers)
+                self.send_json({"ok": True, "agents": read_agent_control_clients()})
                 return
             account = authenticate(self.headers)
             if path == "/v1/config":
@@ -763,6 +870,9 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/agent-control/publish":
                 self.send_json(publish_agent_control(self.headers, body))
+                return
+            if path == "/v1/agent-control/register":
+                self.send_json(register_agent_control_client(body))
                 return
             if path == "/v1/push/devices/register":
                 self.send_json(register_push_device(body))
