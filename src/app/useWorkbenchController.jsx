@@ -6337,6 +6337,11 @@ export function useWorkbenchController() {
       return;
     }
     const selectedAgent = agentById(retryMessage?.agentId || currentProfile.agentId, activeAgent);
+    // A configured direct Agent owns its own authenticated HTTP connection.
+    // Do not make a task submission wait for the legacy SSH command channel.
+    const directAgentReadyForSend =
+      agentPreferredForProfile(currentProfile) && agentDirectConfig(currentProfile).enabled;
+    const transportReadyForSend = connectionIsLive(sourceServer.connection) || directAgentReadyForSend;
     sendingServerIdsRef.current.add(serverId);
     const routerEnabled = mainAIRouterReady(currentProfile) && !pendingFiles.length;
     const existingRetryMessage = retryMessage?.id
@@ -6361,7 +6366,7 @@ export function useWorkbenchController() {
     });
     setServerConnection(
       serverId,
-      connectionIsLive(sourceServer.connection)
+      transportReadyForSend
         ? {
             state: "connected",
             label: "已连接",
@@ -6380,14 +6385,14 @@ export function useWorkbenchController() {
             ? {
                 ...item,
                 agentId: selectedAgent.id,
-                title: connectionIsLive(sourceServer.connection)
+                title: transportReadyForSend
                   ? pendingFiles.length
                     ? "上传中"
                     : routerEnabled
                       ? "判断中"
                       : "提交中"
                   : "连接中",
-                body: connectionIsLive(sourceServer.connection)
+                body: transportReadyForSend
                   ? pendingFiles.length
                     ? `正在上传 ${pendingFiles.length} 个文件。`
                     : routerEnabled
@@ -6440,14 +6445,14 @@ export function useWorkbenchController() {
         id: assistantMessageId,
         role: "assistant",
         agentId: selectedAgent.id,
-        title: connectionIsLive(sourceServer.connection)
+        title: transportReadyForSend
           ? pendingFiles.length
             ? "上传中"
             : routerEnabled
               ? "判断中"
               : "提交中"
           : "连接中",
-        body: connectionIsLive(sourceServer.connection)
+        body: transportReadyForSend
           ? pendingFiles.length
             ? `正在上传 ${pendingFiles.length} 个文件。`
             : routerEnabled
@@ -6476,7 +6481,7 @@ export function useWorkbenchController() {
       backend: agentPreferredForProfile(currentProfile) ? "agent" : "ssh",
     });
 
-    if (!connectionIsLive(sourceServer.connection)) {
+    if (!transportReadyForSend) {
       setSendConnectingServerId(serverId);
       try {
         await connectExistingSession(serverId);
