@@ -4602,11 +4602,20 @@ export function useWorkbenchController() {
 
       const connectionKey = profileConnectionKey(currentProfile);
       const cachedProbe = agentRouteProbeByConnectionRef.current.get(connectionKey);
+      // A persisted direct endpoint is already authenticated by its own bearer
+      // token. Do not put every send behind an SSH status probe: the task POST
+      // below is both the faster path and the authoritative liveness check.
+      const directRouteReady = agentDirectConfig(currentProfile).enabled;
       const probeIsFresh =
-        cachedProbe &&
-        Date.now() - Number(cachedProbe.checkedAt || 0) < 15_000 &&
-        workbenchAgentAvailableFromOutput(cachedProbe.output);
-      let probeOutput = probeIsFresh ? cachedProbe.output : "";
+        directRouteReady ||
+        (cachedProbe &&
+          Date.now() - Number(cachedProbe.checkedAt || 0) < 15_000 &&
+          workbenchAgentAvailableFromOutput(cachedProbe.output));
+      let probeOutput = directRouteReady
+        ? "__AIWB_AGENT_STATUS__ready\n__AIWB_AGENT_VERSION__direct"
+        : probeIsFresh
+          ? cachedProbe.output
+          : "";
       if (!probeIsFresh) {
         try {
           probeOutput = await runRemoteCommandForProfile(currentProfile, buildWorkbenchAgentStatusCommand(currentProfile), 64_000, 20);
