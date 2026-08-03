@@ -420,6 +420,10 @@ export const defaultProfile = {
   resultAudioMode: "summary",
   taskPushNotificationsEnabled: false,
   useWorkbenchAgent: true,
+  // Direct Agent transport is opt-in until the remote machine has a trusted
+  // HTTPS endpoint and a per-machine access token provisioned by the installer.
+  agentDirectEndpoint: "",
+  agentDirectAccessToken: "",
   executionPermissionMode: "standard",
   appearanceMode: "light",
   messageFontFamily: "system",
@@ -1355,6 +1359,8 @@ export function normalizeProfile(profile) {
       profile?.useWorkbenchAgent === undefined
         ? defaultUseWorkbenchAgent
         : Boolean(profile.useWorkbenchAgent),
+    agentDirectEndpoint: String(profile?.agentDirectEndpoint || "").trim(),
+    agentDirectAccessToken: String(profile?.agentDirectAccessToken || "").trim(),
     executionPermissionMode: normalizeExecutionPermissionMode(profile?.executionPermissionMode),
     appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
     messageFontFamily: normalizeMessageFontFamily(profile?.messageFontFamily),

@@ -28,6 +28,12 @@ const terminalTaskStates = new Set([
   taskStateFailed,
   taskStateCancelled,
 ]);
+
+const taskOutcomeByState = Object.freeze({
+  [taskStateSucceeded]: "success",
+  [taskStateFailed]: "error",
+  [taskStateCancelled]: "cancelled",
+});
 const failedRemoteTaskStatuses = new Set([
   "error",
   "missing",
@@ -46,6 +52,24 @@ export function taskStateIsActive(state) {
 
 export function taskStateIsTerminal(state) {
   return terminalTaskStates.has(text(state));
+}
+
+// The UI can retain its detailed local presentation while transport code only
+// needs this stable two-level contract: running, or completed with an outcome.
+export function taskLifecycleForState(state) {
+  const normalized = text(state);
+  if (taskStateIsTerminal(normalized)) {
+    return { status: "completed", outcome: taskOutcomeByState[normalized] || "error" };
+  }
+  return { status: "running", outcome: "" };
+}
+
+export function taskLifecycleForMessage(message) {
+  return taskLifecycleForState(taskStateForMessage(message));
+}
+
+export function taskNeedsRemoteSync(message) {
+  return message?.role === "assistant" && taskLifecycleForMessage(message).status !== "completed";
 }
 
 export function taskStateFromRemoteStatus(remoteStatus, { hasTaskId = false, resultMissing = false } = {}) {
