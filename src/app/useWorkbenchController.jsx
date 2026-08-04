@@ -652,6 +652,7 @@ export function useWorkbenchController() {
   const sessionConnectionPromisesRef = useRef(new Map());
   const startupSessionReconnectRef = useRef("");
   const manualDisconnectSessionIdsRef = useRef(new Set());
+  const sshHostKeyApprovalRequiredSessionIdsRef = useRef(new Set());
   const agentConnectionPollAtRef = useRef(new Map());
   const agentRouteProbeByConnectionRef = useRef(new Map());
   const agentConversationAutoSyncAtRef = useRef(new Map());
@@ -3038,6 +3039,7 @@ export function useWorkbenchController() {
   function scheduleSessionAutoConnect(serverId, attempt = 0) {
     window.setTimeout(() => {
       if (activeServerIdRef.current !== serverId) return;
+      if (sshHostKeyApprovalRequiredSessionIdsRef.current.has(serverId)) return;
 
       const latestServer = serverById(serverId);
       if (!latestServer || connectionIsLive(latestServer.connection) || latestServer.connection?.state === "testing") {
@@ -3327,17 +3329,27 @@ export function useWorkbenchController() {
       const hostKeyMatch = String(error?.message || error || "").match(/^SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)$/);
       const changedHostKeyMatch = String(error?.message || error || "").match(/^SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)$/);
       if (hostKeyMatch && typeof window !== "undefined") {
+        sshHostKeyApprovalRequiredSessionIdsRef.current.add(target.id);
         const approved = window.confirm(
           `首次连接 ${targetProfile.host}。请确认这是你的服务器后继续。\n\nSSH 主机指纹：\n${hostKeyMatch[1]}`,
         );
         if (approved) {
+          sshHostKeyApprovalRequiredSessionIdsRef.current.delete(target.id);
           const trustedProfile = { ...targetProfile, sshHostKeyFingerprint: hostKeyMatch[1] };
           const nextServers = updateServer(target.id, (server) => ({ ...server, profile: { ...server.profile, ...trustedProfile } }));
           await saveWorkspace(nextServers, target.id);
           return connectExistingSessionOnce(target.id);
         }
+        setServerConnection(target.id, {
+          state: "error",
+          label: "等待安全确认",
+          detail: "请确认服务器身份后再连接",
+          mode: target.connection?.mode || "ssh",
+        });
+        return false;
       }
       if (changedHostKeyMatch) {
+        sshHostKeyApprovalRequiredSessionIdsRef.current.add(target.id);
         updateServer(target.id, {
           connection: {
             state: "error",
@@ -3413,11 +3425,25 @@ export function useWorkbenchController() {
     const handleConnectionState = (payload = {}) => {
       const serverId = String(payload.sessionId || "").trim();
       const state = String(payload.state || "").trim().toLowerCase();
+      const detail = String(payload.detail || "");
       if (!serverId || !state) return;
 
       const target = serverById(serverId);
       if (!target) return;
       const manuallyDisconnected = manualDisconnectSessionIdsRef.current.has(serverId);
+
+      const untrustedHostKey = detail.match(/^SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)$/);
+      const changedHostKey = detail.match(/^SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)$/);
+      if (untrustedHostKey || changedHostKey) {
+        sshHostKeyApprovalRequiredSessionIdsRef.current.add(serverId);
+        setServerConnection(serverId, {
+          state: "error",
+          label: changedHostKey ? "安全校验失败" : "等待安全确认",
+          detail: changedHostKey ? "SSH 主机指纹已变化" : "请确认服务器身份后再连接",
+          mode: target.connection?.mode || "ssh",
+        });
+        return;
+      }
 
       if (state === "connecting") {
         if (serverId === activeServerIdRef.current) {
@@ -3432,6 +3458,7 @@ export function useWorkbenchController() {
       }
       if (state === "connected") {
         manualDisconnectSessionIdsRef.current.delete(serverId);
+        sshHostKeyApprovalRequiredSessionIdsRef.current.delete(serverId);
         if (
           serverId === activeServerIdRef.current &&
           busyRef.current &&
