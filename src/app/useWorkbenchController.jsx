@@ -18,6 +18,7 @@ import {
   iosPushSupported,
 } from "../core/iosPushNotifications.js";
 import { reorderSessionsById } from "../core/sessionOrder.js";
+import { assertSessionDispatch } from "../core/session.js";
 
 function nativeDeviceClassForRuntime(platform = Capacitor.getPlatform()) {
   if (typeof window === "undefined") return "phone";
@@ -2255,13 +2256,23 @@ export function useWorkbenchController() {
       ? (serversRef.current.length ? serversRef.current : servers).find((server) => server.id === serverId)
       : null;
     const cachedDiagnostics = cachedServer?.diagnostics || {};
+    const cachedAgentVersionNumber = workbenchAgentVersionNumber(cachedDiagnostics.agent_version);
+    const requiredAgentVersionNumber = workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
     const cachedReady =
       allowCachedReady &&
       profileConnectionKey(cachedServer?.profile || {}) === profileConnectionKey(currentProfile) &&
-      (cachedDiagnostics.agent === "available" || Boolean(cachedDiagnostics.agent_version));
+      (cachedDiagnostics.agent === "available" || Boolean(cachedDiagnostics.agent_version)) &&
+      // An old cached snapshot must never skip the live Agent probe. Otherwise
+      // the UI can say "connected" while the remote Agent still needs an update.
+      (requiredAgentVersionNumber === 0 || cachedAgentVersionNumber >= requiredAgentVersionNumber);
     if (cachedReady) {
+      // Fresh SSH health owns CLI paths; an older cached Agent snapshot may
+      // have empty Codex/Claude values and must not overwrite that result.
+      const cachedAgentHealth = Object.fromEntries(
+        Object.entries(cachedDiagnostics).filter(([key]) => key === "agent" || key.startsWith("agent_")),
+      );
       const agentHealth = {
-        ...cachedDiagnostics,
+        ...cachedAgentHealth,
         agent: "available",
         agent_version: cachedDiagnostics.agent_version || latestWorkbenchAgentVersion,
       };
@@ -2383,7 +2394,7 @@ export function useWorkbenchController() {
       timeoutSeconds: 20,
     });
 
-    return parseMainAIRoute(result?.body || result?.json || result, agent);
+    return parseMainAIRoute(result?.body || result?.json || result);
   }
 
   const saveWorkspace = useCallback(async (nextServers, nextActiveServerId) => {
@@ -3353,7 +3364,7 @@ export function useWorkbenchController() {
       if (hostKeyMatch && typeof window !== "undefined") {
         sshHostKeyApprovalRequiredSessionIdsRef.current.add(target.id);
         const approved = window.confirm(
-          `首次连接 ${targetProfile.host}。请确认这是你的服务器后继续。\n\nSSH 主机指纹：\n${hostKeyMatch[1]}`,
+          `连接新服务器\n\n这是你刚刚添加的服务器「${targetProfile.host}」吗？\n\n确认后，AI Workbench 会记住这台机器的安全凭证，之后不会再询问。`,
         );
         if (approved) {
           sshHostKeyApprovalRequiredSessionIdsRef.current.delete(target.id);
@@ -3376,10 +3387,10 @@ export function useWorkbenchController() {
           connection: {
             state: "error",
             label: "安全校验失败",
-            detail: `SSH 主机指纹已变化：${changedHostKeyMatch[1]}`,
+            detail: "这台服务器的安全凭证与上次不同",
           },
           discovery: null,
-          rawOutput: "SSH 主机指纹已变化。为保护登录密码，App 已阻止连接。请先核对服务器身份后在会话设置中重新确认。",
+          rawOutput: "服务器身份与上次连接不一致。为保护登录密码，App 已阻止连接。请确认机器没有被替换后，在会话设置里重新连接。",
         });
         return false;
       }
@@ -4668,6 +4679,12 @@ export function useWorkbenchController() {
     assistantMessageId,
     userMessageId = "",
   }) {
+    assertSessionDispatch(serverById(serverId), {
+      sessionId: serverId,
+      agentId: agent?.id,
+      profile: currentProfile,
+    });
+
     const applyAgentOutput = (output, final = false, completedAgentTask = false) => {
       const raw = String(output || "").trim();
       const extracted = completedAgentTask ? extractCompletedAgentOutput(raw, text) : extractAgentFinalOutput(raw, text);
@@ -4968,6 +4985,12 @@ export function useWorkbenchController() {
       const command = buildAgentTaskCommand(runtimeProfile, agent, text);
       const maxAgentStartupAttempts = 2;
       const conversationId = ensureServerConversationId(serverId, currentProfile, agent.id);
+      assertSessionDispatch(serverById(serverId), {
+        sessionId: serverId,
+        agentId: agent.id,
+        conversationId,
+        profile: currentProfile,
+      });
       const conversationName = serverDisplayName(serverById(serverId), 0);
 
       for (let attempt = 1; attempt <= maxAgentStartupAttempts; attempt += 1) {
@@ -5649,6 +5672,30 @@ export function useWorkbenchController() {
     if (profileIssue(currentProfile)) return false;
 
     const agent = agentById(message.agentId || currentProfile.agentId, activeAgent);
+    try {
+      assertSessionDispatch(server, {
+        sessionId: serverId,
+        agentId: agent.id,
+        conversationId: message.conversationId || server.conversationId,
+        profile: currentProfile,
+      });
+    } catch (error) {
+      updateAssistantMessageInServer(serverId, message.id, {
+        title: "会话校验失败",
+        body: String(error?.message || "会话信息不一致，已停止同步。"),
+        taskState: taskStateFailed,
+        backend: "agent",
+        technicalDetail: String(error?.message || error || ""),
+        remoteSyncError: "session dispatch invariant mismatch",
+        forceUpdate: true,
+      });
+      void appLog("error", "agent.sync.session_invariant_failed", {
+        serverId,
+        remoteTaskId: message.remoteTaskId,
+        error: String(error?.message || error || ""),
+      });
+      return false;
+    }
     syncingAgentTasksRef.current.add(lockKey);
     try {
       const waitTimeoutSeconds =
@@ -6912,22 +6959,11 @@ export function useWorkbenchController() {
       }
 
       if (route) {
-        agent = agentById(route.agent, selectedAgent);
+        // A work session owns one AI conversation. The router may classify or
+        // rewrite a request, but it must not send it to a different CLI while
+        // retaining this session's conversationId.
+        agent = selectedAgent;
         task = taskTextFromValue(route.task, promptText);
-
-        if (route.action === "switch_agent") {
-          setActiveAgentId(agent.id);
-          updateAssistantMessageInServer(serverId, assistantMessageId, {
-            title: "已切换 AI",
-            body: "",
-            output: route.reply || `已切换到 ${agent.shortName}。`,
-            agentId: agent.id,
-            taskState: taskStateSucceeded,
-          });
-          setServerConnection(serverId, { state: "connected", label: "已切换", detail: agent.shortName });
-          completedOk = true;
-          return;
-        }
 
         if (route.action === "answer_directly" || route.action === "ask_clarification" || route.action === "no_action") {
           updateAssistantMessageInServer(serverId, assistantMessageId, {
@@ -6960,23 +6996,21 @@ export function useWorkbenchController() {
             output: [
               route.reply || "这个操作可能会修改项目或影响远端环境。",
               "",
-              `准备交给 ${agent.shortName}：${task}`,
+              `准备交给 ${selectedAgent.shortName}：${task}`,
               "",
               "确认后再发一次明确指令，我再执行。",
             ].join("\n"),
-            agentId: agent.id,
+            agentId: selectedAgent.id,
             taskState: taskStateSucceeded,
           });
-          setServerConnection(serverId, { state: "connected", detail: `${agent.shortName} 等待任务确认` });
+          setServerConnection(serverId, { state: "connected", detail: `${selectedAgent.shortName} 等待任务确认` });
           return;
         }
 
-        if (agent.id !== selectedAgent.id) setActiveAgentId(agent.id);
-        finalAgent = agent;
         updateAssistantMessageInServer(serverId, assistantMessageId, {
-          title: `主 AI 已选择 ${agent.shortName}`,
-          body: `gpt-5.4-mini 判断为：${route.reason || "执行任务"}。正在发送给 ${agent.shortName}。`,
-          agentId: agent.id,
+          title: "提交中",
+          body: `正在发送给 ${selectedAgent.shortName}。`,
+          agentId: selectedAgent.id,
           taskState: taskStateSubmitting,
         });
       }

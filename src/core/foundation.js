@@ -675,11 +675,7 @@ export const mainAIRouteSchema = {
   properties: {
     action: {
       type: "string",
-      enum: ["run_agent_task", "switch_agent", "ask_clarification", "answer_directly", "stop", "no_action"],
-    },
-    agent: {
-      type: "string",
-      enum: ["codex", "claude", "current"],
+      enum: ["run_agent_task", "ask_clarification", "answer_directly", "stop", "no_action"],
     },
     confidence: {
       type: "number",
@@ -699,7 +695,7 @@ export const mainAIRouteSchema = {
       type: "string",
     },
   },
-  required: ["action", "agent", "confidence", "requiresConfirmation", "task", "reply", "reason"],
+  required: ["action", "confidence", "requiresConfirmation", "task", "reply", "reason"],
 };
 
 export const mainAIRouterInstructions = [
@@ -709,9 +705,8 @@ export const mainAIRouterInstructions = [
   "如果用户明确要停止、取消、中断，action=stop。",
   "如果只是闲聊或问 App 能力，action=answer_directly。",
   "如果缺少必要目标或用户还没说清楚，action=ask_clarification。",
-  "如果用户只是要切换 Codex 或 Claude，action=switch_agent。",
   "如果用户要检查、修改、运行、查询项目或让 AI 工作，action=run_agent_task。",
-  "写代码、改工程、排错、执行命令优先选 codex；阅读解释、总结分析可以选 claude；不确定则 current。",
+  "当前会话的 AI 类型由会话设置固定；你不能切换或选择 Codex/Claude。",
   "删除、发布、安装依赖、改生产配置、覆盖文件等风险操作 requiresConfirmation=true。",
   "task 必须是可以直接发给 Codex/Claude 的中文任务，不要包含底层路由解释。",
 ].join("\n");

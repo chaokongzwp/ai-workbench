@@ -428,11 +428,9 @@ export function extractResponseText(payload) {
   return chunks.join("\n").trim();
 }
 
-export function normalizeMainAIRoute(route, activeAgent) {
-  const fallbackAgent = activeAgent?.id || "codex";
+export function normalizeMainAIRoute(route) {
   const action = [
     "run_agent_task",
-    "switch_agent",
     "ask_clarification",
     "answer_directly",
     "stop",
@@ -440,11 +438,8 @@ export function normalizeMainAIRoute(route, activeAgent) {
   ].includes(route?.action)
     ? route.action
     : "run_agent_task";
-  const agent = route?.agent === "current" ? fallbackAgent : agentById(route?.agent, activeAgent)?.id || fallbackAgent;
-
   return {
     action,
-    agent,
     confidence: Math.max(0, Math.min(Number(route?.confidence ?? 0.5) || 0.5, 1)),
     requiresConfirmation: Boolean(route?.requiresConfirmation),
     task: trimVisibleText(route?.task || ""),
@@ -453,11 +448,11 @@ export function normalizeMainAIRoute(route, activeAgent) {
   };
 }
 
-export function parseMainAIRoute(rawBody, activeAgent) {
+export function parseMainAIRoute(rawBody) {
   const payload = typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
   const outputText = extractResponseText(payload);
   const route = JSON.parse(outputText || "{}");
-  return normalizeMainAIRoute(route, activeAgent);
+  return normalizeMainAIRoute(route);
 }
 
 export function extractMarkedFinalOutput(text) {

@@ -1530,10 +1530,20 @@ set +e
 AIWB_LOGIN_SESSION=${shQuote(targetSession)}
 if ! tmux has-session -t "$AIWB_LOGIN_SESSION" 2>/dev/null; then
   tmux new-session -d -s "$AIWB_LOGIN_SESSION" -c ${shQuote(profile.workdir || ".")} ${shQuote(loginCommand)}
-  sleep 1.2
 fi
 ${agent.id === "claude" ? claudeSetupAutomationSnippet(targetSession) : ""}
-tmux capture-pane -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true
+AIWB_LOGIN_CAPTURE=""
+# Codex can take several seconds to initialize on a remote Mac. Poll the
+# dedicated login tmux pane until its browser link or device code appears.
+for AIWB_LOGIN_ATTEMPT in {1..12}; do
+  AIWB_LOGIN_CAPTURE="$(tmux capture-pane -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true)"
+  if printf '%s\\n' "$AIWB_LOGIN_CAPTURE" | grep -Eiq 'https://|[A-Z0-9]{4}-[A-Z0-9]{5}'; then
+    break
+  fi
+  tmux has-session -t "$AIWB_LOGIN_SESSION" 2>/dev/null || break
+  sleep 1
+done
+printf '%s\\n' "$AIWB_LOGIN_CAPTURE"
 `);
 }
 

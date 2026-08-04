@@ -586,7 +586,7 @@ function parseToolLoginResult(agentId, output) {
   }
   if (url || code) {
     return {
-      tone: "done",
+      tone: "pending",
       message: "请在浏览器完成授权。完成后回到这里点“检查登录状态”。",
       url,
       code,
@@ -2460,12 +2460,24 @@ export function SettingsPanel({
                 title={
                   toolLoginStatus?.tone === "loading"
                     ? "正在检查授权"
+                    : toolLoginStatus?.tone === "pending"
+                      ? "等待完成授权"
                     : toolLoginStatus?.tone === "warning"
                       ? "尚未登录"
                       : "登录状态"
                 }
                 detail={toolLoginStatus?.message || "请从会话操作中选择要登录的 AI 工具。"}
-                value={toolLoginStatus?.tone === "error" ? "失败" : toolLoginStatus?.tone === "loading" ? "处理中" : "待完成"}
+                value={
+                  toolLoginStatus?.tone === "error"
+                    ? "失败"
+                    : toolLoginStatus?.tone === "loading"
+                      ? "处理中"
+                      : toolLoginStatus?.tone === "pending"
+                        ? "等待授权"
+                        : toolLoginStatus?.tone === "done"
+                          ? "已登录"
+                          : "未登录"
+                }
                 tone={toolLoginStatus?.tone === "error" ? "warning" : toolLoginStatus?.tone === "done" ? "success" : "neutral"}
               />
               {toolLoginStatus?.output ? (
@@ -2493,24 +2505,49 @@ export function SettingsPanel({
                     打开授权网页
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className="settings-inline-button primary"
-                  onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "start")}
-                  disabled={busy || toolLoginStatus?.tone === "loading"}
-                >
-                  <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
-                  开始登录
-                </button>
-                <button
-                  type="button"
-                  className="settings-inline-button"
-                  onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "status")}
-                  disabled={busy || toolLoginStatus?.tone === "loading"}
-                >
-                  <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
-                  检查登录状态
-                </button>
+                {toolLoginStatus?.tone === "pending" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="settings-inline-button primary"
+                      onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "status")}
+                      disabled={busy || toolLoginStatus?.tone === "loading"}
+                    >
+                      <Check size={17} weight="bold" aria-hidden="true" />
+                      我已完成授权
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-inline-button"
+                      onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "start")}
+                      disabled={busy || toolLoginStatus?.tone === "loading"}
+                    >
+                      <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+                      重新开始
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="settings-inline-button primary"
+                      onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "start")}
+                      disabled={busy || toolLoginStatus?.tone === "loading"}
+                    >
+                      <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+                      {toolLoginStatus?.tone === "done" ? "重新登录" : "开始登录"}
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-inline-button"
+                      onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "status")}
+                      disabled={busy || toolLoginStatus?.tone === "loading"}
+                    >
+                      <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+                      检查登录状态
+                    </button>
+                  </>
+                )}
               </SettingsButtonRow>
             </SettingsSection>
           </div>
