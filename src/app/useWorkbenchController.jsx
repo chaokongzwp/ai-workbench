@@ -19,6 +19,8 @@ import {
 } from "../core/iosPushNotifications.js";
 import { reorderSessionsById } from "../core/sessionOrder.js";
 import { assertSessionDispatch } from "../core/session.js";
+import { patchSession, patchSessionsMatchingConnection, sessionById } from "../core/sessionStore.js";
+import { patchMessage } from "../core/messageStore.js";
 
 function nativeDeviceClassForRuntime(platform = Capacitor.getPlatform()) {
   if (typeof window === "undefined") return "phone";
@@ -1184,23 +1186,19 @@ export function useWorkbenchController() {
     const connectionKey = profileConnectionKey(normalizeProfile(targetProfile));
     return commitServerPatch(
       (items) =>
-        items.map((server) => {
-          const serverProfile = normalizeProfile(server.profile);
-          if (profileConnectionKey(serverProfile) !== connectionKey) return server;
-          return updater(server, serverProfile);
-        }),
+        patchSessionsMatchingConnection(
+          items,
+          connectionKey,
+          (profile) => profileConnectionKey(normalizeProfile(profile)),
+          (server) => updater(server, normalizeProfile(server.profile)),
+          reconcileServerMessageLifecycle,
+        ),
       options,
     );
   }
 
   function updateServer(serverId, updater) {
-    return commitServerPatch((items) =>
-      items.map((server) => {
-        if (server.id !== serverId) return server;
-        const patch = typeof updater === "function" ? updater(server) : updater;
-        return reconcileServerMessageLifecycle({ ...server, ...patch });
-      }),
-    );
+    return commitServerPatch((items) => patchSession(items, serverId, updater, reconcileServerMessageLifecycle));
   }
 
   function updateActiveServer(updater) {
@@ -1278,24 +1276,20 @@ export function useWorkbenchController() {
 
   function updateAssistantMessageInServer(serverId, id, patch) {
     setServerMessages(serverId, (items) =>
-      items.map((item) => {
-        if (item.id !== id) return item;
-        if (item.cancelledAt && !patch.forceUpdate) return item;
-        const patchEntries = Object.entries(patch).filter(([key]) => key !== "forceUpdate");
-        const changed = patch.forceUpdate || patchEntries.some(([key, value]) => item[key] !== value);
-        if (!changed) return item;
-        const nextTaskState = taskStateForUpdate(item, patch);
+      patchMessage(items, id, patch, {
+        normalize: (item, nextPatch) => {
+        const nextTaskState = taskStateForUpdate(item, nextPatch);
         const requiredAction =
-          Object.hasOwn(patch, "requiredAction")
-            ? patch.requiredAction
-            : Object.hasOwn(patch, "loginAction") || Object.hasOwn(patch, "modelChoice")
-              ? patch.loginAction
+          Object.hasOwn(nextPatch, "requiredAction")
+            ? nextPatch.requiredAction
+            : Object.hasOwn(nextPatch, "loginAction") || Object.hasOwn(nextPatch, "modelChoice")
+              ? nextPatch.loginAction
                 ? "login"
-                : patch.modelChoice
+                : nextPatch.modelChoice
                   ? "model-choice"
                   : undefined
               : item.requiredAction;
-        let next = { ...item, ...patch, taskState: nextTaskState, requiredAction };
+        let next = { ...item, ...nextPatch, taskState: nextTaskState, requiredAction };
         const becameTerminal =
           taskStateIsActive(item.taskState) &&
           taskStateIsTerminal(nextTaskState);
@@ -1308,6 +1302,7 @@ export function useWorkbenchController() {
         }
         next = normalizeMessageLifecycle(next);
         return next;
+        },
       }),
     );
   }
@@ -1317,7 +1312,7 @@ export function useWorkbenchController() {
   }
 
   function serverById(serverId) {
-    return serversRef.current.find((server) => server.id === serverId);
+    return sessionById(serversRef.current, serverId);
   }
 
   function ensureServerConversationId(serverId, profileValue, agentId = "codex") {
