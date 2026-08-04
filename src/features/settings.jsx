@@ -672,6 +672,7 @@ export function SettingsPanel({
   });
   const [agentSelectionNotice, setAgentSelectionNotice] = useState("");
   const [sessionActionStatus, setSessionActionStatus] = useState(null);
+  const [cliInstallStatus, setCliInstallStatus] = useState(null);
   const [toolLoginStatus, setToolLoginStatus] = useState(null);
   const [settingsPage, setSettingsPage] = useState(() => initialPage || "root");
   const [appInfo, setAppInfo] = useState(() => normalizeAppInfo());
@@ -891,7 +892,19 @@ export function SettingsPanel({
 
   async function handleInstallCli(cliId) {
     if (!editingServer?.id || !onInstallCli || busy) return;
-    await onInstallCli(editingServer.id, cliId);
+    const cliName = cliId === "claude" ? "Claude" : "Codex";
+    setCliInstallStatus({ cliId, tone: "loading", message: `正在安装 ${cliName} CLI...` });
+    try {
+      const result = await onInstallCli(editingServer.id, cliId);
+      const path = String(result?.path || "").trim();
+      setCliInstallStatus({
+        cliId,
+        tone: "done",
+        message: `${cliName} CLI 已安装，可以登录 ${cliName}。${path ? ` 路径：${path}` : ""}`,
+      });
+    } catch (error) {
+      setCliInstallStatus({ cliId, tone: "error", message: shortError(error) });
+    }
   }
 
   async function handleUninstallSessionAgent() {
@@ -1692,18 +1705,52 @@ export function SettingsPanel({
                 <SettingsStatusRow
                   key={tool.id}
                   title={`${tool.name} CLI`}
-                  detail={tool.path ? `路径：${tool.path}` : `${tool.name} 尚未检测到，可单独安装`}
-                  value={tool.available ? "可用" : tool.status === "installing" ? "安装中" : "未安装"}
-                  tone={tool.available ? "success" : tool.status === "failed" ? "warning" : "neutral"}
+                  detail={
+                    cliInstallStatus?.cliId === tool.id
+                      ? cliInstallStatus.message
+                      : tool.path
+                        ? `路径：${tool.path}`
+                        : `${tool.name} 尚未检测到，可单独安装`
+                  }
+                  value={
+                    cliInstallStatus?.cliId === tool.id
+                      ? cliInstallStatus.tone === "loading"
+                        ? "安装中"
+                        : cliInstallStatus.tone === "done"
+                          ? "已安装"
+                          : "安装失败"
+                      : tool.available
+                        ? "可用"
+                        : tool.status === "installing"
+                          ? "安装中"
+                          : "未安装"
+                  }
+                  tone={
+                    cliInstallStatus?.cliId === tool.id
+                      ? cliInstallStatus.tone === "done"
+                        ? "success"
+                        : cliInstallStatus.tone === "error"
+                          ? "warning"
+                          : "neutral"
+                      : tool.available
+                        ? "success"
+                        : tool.status === "failed"
+                          ? "warning"
+                          : "neutral"
+                  }
                   actions={
                     <button
                       type="button"
                       className="settings-inline-button primary"
                       onClick={() => handleInstallCli(tool.id)}
-                      disabled={busy || !editingServer?.id || !onInstallCli}
+                      disabled={busy || !editingServer?.id || !onInstallCli || cliInstallStatus?.tone === "loading"}
                     >
                       <Wrench size={17} weight="bold" />
-                      {tool.available ? "重装" : "安装"}
+                      {cliInstallStatus?.cliId === tool.id && cliInstallStatus.tone === "loading"
+                        ? "安装中"
+                        : tool.available
+                          ? "重装"
+                          : "安装"}
                     </button>
                   }
                 />

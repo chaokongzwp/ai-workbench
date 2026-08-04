@@ -3804,10 +3804,12 @@ export function useWorkbenchController() {
       await saveWorkspace(nextServers, activeServerIdRef.current);
       setRawOutput(readableResult);
       window.alert(`${readableResult}\n\n现在可以重新检测或发送任务。`);
+      return { cliId: normalizedCliId, path: cliPath, message: readableResult };
     } catch (error) {
       const message = parsed?.cliError || (String(error?.message || error).match(/ENOSPC|no space left on device/i) ? `远端磁盘空间不足，${cliName} CLI 没有完成安装。请先清理 Windows 磁盘空间后再重试。` : shortError(error));
       setRawOutput(message);
       window.alert(message);
+      throw new Error(message);
     } finally {
       setBusy(false);
     }
