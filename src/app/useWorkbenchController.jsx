@@ -3361,8 +3361,6 @@ export function useWorkbenchController() {
         rawOutput: "连接异常",
       });
       return false;
-    } finally {
-      dismissTaskNoticeByKey(connectionNoticeKey);
     }
   }
 
