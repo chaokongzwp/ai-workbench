@@ -604,6 +604,10 @@
   border-bottom: 0;
 }
 
+.app-shell .settings-status-row.no-icon {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .app-shell .settings-status-icon {
   display: grid;
   place-items: center;
@@ -826,6 +830,22 @@
   line-height: 1.4;
 }
 
+.app-shell .settings-busy-notice,
+.native-app-shell .settings-busy-notice,
+.iphone-shell .settings-busy-notice {
+  margin: 12px 18px 0;
+}
+
+.app-shell .settings-inline-notice.done {
+  color: #14783e;
+  background: rgba(52, 199, 89, 0.11);
+}
+
+.app-shell .settings-inline-notice.error {
+  color: #b42318;
+  background: rgba(255, 59, 48, 0.1);
+}
+
 .app-shell .settings-inline-link {
   min-height: 30px;
   padding: 0 8px;
@@ -1026,6 +1046,21 @@
 .app-shell[data-theme="dark"] .settings-inline-notice {
   color: #ffd796;
   background: rgba(255, 159, 10, 0.13);
+}
+
+.app-shell[data-theme="dark"] .settings-busy-notice {
+  color: #ffd796;
+  background: rgba(255, 159, 10, 0.13);
+}
+
+.app-shell[data-theme="dark"] .settings-inline-notice.done {
+  color: #78dfa0;
+  background: rgba(52, 199, 89, 0.13);
+}
+
+.app-shell[data-theme="dark"] .settings-inline-notice.error {
+  color: #ff9a92;
+  background: rgba(255, 69, 58, 0.13);
 }
 
 @media (max-width: 700px) {
@@ -1738,6 +1773,10 @@
 
 .iphone-shell .settings-panel .settings-status-row:last-child {
   border-bottom: 0;
+}
+
+.iphone-shell .settings-panel .settings-status-row.no-icon {
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .iphone-shell .settings-panel .settings-status-value {
@@ -4486,4 +4525,27 @@
 .conversation .composer .input-actions .wake-button.composer-icon-button:disabled {
   opacity: 0.36;
   cursor: default;
+}
+
+/* The login flow is intentionally presented as an app-owned authorization sheet,
+   even though the tool itself is running on the remote machine. */
+.app-shell .tool-login-output,
+.native-app-shell .tool-login-output,
+.iphone-shell .tool-login-output {
+  max-height: 280px;
+  overflow: auto;
+  padding: 13px 15px;
+  border-top: 0.5px solid var(--settings-separator, rgba(128, 128, 128, 0.24));
+  color: var(--settings-text, #1c1c1e);
+  background: color-mix(in srgb, var(--settings-control, #f2f2f7) 58%, transparent);
+}
+
+.app-shell .tool-login-output pre,
+.native-app-shell .tool-login-output pre,
+.iphone-shell .tool-login-output pre {
+  margin: 0;
+  color: inherit;
+  font: 500 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

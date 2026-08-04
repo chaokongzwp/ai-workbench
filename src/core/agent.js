@@ -3116,10 +3116,16 @@ if (-not $AIWB_GIT) {
   Write-Output "__AIWB_GIT_OPERATION_ERROR__远端没有找到 git，请先安装 Git。"
   exit 2
 }
-function Assert-AiwbGitSucceeded([string]$Action, [int]$ExitCode) {
+function Assert-AiwbGitSucceeded([string]$Action, [int]$ExitCode, [string]$Detail = "") {
   if ($ExitCode -ne 0) {
     $AIWB_EXIT_CODE = $ExitCode
     if (-not $AIWB_EXIT_CODE) { $AIWB_EXIT_CODE = 4 }
+    $AIWB_DETAIL = [string]$Detail
+    if ($AIWB_DETAIL.Length -gt 12000) { $AIWB_DETAIL = $AIWB_DETAIL.Substring($AIWB_DETAIL.Length - 12000) }
+    if ($AIWB_DETAIL) {
+      $AIWB_DETAIL_B64 = [Convert]::ToBase64String($AIWB_UTF8.GetBytes($AIWB_DETAIL))
+      Write-Output ("__AIWB_GIT_OPERATION_DETAIL_B64__" + $AIWB_DETAIL_B64)
+    }
     Write-Output ("__AIWB_GIT_OPERATION_ERROR__" + $Action + "失败，Git 退出码：" + $AIWB_EXIT_CODE)
     exit $AIWB_EXIT_CODE
   }
@@ -3146,17 +3152,17 @@ if ((Test-Path -LiteralPath $AIWB_TARGET) -and -not $AIWB_TARGET_IS_REPO) {
 
 if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) {
   Set-Location -LiteralPath $AIWB_TARGET
-  git fetch --all --prune
+  $AIWB_GIT_OUTPUT = (git fetch --all --prune 2>&1 | Out-String)
   $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
-  Assert-AiwbGitSucceeded "获取远端仓库" $AIWB_GIT_EXIT_CODE
+  Assert-AiwbGitSucceeded "获取远端仓库" $AIWB_GIT_EXIT_CODE $AIWB_GIT_OUTPUT
   if ($AIWB_BRANCH) {
-    git checkout $AIWB_BRANCH
+    $AIWB_GIT_OUTPUT = (git checkout $AIWB_BRANCH 2>&1 | Out-String)
     $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
-    Assert-AiwbGitSucceeded "切换分支" $AIWB_GIT_EXIT_CODE
+    Assert-AiwbGitSucceeded "切换分支" $AIWB_GIT_EXIT_CODE $AIWB_GIT_OUTPUT
   }
-  git pull --ff-only
+  $AIWB_GIT_OUTPUT = (git pull --ff-only 2>&1 | Out-String)
   $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
-  Assert-AiwbGitSucceeded "更新仓库" $AIWB_GIT_EXIT_CODE
+  Assert-AiwbGitSucceeded "更新仓库" $AIWB_GIT_EXIT_CODE $AIWB_GIT_OUTPUT
   Write-Output "__AIWB_GIT_OPERATION_STATUS__updated"
 } elseif (Test-Path -LiteralPath $AIWB_TARGET) {
   $AIWB_CHILDREN = @(Get-ChildItem -LiteralPath $AIWB_TARGET -Force -ErrorAction SilentlyContinue)
@@ -3165,21 +3171,21 @@ if (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container) 
     exit 3
   }
   if ($AIWB_BRANCH) {
-    git clone --branch $AIWB_BRANCH $AIWB_REPO $AIWB_TARGET
+    $AIWB_GIT_OUTPUT = (git clone --branch $AIWB_BRANCH $AIWB_REPO $AIWB_TARGET 2>&1 | Out-String)
   } else {
-    git clone $AIWB_REPO $AIWB_TARGET
+    $AIWB_GIT_OUTPUT = (git clone $AIWB_REPO $AIWB_TARGET 2>&1 | Out-String)
   }
   $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
-  Assert-AiwbGitSucceeded "下载仓库" $AIWB_GIT_EXIT_CODE
+  Assert-AiwbGitSucceeded "下载仓库" $AIWB_GIT_EXIT_CODE $AIWB_GIT_OUTPUT
   Write-Output "__AIWB_GIT_OPERATION_STATUS__cloned"
 } else {
   if ($AIWB_BRANCH) {
-    git clone --branch $AIWB_BRANCH $AIWB_REPO $AIWB_TARGET
+    $AIWB_GIT_OUTPUT = (git clone --branch $AIWB_BRANCH $AIWB_REPO $AIWB_TARGET 2>&1 | Out-String)
   } else {
-    git clone $AIWB_REPO $AIWB_TARGET
+    $AIWB_GIT_OUTPUT = (git clone $AIWB_REPO $AIWB_TARGET 2>&1 | Out-String)
   }
   $AIWB_GIT_EXIT_CODE = $LASTEXITCODE
-  Assert-AiwbGitSucceeded "下载仓库" $AIWB_GIT_EXIT_CODE
+  Assert-AiwbGitSucceeded "下载仓库" $AIWB_GIT_EXIT_CODE $AIWB_GIT_OUTPUT
   Write-Output "__AIWB_GIT_OPERATION_STATUS__cloned"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $AIWB_TARGET ".git") -PathType Container)) {

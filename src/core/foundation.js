@@ -456,10 +456,8 @@ export const defaultModelOption = { id: "", label: "默认模型" };
 export const agentModelOptions = {
   codex: [
     defaultModelOption,
-    { id: "gpt-5.6", label: "GPT-5.6" },
     { id: "gpt-5.5", label: "GPT-5.5" },
     { id: "gpt-5.4", label: "GPT-5.4" },
-    { id: "gpt-5.4-mini", label: "GPT-5.4 mini" },
   ],
   claude: [
     defaultModelOption,
@@ -494,6 +492,9 @@ export function normalizeAgentModel(agentId, value) {
   const normalizedAgent = agentId === "claude" ? "claude" : "codex";
   const rawModel = String(value || "").trim();
   if (invalidAgentModelValues.has(rawModel.toLowerCase())) return "";
+  // Codex sessions in AI Workbench authenticate with a ChatGPT account.
+  // gpt-5.6 can be an API model id, but Codex rejects it for this auth mode.
+  if (normalizedAgent === "codex" && rawModel.toLowerCase() === "gpt-5.6") return "";
   const model = normalizedAgent === "claude" ? legacyClaudeModelAliases[rawModel] || rawModel : rawModel;
   if (!model) return "";
   const options = agentModelOptions[normalizedAgent] || [];
@@ -611,7 +612,7 @@ export const directoryPrefsStorageKey = "ai-workbench-directory-prefs-v1";
 
 export const manualWorkdirHistoryStorageKey = "ai-workbench-manual-workdirs-v1";
 
-export const workspaceStoreVersion = 4;
+export const workspaceStoreVersion = 5;
 
 export const localMessageHistoryVersion = 2;
 
@@ -830,7 +831,7 @@ export async function appLog(level, event, fields = {}) {
 }
 
 export function workspaceStoreHasServers(value) {
-  return Boolean([2, 3, workspaceStoreVersion].includes(Number(value?.version)) && Array.isArray(value.servers));
+  return Boolean([2, 3, 4, workspaceStoreVersion].includes(Number(value?.version)) && Array.isArray(value.servers));
 }
 
 export function saveWorkspaceMirror(profile) {
@@ -1773,6 +1774,7 @@ export function createServerSession(partial = {}, index = 0) {
     task: taskForStorage(partial.task),
     unreadResult: partial.unreadResult || null,
     shared: partial.shared || null,
+    pendingIdentityEdit: partial.pendingIdentityEdit === true,
     agentHistoryCursor: String(partial.agentHistoryCursor || "").trim(),
     agentHistoryHasMore: partial.agentHistoryHasMore !== false,
   };
@@ -1782,9 +1784,55 @@ export function createServerSession(partial = {}, index = 0) {
   };
 }
 
+function generatedConversationSeed(conversationId) {
+  const match = String(conversationId || "").trim().match(/^conv-(.+)-\d{13}-[a-f0-9]{4,}$/i);
+  return match?.[1] || "";
+}
+
+function workdirConversationSeed(server) {
+  const workdir = String(server?.profile?.workdir || "").trim();
+  return workdir ? sanitizeId(workdir).slice(0, 28) : "";
+}
+
+function serverHasActiveRemoteTask(server) {
+  const taskState = String(server?.task?.state || server?.task?.status || "").trim();
+  if (taskStateIsActive(taskState)) return true;
+  return (server?.messages || []).some(
+    (message) => message?.role === "assistant" && taskStateIsActive(taskStateForMessage(message)),
+  );
+}
+
+export function repairCopiedConversationMappings(servers = []) {
+  const normalizedServers = Array.isArray(servers) ? servers : [];
+  const expectedSeeds = normalizedServers.map(workdirConversationSeed);
+  let repairedCount = 0;
+
+  const repairedServers = normalizedServers.map((server, index) => {
+    const currentSeed = generatedConversationSeed(server?.conversationId);
+    const expectedSeed = expectedSeeds[index];
+    if (!currentSeed || !expectedSeed || currentSeed === expectedSeed || serverHasActiveRemoteTask(server)) {
+      return server;
+    }
+
+    const pointsToAnotherSession = expectedSeeds.some(
+      (candidateSeed, candidateIndex) =>
+        candidateIndex !== index && candidateSeed && candidateSeed === currentSeed,
+    );
+    if (!pointsToAnotherSession) return server;
+
+    repairedCount += 1;
+    return {
+      ...server,
+      conversationId: createConversationId(server.profile?.workdir || server.name),
+    };
+  });
+
+  return { servers: repairedServers, repairedCount };
+}
+
 export function normalizeWorkspaceStore(value) {
   if (workspaceStoreHasServers(value)) {
-    const servers = value.servers.map((server, index) => {
+    const normalizedServers = value.servers.map((server, index) => {
       const normalized = createServerSession(
         stripLegacyDefaultWorkdirFromPlaceholder(
           {
@@ -1801,6 +1849,7 @@ export function normalizeWorkspaceStore(value) {
         connection: connectionForAppLaunch(normalized),
       };
     });
+    const { servers } = repairCopiedConversationMappings(normalizedServers);
     const onlyEmptyPlaceholder =
       servers.length === 1 &&
       (servers[0]?.id === "default-server" || serverDisplayName(servers[0], 0) === "默认服务器") &&
@@ -2939,7 +2988,9 @@ export function psQuote(value) {
 }
 
 export function powershellCommand(script) {
-  const encoded = toBase64Utf16Le(`$ErrorActionPreference = 'Stop'\n${script}`);
+  const encoded = toBase64Utf16Le(
+    `$ErrorActionPreference = 'Stop'\n$AIWB_UTF8 = [System.Text.UTF8Encoding]::new($false)\n[Console]::OutputEncoding = $AIWB_UTF8\n$OutputEncoding = $AIWB_UTF8\n${script}`,
+  );
   return `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
 }
 

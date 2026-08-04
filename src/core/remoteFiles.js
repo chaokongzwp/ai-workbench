@@ -393,11 +393,12 @@ export function imageExtensionFromFile(file) {
 export function sanitizeUploadName(name, fallbackExtension = "png") {
   const original = String(name || "image").trim();
   const extension = remoteFileExtension(original) || fallbackExtension || "png";
-  const base = original
+  const normalizedBase = original
     .replace(/\.[a-z0-9]+$/i, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "image";
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  const base = Array.from(normalizedBase).slice(0, 48).join("") || "image";
   return `${base}.${extension}`;
 }
 
@@ -419,19 +420,16 @@ export function buildRemoteImageUploadCommand(profile, attachment, index = 0) {
   const originalName = String(attachment?.name || remoteName);
 
   if (isWindowsProfile(profile)) {
-    return {
-      path: remotePath,
-      name: originalName,
-      mime,
-      size: Number(attachment?.size || 0) || 0,
-      command: powershellCommand(`
+    const uploadScript = `
 $AIWB_DIR = ${psQuote(uploadDir)}
 $AIWB_PATH = ${psQuote(remotePath)}
 $AIWB_NAME = ${psQuote(remoteName)}
 $AIWB_ORIGINAL = ${psQuote(originalName)}
 $AIWB_MIME = ${psQuote(mime)}
+$AIWB_BASE64 = @'
+${base64}
+'@
 New-Item -ItemType Directory -Force -Path $AIWB_DIR | Out-Null
-$AIWB_BASE64 = [Console]::In.ReadToEnd()
 $AIWB_BASE64 = ($AIWB_BASE64 -replace '\\s', '')
 [System.IO.File]::WriteAllBytes($AIWB_PATH, [System.Convert]::FromBase64String($AIWB_BASE64))
 $AIWB_FILE = Get-Item -LiteralPath $AIWB_PATH
@@ -442,8 +440,13 @@ Write-Output "__AIWB_UPLOAD_PATH__$AIWB_PATH"
 Write-Output "__AIWB_UPLOAD_MIME__$AIWB_MIME"
 Write-Output "__AIWB_UPLOAD_SIZE__$($AIWB_FILE.Length)"
 Write-Output "__AIWB_UPLOAD_END__"
-`),
-      stdin: base64,
+`;
+    return {
+      ...powershellStdinCommand(uploadScript),
+      path: remotePath,
+      name: originalName,
+      mime,
+      size: Number(attachment?.size || 0) || 0,
     };
   }
 
@@ -518,7 +521,9 @@ export function parseRemoteImageUploadPayload(output, fallback = {}) {
   }
   const readMarker = (marker) => text.match(new RegExp(`__AIWB_UPLOAD_${marker}__(.*)`))?.[1]?.trim() || "";
   return {
-    name: readMarker("ORIGINAL") || fallback.name || readMarker("NAME") || "文件",
+    // The local name is authoritative. Older Windows shells can return a
+    // mojibake ORIGINAL marker even when the uploaded file itself is valid.
+    name: fallback.name || readMarker("ORIGINAL") || readMarker("NAME") || "文件",
     remoteName: readMarker("NAME") || "",
     path: readMarker("PATH") || fallback.path || "",
     mime: readMarker("MIME") || fallback.mime || "image/png",

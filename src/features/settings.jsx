@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowClockwise,
+  ArrowSquareOut,
   Bell,
   CaretRight,
   Check,
@@ -449,7 +450,7 @@ function SettingsActionRow({ icon: Icon, title, detail = "", destructive = false
 
 function SettingsStatusRow({ icon: Icon, title, detail = "", value = "", tone = "neutral", actions = null }) {
   return (
-    <div className={`settings-status-row tone-${tone}`}>
+    <div className={`settings-status-row tone-${tone}${Icon ? "" : " no-icon"}`}>
       {Icon ? (
         <span className="settings-status-icon" aria-hidden="true">
           <Icon size={18} weight="bold" />
@@ -550,6 +551,54 @@ function normalizeAppInfo(info = {}) {
   };
 }
 
+function parseToolLoginResult(agentId, output) {
+  const raw = String(output || "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r/g, "")
+    .trim();
+  const url = raw.match(/https:\/\/[^\s)>]+/i)?.[0] || "";
+  const code = agentId === "codex" ? raw.match(/\b[A-Z0-9]{4}-[A-Z0-9]{5}\b/)?.[0] || "" : "";
+
+  if (agentId === "codex" && /Logged in using ChatGPT|Logged in as/i.test(raw)) {
+    return {
+      tone: "done",
+      message: "Codex 已登录，可以返回会话开始使用。",
+      url: "",
+      code: "",
+    };
+  }
+  if (agentId === "claude" && /"loggedIn"\s*:\s*true|Welcome back|Claude (?:Pro|Max|Team|Enterprise)|Let's get started/i.test(raw)) {
+    return {
+      tone: "done",
+      message: "Claude 已登录，可以返回会话开始使用。",
+      url: "",
+      code: "",
+    };
+  }
+  if (/Not logged in|Invalid API key|"loggedIn"\s*:\s*false/i.test(raw)) {
+    return {
+      tone: "warning",
+      message: `${agentId === "claude" ? "Claude" : "Codex"} 尚未登录。请点击“开始登录”。`,
+      url: "",
+      code: "",
+    };
+  }
+  if (url || code) {
+    return {
+      tone: "done",
+      message: "请在浏览器完成授权。完成后回到这里点“检查登录状态”。",
+      url,
+      code,
+    };
+  }
+  return {
+    tone: "done",
+    message: raw ? "远端正在等待授权完成。" : "登录流程已启动，正在等待授权信息。",
+    url: "",
+    code: "",
+  };
+}
+
 export function SettingsPanel({
   servers = [],
   platform = "",
@@ -568,6 +617,7 @@ export function SettingsPanel({
   onAddSelected,
   onSave,
   onDelete,
+  onDuplicate,
   onLoginRemoteAgent,
   onInstallAgent,
   onInstallCli,
@@ -620,6 +670,8 @@ export function SettingsPanel({
     message: "",
   });
   const [agentSelectionNotice, setAgentSelectionNotice] = useState("");
+  const [sessionActionStatus, setSessionActionStatus] = useState(null);
+  const [toolLoginStatus, setToolLoginStatus] = useState(null);
   const [settingsPage, setSettingsPage] = useState(() => initialPage || "root");
   const [appInfo, setAppInfo] = useState(() => normalizeAppInfo());
   const migrationInputRef = useRef(null);
@@ -673,6 +725,24 @@ export function SettingsPanel({
     }
     setSettingsAgentTab(nextAgentId);
     updateField("agentId", nextAgentId);
+  }
+
+  async function handleDuplicateSession() {
+    if (!onDuplicate || busy || sessionActionStatus?.tone === "loading") return;
+    setSessionActionStatus({ tone: "loading", message: "正在复制会话..." });
+    try {
+      const duplicate = await onDuplicate();
+      if (!duplicate?.id) {
+        throw new Error("会话没有复制成功，请重试。");
+      }
+      setSessionActionStatus({
+        tone: "done",
+        message: `已复制为「${duplicate.name}」。修改完成后点击“保存更改”。`,
+      });
+      setSettingsPage("session-general");
+    } catch (error) {
+      setSessionActionStatus({ tone: "error", message: shortError(error) });
+    }
   }
 
   const missingPassword = !String(draftProfile.password || "").trim();
@@ -1024,6 +1094,7 @@ export function SettingsPanel({
     "session-development": "开发环境",
     "session-execution": "执行方式",
     "session-actions": "会话操作",
+    "session-login": "AI 工具登录",
     "session-share": "分享会话",
     "global-appearance": "外观",
     "global-permissions": "执行权限",
@@ -1049,6 +1120,7 @@ export function SettingsPanel({
     appearanceModeOptions.find((option) => option.id === normalizeAppearanceMode(draftProfile.appearanceMode))?.label || "跟随系统";
   const currentAgent = agentById(draftProfile.agentId || defaultProfile.agentId);
   const currentModel = agentModelLabel(draftProfile.agentId || defaultProfile.agentId, draftProfile.aiModel || "") || "默认模型";
+  const identityEditable = editingServer?.pendingIdentityEdit === true;
   const selectedSessionCount = Array.isArray(settingsSelectedSessions) ? settingsSelectedSessions.length : 0;
   const totalMessageCount = useMemo(
     () =>
@@ -1195,6 +1267,39 @@ export function SettingsPanel({
     }
   }
 
+  async function handleToolLogin(agentId, mode = "start") {
+    const agent = agentById(agentId === "claude" ? "claude" : "codex");
+    if (busy) {
+      setToolLoginStatus({ tone: "warning", message: "当前会话正在执行任务，请完成后再启动登录授权。" });
+      return;
+    }
+    if (!onLoginRemoteAgent) {
+      setToolLoginStatus({
+        tone: "warning",
+        message: "当前会话还没有可用的远程连接信息。",
+      });
+      return;
+    }
+    setSettingsPage("session-login");
+    setToolLoginStatus({
+      agentId: agent.id,
+      tone: "loading",
+      message: mode === "status" ? `正在检查 ${agent.shortName} 登录状态…` : `正在准备 ${agent.shortName} 授权…`,
+      output: "",
+    });
+    try {
+      const output = await onLoginRemoteAgent(agent.id, mode);
+      const result = parseToolLoginResult(agent.id, output);
+      setToolLoginStatus({
+        agentId: agent.id,
+        ...result,
+        output: "",
+      });
+    } catch (error) {
+      setToolLoginStatus({ agentId: agent.id, tone: "error", message: shortError(error), output: "" });
+    }
+  }
+
   return (
     <div className="settings-layer" role="dialog" aria-modal="true">
       <button className="settings-backdrop" type="button" aria-label="关闭设置" onClick={onClose} />
@@ -1207,7 +1312,6 @@ export function SettingsPanel({
               type="button"
               className="settings-back-button"
               onClick={() => setSettingsPage("root")}
-              disabled={busy}
               aria-label="返回设置"
             >
               <ArrowLeft size={19} weight="bold" aria-hidden="true" />
@@ -1223,7 +1327,6 @@ export function SettingsPanel({
             type="button"
             className="settings-close-button"
             onClick={onClose}
-            disabled={busy && !allowCloseWhileBusy}
             aria-label="关闭设置"
           >
             <X size={19} weight="bold" aria-hidden="true" />
@@ -1237,6 +1340,12 @@ export function SettingsPanel({
             if (event.currentTarget.scrollLeft !== 0) event.currentTarget.scrollLeft = 0;
           }}
         >
+        {busy ? (
+          <div className="settings-inline-notice settings-busy-notice" role="status">
+            <ArrowClockwise className="is-spinning" size={18} weight="bold" aria-hidden="true" />
+            <span>当前会话正在执行远端操作。涉及同一台机器的安装、检测和删除会暂不可用；返回、关闭和其他本地设置仍可操作。</span>
+          </div>
+        ) : null}
         {settingsPage === "root" && editingSession ? (
           <div className="settings-root-page">
             <SettingsSection title="当前会话">
@@ -1259,7 +1368,7 @@ export function SettingsPanel({
               <SettingsMenuRow
                 icon={FolderSimple}
                 title="会话操作"
-                detail="登录 AI 工具或删除会话"
+                detail="登录、复制或删除会话"
                 onClick={() => setSettingsPage("session-actions")}
               />
               <SettingsMenuRow
@@ -1366,36 +1475,69 @@ export function SettingsPanel({
 
         {editingSession && settingsPage === "session-general" ? (
           <div className="settings-page-content session-connection-page">
+            {sessionActionStatus?.tone === "done" ? (
+              <div className="settings-inline-notice done">
+                <Check size={18} weight="bold" aria-hidden="true" />
+                <span>{sessionActionStatus.message}</span>
+              </div>
+            ) : null}
             <SettingsSection
               title="会话"
               footer="名称用于会话列表和语音切换，工作目录决定 AI 可以访问的范围。"
               className="session-profile-panel"
             >
               <ConfigField label="名称" value={draftProfile.name} onChange={(value) => updateField("name", value)} />
-              <SettingsStatusRow
-                title="AI 类型"
-                detail="创建后固定；切换 AI 请新建会话。"
-                value={currentAgent.shortName}
-              />
+              {identityEditable ? (
+                <ConfigSelect
+                  label="AI 类型"
+                  value={draftProfile.agentId || defaultProfile.agentId}
+                  options={agents.map((agent) => ({ id: agent.id, label: agent.shortName }))}
+                  onChange={(value) => updateField("agentId", value)}
+                />
+              ) : (
+                <SettingsStatusRow
+                  title="AI 类型"
+                  detail="会话保存后不可修改"
+                  value={currentAgent.shortName}
+                />
+              )}
               <AgentModelField
                 agentId={draftProfile.agentId || defaultProfile.agentId}
                 value={draftProfile.aiModel || ""}
                 onChange={(value) => updateField("aiModel", value)}
               />
-              <ConfigField label="工作目录" value={draftProfile.workdir} onChange={(value) => updateField("workdir", value)} />
+              <ConfigField
+                label="工作目录"
+                value={draftProfile.workdir}
+                readOnly={!identityEditable}
+                onChange={(value) => updateField("workdir", value)}
+              />
             </SettingsSection>
             <SettingsSection
               title="服务器"
               footer="账号和密码仅保存在当前设备。"
               className="session-server-panel"
             >
-              <ConfigSelect
-                label="服务器类型"
-                value={normalizeServerPlatform(draftProfile.platform)}
-                options={serverPlatformOptions}
-                onChange={(value) => updateField("platform", value)}
+              {identityEditable ? (
+                <ConfigSelect
+                  label="服务器类型"
+                  value={normalizeServerPlatform(draftProfile.platform)}
+                  options={serverPlatformOptions}
+                  onChange={(value) => updateField("platform", value)}
+                />
+              ) : (
+                <SettingsStatusRow
+                  title="服务器类型"
+                  detail="会话保存后不可修改"
+                  value={serverPlatformLabel(draftProfile.platform)}
+                />
+              )}
+              <ConfigField
+                label="主服务器地址"
+                value={draftProfile.host}
+                readOnly={!identityEditable}
+                onChange={(value) => updateField("host", value)}
               />
-              <ConfigField label="主服务器地址" value={draftProfile.host} onChange={(value) => updateField("host", value)} />
               <ConfigField
                 label="备用服务器地址"
                 value={(draftProfile.hostAlternates || []).join(", ")}
@@ -1414,12 +1556,14 @@ export function SettingsPanel({
                 label="端口"
                 value={draftProfile.port}
                 inputMode="numeric"
+                readOnly={!identityEditable}
                 onChange={(value) => updateField("port", value)}
               />
               <ConfigField
                 label="用户名"
                 value={draftProfile.username}
                 autoComplete="username"
+                readOnly={!identityEditable}
                 onChange={(value) => updateField("username", value)}
               />
               <ConfigField
@@ -2071,21 +2215,54 @@ export function SettingsPanel({
 
         {editingSession && settingsPage === "session-actions" ? (
           <div className="settings-page-content">
+            <SettingsSection title="会话管理">
+              <SettingsActionRow
+                icon={Copy}
+                title={sessionActionStatus?.tone === "loading" ? "正在复制" : "复制会话"}
+                detail="保留连接、工作目录和会话 ID，创建一个可独立修改的新会话"
+                disabled={busy || !onDuplicate || sessionActionStatus?.tone === "loading"}
+                onClick={handleDuplicateSession}
+              />
+              {sessionActionStatus ? (
+                <div className={`settings-inline-notice ${sessionActionStatus.tone}`}>
+                  {sessionActionStatus.tone === "done" ? (
+                    <Check size={18} weight="bold" aria-hidden="true" />
+                  ) : sessionActionStatus.tone === "error" ? (
+                    <WarningCircle size={18} weight="fill" aria-hidden="true" />
+                  ) : (
+                    <ArrowClockwise className="is-spinning" size={18} weight="bold" aria-hidden="true" />
+                  )}
+                  <span>{sessionActionStatus.message}</span>
+                </div>
+              ) : null}
+            </SettingsSection>
             <SettingsSection title="AI 工具登录">
               <SettingsActionRow
                 icon={Robot}
                 title="登录 Codex"
-                detail="在远程机器打开 Codex 登录授权流程"
-                onClick={() => onLoginRemoteAgent?.("codex")}
-                disabled={!onLoginRemoteAgent}
+                detail="在本页完成浏览器授权"
+                onClick={() => void handleToolLogin("codex")}
+                disabled={busy}
               />
               <SettingsActionRow
                 icon={Terminal}
                 title="登录 Claude"
-                detail="在远程机器打开 Claude Code 登录/授权向导"
-                onClick={() => onLoginRemoteAgent?.("claude")}
-                disabled={!onLoginRemoteAgent}
+                detail="在本页完成浏览器授权"
+                onClick={() => void handleToolLogin("claude")}
+                disabled={busy}
               />
+              {toolLoginStatus ? (
+                <div className={`settings-inline-notice ${toolLoginStatus.tone}`}>
+                  {toolLoginStatus.tone === "done" ? (
+                    <Check size={18} weight="bold" aria-hidden="true" />
+                  ) : toolLoginStatus.tone === "error" || toolLoginStatus.tone === "warning" ? (
+                    <WarningCircle size={18} weight="fill" aria-hidden="true" />
+                  ) : (
+                    <ArrowClockwise className="is-spinning" size={18} weight="bold" aria-hidden="true" />
+                  )}
+                  <span>{toolLoginStatus.message}</span>
+                </div>
+              ) : null}
             </SettingsSection>
             <SettingsSection title="危险操作" footer="删除只会移除当前设备上的会话配置，不会删除远端工程文件。">
               <SettingsActionRow
@@ -2099,6 +2276,73 @@ export function SettingsPanel({
                   onDelete?.();
                 }}
               />
+            </SettingsSection>
+          </div>
+        ) : null}
+
+        {editingSession && settingsPage === "session-login" ? (
+          <div className="settings-page-content tool-login-page">
+            <SettingsSection
+              title={`${agentById(toolLoginStatus?.agentId || draftProfile.agentId).shortName} 授权`}
+              footer="AI Workbench 会在远端后台保持授权流程。本页只展示 AI 工具给出的设备码、链接和状态，不显示 SSH 或命令。"
+            >
+              <SettingsStatusRow
+                icon={ShieldCheck}
+                title={
+                  toolLoginStatus?.tone === "loading"
+                    ? "正在检查授权"
+                    : toolLoginStatus?.tone === "warning"
+                      ? "尚未登录"
+                      : "登录状态"
+                }
+                detail={toolLoginStatus?.message || "请从会话操作中选择要登录的 AI 工具。"}
+                value={toolLoginStatus?.tone === "error" ? "失败" : toolLoginStatus?.tone === "loading" ? "处理中" : "待完成"}
+                tone={toolLoginStatus?.tone === "error" ? "warning" : toolLoginStatus?.tone === "done" ? "success" : "neutral"}
+              />
+              {toolLoginStatus?.output ? (
+                <div className="tool-login-output" aria-label="授权信息">
+                  <pre>{toolLoginStatus.output}</pre>
+                </div>
+              ) : null}
+              {toolLoginStatus?.code ? (
+                <SettingsStatusRow
+                  icon={Key}
+                  title="一次性验证码"
+                  detail="在授权网页中输入；验证码会过期。"
+                  value={toolLoginStatus.code}
+                  actions={<ConfigCopyButton value={toolLoginStatus.code} />}
+                />
+              ) : null}
+              <SettingsButtonRow>
+                {toolLoginStatus?.url ? (
+                  <button
+                    type="button"
+                    className="settings-inline-button primary"
+                    onClick={() => window.open(toolLoginStatus.url, "_blank", "noopener,noreferrer")}
+                  >
+                    <ArrowSquareOut size={17} weight="bold" aria-hidden="true" />
+                    打开授权网页
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="settings-inline-button primary"
+                  onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "start")}
+                  disabled={busy || toolLoginStatus?.tone === "loading"}
+                >
+                  <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+                  开始登录
+                </button>
+                <button
+                  type="button"
+                  className="settings-inline-button"
+                  onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "status")}
+                  disabled={busy || toolLoginStatus?.tone === "loading"}
+                >
+                  <ArrowClockwise size={17} weight="bold" aria-hidden="true" />
+                  检查登录状态
+                </button>
+              </SettingsButtonRow>
             </SettingsSection>
           </div>
         ) : null}
@@ -2690,12 +2934,22 @@ function ConfigCopyButton({ value }) {
   );
 }
 
-export function ConfigField({ label, value, onChange, type = "text", inputMode, autoComplete, placeholder, required = false }) {
+export function ConfigField({
+  label,
+  value,
+  onChange,
+  type = "text",
+  inputMode,
+  autoComplete,
+  placeholder,
+  required = false,
+  readOnly = false,
+}) {
   const resolvedAutoComplete = type === "password" ? autoComplete || "new-password" : autoComplete;
   const visibleType = type === "password" ? "text" : type;
 
   return (
-    <label className={`config-field ${required ? "required" : ""}`}>
+    <label className={`config-field ${required ? "required" : ""} ${readOnly ? "read-only" : ""}`}>
       <span>{label}</span>
       <div className="config-control">
         <input
@@ -2704,7 +2958,8 @@ export function ConfigField({ label, value, onChange, type = "text", inputMode, 
           inputMode={inputMode}
           autoComplete={resolvedAutoComplete}
           placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
+          readOnly={readOnly}
+          onChange={(event) => onChange?.(event.target.value)}
         />
         <ConfigCopyButton value={value} />
       </div>

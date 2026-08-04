@@ -588,7 +588,7 @@ async function runChild(executable, args, input = "", envOverrides = {}) {
           .join(path.delimiter);
         child = spawn(executable, args, {
           windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
           env: { ...process.env, ...envOverrides, PATH: childPath, Path: childPath },
         });
       } catch (error) {
@@ -619,7 +619,7 @@ async function runChild(executable, args, input = "", envOverrides = {}) {
         flushDecoders();
         resolve({ code: Number(code ?? 1), stdout, stderr });
       });
-      if (input) child.stdin.end(input, "utf8"); else child.stdin.end();
+      if (input && child.stdin) child.stdin.end(input, "utf8");
     });
     if (!/\\bEBUSY\\b|resource busy/i.test(last.stderr) || attempt === 2) return last;
     await sleep(500 * (attempt + 1));

@@ -18,6 +18,7 @@ import {
   localMessageHistoryStorageKey,
   localMessageHistoryVersion,
   normalizeWorkspaceStore,
+  repairCopiedConversationMappings,
   serializeWorkspaceStore,
   workspaceStoreVersion,
 } from "../src/core/foundation.js";
@@ -149,10 +150,42 @@ const legacyWorkspace = normalizeWorkspaceStore({
     },
   ],
 });
-assert.equal(workspaceStoreVersion, 4);
+assert.equal(workspaceStoreVersion, 5);
 assert.equal(localMessageHistoryVersion, 2);
 assert.equal(legacyWorkspace.servers.length, 1);
 assert.equal(legacyWorkspace.servers[0].conversationId, "conversation-kept");
+
+const copiedMappingRepair = repairCopiedConversationMappings([
+  {
+    id: "source",
+    conversationId: "conv-E--codex-cat-litter-box-1785466000000-a1b2c3d4",
+    profile: { workdir: "E:\\codex\\cat-litter-box" },
+    messages: [],
+  },
+  {
+    id: "copy",
+    conversationId: "conv-E--codex-cat-litter-box-1785466066679-e5f6a7b8",
+    profile: { workdir: "E:\\codex\\dd-device" },
+    messages: [],
+  },
+]);
+assert.equal(copiedMappingRepair.repairedCount, 1);
+assert.match(copiedMappingRepair.servers[1].conversationId, /^conv-E--codex-dd-device-/);
+
+const activeCopiedMapping = repairCopiedConversationMappings([
+  copiedMappingRepair.servers[0],
+  {
+    id: "active-copy",
+    conversationId: "conv-E--codex-cat-litter-box-1785466066680-e5f6a7b9",
+    profile: { workdir: "E:\\codex\\dd-device" },
+    messages: [{ role: "assistant", taskState: taskStateRunning }],
+  },
+]);
+assert.equal(activeCopiedMapping.repairedCount, 0);
+assert.equal(
+  activeCopiedMapping.servers[1].conversationId,
+  "conv-E--codex-cat-litter-box-1785466066680-e5f6a7b9",
+);
 assert.equal(legacyWorkspace.servers[0].profile.password, "secret");
 assert.equal(legacyWorkspace.servers[0].messages.length, 2);
 assert.equal(legacyWorkspace.servers[0].messages[0].taskState, taskStateRunning);

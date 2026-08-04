@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import * as Core from "../core/workbenchCore.js";
 import {
@@ -64,6 +65,8 @@ const {
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
+  buildToolLoginStartCommand,
+  buildToolLoginStatusCommand,
   buildGitDownloadCommand,
   buildGitSshKeyCommand,
   buildHealthCommand,
@@ -449,26 +452,39 @@ function normalizeRemoteCommandOutput(result) {
 
 function readableGitOperationError(output) {
   const text = String(output || "").trim();
+  const detailMatch = text.match(/__AIWB_GIT_OPERATION_DETAIL_B64__([^\r\n]+)/i);
+  let detail = "";
+  if (detailMatch?.[1]) {
+    try {
+      detail = atob(detailMatch[1]).trim();
+    } catch {
+      detail = "";
+    }
+  }
+  const diagnosticText = `${detail}\n${text}`;
   const explicitMarker = text.match(/__AIWB_GIT_OPERATION_ERROR__([^\r\n<]*)/i)?.[1]?.trim();
-  if (explicitMarker) return explicitMarker;
 
-  if (/Could not resolve hostname\s+github\.com|Name or service not known|Temporary failure in name resolution/i.test(text)) {
+  if (/Could not resolve hostname\s+github\.com|Name or service not known|Temporary failure in name resolution/i.test(diagnosticText)) {
     return "远端机器无法解析 github.com（DNS 不可用），因此无法连接 GitHub。请先恢复这台机器的网络或 DNS 后重试。";
   }
-  if (/Permission denied\s*\(publickey\)|Could not read from remote repository/i.test(text)) {
+  if (/Permission denied\s*\(publickey\)|Could not read from remote repository/i.test(diagnosticText)) {
     return "远端机器没有通过 GitHub SSH 认证。请为远端账号配置可访问该仓库的 SSH Key，或改用具备访问权限的 HTTPS 仓库地址。";
   }
-  if (/Repository not found|repository .* not found/i.test(text)) {
+  if (/Repository not found|repository .* not found/i.test(diagnosticText)) {
     return "GitHub 没有找到该仓库，或当前远端账号没有访问权限。请检查仓库地址和仓库权限。";
   }
-  if (/Remote branch .* not found|couldn't find remote ref|pathspec .* did not match/i.test(text)) {
+  if (/Remote branch .* not found|couldn't find remote ref|pathspec .* did not match/i.test(diagnosticText)) {
     return "填写的 Git 分支不存在。请清空分支使用默认分支，或填写仓库中真实存在的分支。";
   }
-  if (/already exists and is not an empty directory/i.test(text)) {
+  if (/already exists and is not an empty directory/i.test(diagnosticText)) {
     return "保存目录已经存在且不为空。请选择空目录，或更换保存目录。";
   }
-  if (/路径的形式不合法|CreateDirectoryArgumentError|The filename, directory name, or volume label syntax is incorrect/i.test(text)) {
+  if (/路径的形式不合法|CreateDirectoryArgumentError|The filename, directory name, or volume label syntax is incorrect/i.test(diagnosticText)) {
     return "Windows 保存目录格式不正确，或磁盘根目录无法访问。请检查盘符和完整保存路径。";
+  }
+
+  if (explicitMarker) {
+    return detail ? `${explicitMarker}\n\nGit 输出：\n${detail}` : explicitMarker;
   }
 
   return "Git 操作没有通过远端落盘验证。远端没有生成可用仓库，请检查仓库地址、网络权限和保存目录。";
@@ -1451,9 +1467,34 @@ export function useWorkbenchController() {
 
       const previousUser = [...messages.slice(0, index)].reverse().find((item) => item?.role === "user");
       const promptKey = messageTextKey({ body: message.promptText || previousUser?.body || "" });
-      if (promptKey && remotePromptKey && promptKey === remotePromptKey) return message;
-
       const createdAt = Number(message.startedAt || message.createdAtMs || 0);
+      // The app may have been suspended after the Agent accepted a task but
+      // before the task id made it into local storage. Bind that local
+      // placeholder to the matching remote task instead of adding a duplicate
+      // conversation entry or treating it as unsent.
+      if (promptKey && remotePromptKey && promptKey === remotePromptKey) {
+        const recoveredTaskId = String(latestEntry?.taskId || "").trim();
+        if (!recoveredTaskId) return message;
+        const remoteStatus = String(latestEntry?.status || "queued").trim();
+        const startedAt = timestampFromAgentTime(latestEntry?.startedAt) * 1000 || createdAt || now;
+        changed = true;
+        return {
+          ...message,
+          title: "已恢复任务",
+          body: "已确认 Agent 收到这条消息，正在同步执行结果。",
+          taskState: taskStateFromRemoteStatus(remoteStatus, { hasTaskId: true }) || taskStateSyncing,
+          backend: "agent",
+          conversationId: conversation.id,
+          remoteTaskId: recoveredTaskId,
+          remoteTaskStatus: remoteStatus,
+          remoteTaskCheckedAt: now,
+          remoteSyncError: "",
+          startedAt,
+          completedAt: undefined,
+          forceUpdate: true,
+        };
+      }
+
       if (createdAt && now - createdAt < 15_000) return message;
 
       changed = true;
@@ -2604,7 +2645,10 @@ export function useWorkbenchController() {
       const remote = await fetchCloudConfigSync({ endpoint, token: login.token });
       const revision = Number(remote?.revision || remote?.config?.revision || 0);
       const encryptedPayload = encryptedPayloadFromCloudRecord(remote?.config || remote);
-      if (!revision || !encryptedPayload) {
+      // Older cloud-sync deployments may legitimately return revision=0 or omit
+      // it. The encrypted payload is the source of truth for whether there is
+      // anything to import.
+      if (!encryptedPayload) {
         const shared = mergeCloudSharedSessions(currentServers, incomingShares);
         if (shared.addedServers.length) {
           const nextActive = shared.addedServers[0] || shared.servers[0];
@@ -2638,12 +2682,13 @@ export function useWorkbenchController() {
       const mergedShared = mergeCloudSharedSessions(mergedConfig.servers, incomingShares);
       const addedCount = mergedConfig.addedServers.length + mergedShared.addedServers.length;
       const skippedCount = mergedConfig.skippedServers.length + mergedShared.skippedShares.length;
+      const cloudSessionCount = cloudPayload.workspace?.servers?.length || 0;
 
       if (!addedCount) {
         return {
           added: 0,
           skipped: skippedCount,
-          message: `云端配置和共享会话本机都已存在，没有重复添加。`,
+          message: `云端找到 ${cloudSessionCount} 个会话，本机都已存在；没有重复添加。`,
         };
       }
 
@@ -2675,7 +2720,7 @@ export function useWorkbenchController() {
       return {
         added: addedCount,
         skipped: skippedCount,
-        message: `已同步云端配置，新增 ${addedCount} 个会话（含共享会话）；${skippedCount} 个本机已存在，已跳过。`,
+        message: `云端找到 ${cloudSessionCount} 个会话，已新增 ${addedCount} 个；${skippedCount} 个本机已存在，已跳过。`,
       };
     } finally {
       setBusy(false);
@@ -2730,7 +2775,7 @@ export function useWorkbenchController() {
       const remote = await fetchCloudConfigSync({ endpoint, token: login.token });
       const revision = Number(remote?.revision || remote?.config?.revision || 0);
       const encryptedPayload = encryptedPayloadFromCloudRecord(remote?.config || remote);
-      const remotePayload = revision && encryptedPayload ? await decryptCloudSyncPayload(encryptedPayload, password) : null;
+      const remotePayload = encryptedPayload ? await decryptCloudSyncPayload(encryptedPayload, password) : null;
       const merged = mergeCloudSyncPayloads(remotePayload, localPayload);
       const addedCount = merged.addedServers.length;
       const skippedCount = merged.skippedServers.length;
@@ -2822,50 +2867,64 @@ export function useWorkbenchController() {
         return;
       }
 
-      updateAssistantMessageInServer(active.id, message.id, {
-        title: "正在确认提交状态",
-        body: "正在向 Agent 确认这条消息是否已收到。",
-        taskState: taskStateSyncing,
-        remoteTaskStatus: "syncing",
-        remoteTaskCheckedAt: Date.now(),
-        forceUpdate: true,
-      });
-      await syncAgentConversationForServer(active, {
-        limit: 1,
-        reason: "foreground-submission-check",
-        confirmMissing: true,
-      });
+      await recoverUnsubmittedAgentMessage(active, message, "foreground");
     };
-    const scheduleRecoverySync = (delayMs) => {
+    const scheduleRecoverySync = (delayMs, { retryOnConnectionFailure = false } = {}) => {
       const timer = window.setTimeout(() => {
         recoveryTimers.delete(timer);
         if (document.visibilityState !== "visible" || !workspaceLoadedRef.current) return;
-        recoverForegroundTask().catch((error) => {
-          void appLog("warn", "agent.foreground_recovery.failed", { error: shortError(error) });
-        });
-        syncRemoteAgentTasks().catch((error) => {
-          void appLog("warn", "agent.resume_sync.failed", { error: shortError(error) });
-        });
+        recoverForegroundTask()
+          .catch((error) => {
+            void appLog("warn", "agent.foreground_recovery.failed", { error: shortError(error) });
+          })
+          .finally(() => {
+            if (!retryOnConnectionFailure) return;
+            const current = serverById(activeServerIdRef.current);
+            if (current?.connection?.state === "error") {
+              scheduleRecoverySync(1_500);
+            }
+          });
       }, delayMs);
       recoveryTimers.add(timer);
+    };
+    const handleForeground = () => {
+      // The browser visibility event is not reliable when Capacitor restores an
+      // iPhone app from the background. Both entry points deliberately share
+      // the same narrow recovery: only the latest unfinished Agent task.
+      scheduleRecoverySync(100, { retryOnConnectionFailure: true });
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         flushWorkspaceSave();
         return;
       }
-      // A native SSH callback can finish just after iOS resumes the web view.
-      // Retry briefly so the completed Agent result is recovered without the
-      // user pressing refresh.
-      scheduleRecoverySync(100);
-      scheduleRecoverySync(1_500);
-      scheduleRecoverySync(5_000);
+      handleForeground();
     };
+
+    let nativeAppStateListener;
+    let disposed = false;
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+        if (disposed) return;
+        if (isActive) {
+          handleForeground();
+        } else {
+          flushWorkspaceSave();
+        }
+      })
+        .then((listener) => {
+          if (disposed) listener?.remove?.();
+          else nativeAppStateListener = listener;
+        })
+        .catch(() => {});
+    }
 
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("beforeunload", handlePageHide);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      disposed = true;
+      nativeAppStateListener?.remove?.();
       recoveryTimers.forEach((timer) => window.clearTimeout(timer));
       recoveryTimers.clear();
       window.removeEventListener("pagehide", handlePageHide);
@@ -2890,10 +2949,25 @@ export function useWorkbenchController() {
     const currentServers = serversRef.current.length ? serversRef.current : servers;
     const existing = currentServers.find((server) => server.id === editingServerId);
     const existingProfile = existing ? normalizeProfile(existing.profile) : null;
-    const normalized = withKnownPassword(
+    const candidateProfile = withKnownPassword(
       existingProfile ? { ...existingProfile, ...nextProfile } : nextProfile,
       currentServers,
     );
+    const identityEditable = !existing || existing.pendingIdentityEdit === true;
+    const normalized =
+      existingProfile && !identityEditable
+        ? normalizeProfile({
+            ...candidateProfile,
+            agentId: existingProfile.agentId,
+            platform: existingProfile.platform,
+            host: existingProfile.host,
+            hostAlternates: candidateProfile.hostAlternates,
+            port: existingProfile.port,
+            username: existingProfile.username,
+            workdir: existingProfile.workdir,
+            wslDistro: existingProfile.wslDistro,
+          })
+        : candidateProfile;
     const name = String(normalized.name || "").trim() || existing?.name || existingProfile?.name || "";
     const workdir = String(normalized.workdir || "").trim() || existingProfile?.workdir || "";
     const profileForServer = {
@@ -2901,11 +2975,26 @@ export function useWorkbenchController() {
       name,
       workdir,
     };
+    const conversationId =
+      existing?.pendingIdentityEdit === true
+        ? createConversationId(
+            [
+              normalizeServerPlatform(profileForServer.platform),
+              profileForServer.host,
+              profileForServer.username,
+              profileForServer.workdir,
+              profileForServer.agentId,
+            ]
+              .filter(Boolean)
+              .join("-"),
+          )
+        : existing?.conversationId;
     const nextServerId = existing ? existing.id : createServerId();
     const nextServer = createServerSession(
       {
         ...(existing || {}),
         id: nextServerId,
+        conversationId,
         name,
         profile: profileForServer,
         connection: initialConnectionForProfile(profileForServer),
@@ -2913,6 +3002,7 @@ export function useWorkbenchController() {
         discovery: existing?.discovery || null,
         rawOutput: existing?.rawOutput || "原始输出会在测试连接或发送任务后显示。",
         messages: existing?.messages || [],
+        pendingIdentityEdit: false,
       },
       servers.length,
     );
@@ -3074,6 +3164,7 @@ export function useWorkbenchController() {
               ...agentHealth,
               agent: "available",
               agent_version: agentHealth.agent_version || parsed.version || server.diagnostics?.agent_version || "1",
+              agent_checked_at: Date.now(),
             },
             rawOutput: server.id === serverId ? stdout.trim() || server.rawOutput : server.rawOutput,
             connection: {
@@ -3135,14 +3226,6 @@ export function useWorkbenchController() {
       return false;
     }
 
-    const connectionNoticeKey = `connection:${target.id}`;
-    enqueueTaskNotice({
-      serverId: target.id,
-      title: "连接中",
-      tone: "progress",
-      persistent: true,
-      key: connectionNoticeKey,
-    });
     setServers((items) => {
       const nextItems = items.map((server) =>
         server.id === target.id
@@ -3324,6 +3407,19 @@ export function useWorkbenchController() {
       }
       if (state === "connected") {
         manualDisconnectSessionIdsRef.current.delete(serverId);
+        if (
+          serverId === activeServerIdRef.current &&
+          busyRef.current &&
+          target.connection?.state === "testing"
+        ) {
+          setServerConnection(serverId, {
+            state: "testing",
+            label: "连接中",
+            detail: "SSH 已连接，正在检查工作环境",
+            mode: target.connection?.mode || "ssh",
+          });
+          return;
+        }
         setServerConnection(serverId, {
           state: "connected",
           label: "已连接",
@@ -3516,11 +3612,16 @@ export function useWorkbenchController() {
   }
 
   async function saveSessionSettings(nextProfile = draftProfileRef.current) {
-    await saveCurrentProfile(nextProfile);
+    const savedProfile = await saveCurrentProfile(nextProfile);
     setSettingsOpen(false);
+    enqueueTaskNotice({
+      serverId: activeServerIdRef.current,
+      title: `「${savedProfile.name || "会话"}」已保存`,
+      tone: "done",
+    });
   }
 
-  async function openSshTerminal(profileOverride = draftProfileRef.current) {
+  async function openSshTerminal(profileOverride = draftProfileRef.current, terminalOptions = {}) {
     const currentProfile = normalizeProfile(profileOverride);
     if (!String(currentProfile.host || "").trim() || !String(currentProfile.username || "").trim()) {
       window.alert("请先填写服务器地址和用户名。");
@@ -3536,16 +3637,18 @@ export function useWorkbenchController() {
         wslDistro: currentProfile.wslDistro,
         workdir: currentProfile.workdir,
         tmuxSession: sessionName(currentProfile, currentProfile.agentId),
+        ...terminalOptions,
       });
     } catch (error) {
       const message = shortError(error);
       setRawOpen(true);
       setRawOutput(message);
       window.alert(message);
+      if (terminalOptions.throwOnError) throw error;
     }
   }
 
-  async function openRemoteAgentLogin(agentId = "codex", profileOverride = draftProfileRef.current) {
+  async function openRemoteAgentLogin(agentId = "codex", mode = "start", profileOverride = draftProfileRef.current) {
     const currentProfile = normalizeProfile(profileOverride);
     if (!String(currentProfile.host || "").trim() || !String(currentProfile.username || "").trim()) {
       window.alert("请先填写服务器地址和用户名。");
@@ -3554,28 +3657,30 @@ export function useWorkbenchController() {
 
     const agent = agentById(agentId === "claude" ? "claude" : "codex");
     try {
-      await SSHWorkbench.openTerminal({
-        host: currentProfile.host,
-        port: currentProfile.port,
-        username: currentProfile.username,
-        platform: normalizeServerPlatform(currentProfile.platform),
-        wslDistro: currentProfile.wslDistro,
-        workdir: currentProfile.workdir,
-        action: "agent-login",
-        agentId: agent.id,
-        agentCommand: agentCommand(currentProfile, agent),
-      });
+      const output = await runRemoteCommandForProfile(
+        currentProfile,
+        mode === "status"
+          ? buildToolLoginStatusCommand(currentProfile, agent)
+          : buildToolLoginStartCommand(currentProfile, agent),
+        1_048_576,
+        45,
+      );
       setConnection({
         state: "testing",
-        label: `等待 ${agent.shortName} 登录`,
-        detail: "请在打开的终端窗口完成授权",
+        label: mode === "status" ? `已检查 ${agent.shortName} 登录` : `等待 ${agent.shortName} 登录`,
+        detail: mode === "status" ? "已读取远端 CLI 登录状态" : "请在 App 内完成浏览器授权",
         mode: "ssh",
       });
+      return String(output || "").trim();
     } catch (error) {
       const message = shortError(error);
-      setRawOpen(true);
-      setRawOutput(message);
-      window.alert(message);
+      setConnection({
+        state: "error",
+        label: "登录准备失败",
+        detail: message,
+        mode: "ssh",
+      });
+      throw error;
     }
   }
 
@@ -3865,7 +3970,17 @@ export function useWorkbenchController() {
   async function runGitDownloadForEditingServer(options = {}) {
     if (busy) return null;
     const targetServerId = editingServerId && editingServerId !== "global" ? editingServerId : activeServerIdRef.current;
-    const nextProfile = withKnownPassword(draftProfileRef.current);
+    const gitDraftProfile = normalizeProfile({
+      ...draftProfileRef.current,
+      gitRepoUrl: String(options.repoUrl || "").trim(),
+      gitTargetDir: String(options.targetDir || draftProfileRef.current?.gitTargetDir || "").trim(),
+      gitBranch: String(options.branch || "").trim(),
+    });
+    // Git fields are an operational preference. Persist them before execution so a
+    // failed clone never makes the user re-enter the repository address.
+    updateDraftProfile(gitDraftProfile);
+    const savedProfile = await saveCurrentProfile(gitDraftProfile);
+    const nextProfile = withKnownPassword(savedProfile);
     const issue = profileIssue(nextProfile);
     if (issue) {
       throw new Error(issue);
@@ -3882,7 +3997,7 @@ export function useWorkbenchController() {
       );
       const parsed = parseHealth(output);
       if (parsed.git_operation_error) {
-        throw new Error(parsed.git_operation_error);
+        throw new Error(readableGitOperationError(output));
       }
       if (parsed.git_operation_verified !== "1") {
         throw new Error(readableGitOperationError(output));
@@ -3915,9 +4030,12 @@ export function useWorkbenchController() {
       }));
       return { ok: true, message: target ? `${message} ${target}` : message, output, status, target };
     } catch (error) {
-      const message = shortError(error);
+      const rawMessage = String(error?.message || error || "");
+      const message = /__AIWB_GIT_OPERATION_(?:ERROR|DETAIL_B64)__/.test(rawMessage)
+        ? readableGitOperationError(rawMessage)
+        : shortError(error);
       setRawOutput(message);
-      throw error;
+      throw new Error(message);
     } finally {
       setBusy(false);
     }
@@ -3985,12 +4103,24 @@ export function useWorkbenchController() {
     });
     const duplicate = createServerSession(
       {
+        conversationId: createConversationId(
+          [
+            normalizeServerPlatform(duplicateProfile.platform),
+            duplicateProfile.host,
+            duplicateProfile.username,
+            duplicateProfile.workdir,
+            duplicateProfile.agentId,
+          ]
+            .filter(Boolean)
+            .join("-"),
+        ),
         name: duplicateName,
         profile: duplicateProfile,
         connection: readyConnectionForSession(duplicateProfile, source.connection),
         diagnostics: source.diagnostics,
         discovery: null,
         rawOutput: source.rawOutput,
+        pendingIdentityEdit: true,
       },
       currentServers.length,
     );
@@ -4007,6 +4137,10 @@ export function useWorkbenchController() {
     setRawOpen(false);
     setSettingsOpen(true);
     await saveWorkspace(nextServers, duplicate.id);
+    return {
+      id: duplicate.id,
+      name: duplicateName,
+    };
   }
 
   async function addDiscoveredWorkdir(path, agentId = activeAgentId) {
@@ -4951,6 +5085,7 @@ export function useWorkbenchController() {
           }
           throw new Error(created.error || trimVisibleText(createOutput) || "Agent 创建任务失败。");
         }
+
         const startedAt = optimisticStartedAt;
         setServerTaskMetadata(serverId, {
           backend: "agent",
@@ -5169,6 +5304,16 @@ export function useWorkbenchController() {
             const failure = classifyAgentFailure(raw, agent, status);
             const shouldFallbackToSsh =
               failure?.kind === "agent_stale_runner" || failure?.kind === "agent_daemon_unavailable";
+            void appLog("error", "agent.task.failed", {
+              serverId,
+              agentId: agent.id,
+              remoteTaskId,
+              taskStatus,
+              exitCode: status.exitCode || "",
+              failureKind: failure?.kind || "unknown",
+              failureTitle: failure?.title || "执行失败",
+              hasUploadedFiles: /\b\.ai-workbench[\\/]uploads[\\/]/i.test(text),
+            });
             if (shouldFallbackToSsh) {
               setServerRawOutput(serverId, raw);
               void appLog("warn", "agent.startup.failed", {
@@ -5427,39 +5572,87 @@ export function useWorkbenchController() {
         serverId === activeServerIdRef.current && taskStateIsActive(taskStateForMessage(message))
           ? agentLongPollTimeoutSeconds
           : 20;
-      const statusOutput = await runWithSshReconnect(
-        () =>
-          runRemoteCommandForProfile(
+      let statusOutput = "";
+      let status = null;
+
+      // The task was submitted through the Agent API. Query that exact task on
+      // resume as well, rather than opening a fresh SSH command just to poll.
+      if (agentDirectConfig(currentProfile).enabled) {
+        try {
+          const response = await agentDirectRequest(
             currentProfile,
-            buildWorkbenchAgentWaitTaskCommand(currentProfile, message.remoteTaskId, message.remoteEventFingerprint || "", {
-              timeoutSeconds: waitTimeoutSeconds,
-            }),
-            2_097_152,
-            waitTimeoutSeconds + 20,
-          ),
-        {
-          shouldRetry: (error) =>
-            isRetryableSshConnectionError(error) ||
-            (isTransientSshSyncError(error) && error?.code !== "AIWB_CLIENT_COMMAND_TIMEOUT"),
-          onRetry: ({ error, reconnectAttempt }) => {
-            setServerConnection(serverId, {
-              ...(server.connection || {}),
-              state: "testing",
-              label: "连接断开",
-              detail: `正在自动重连 ${reconnectAttempt}/${maxSshReconnectAttempts}`,
-              mode: "agent",
-            });
-            void appLog("warn", "agent.sync.reconnect", {
-              serverId,
-              remoteTaskId: message.remoteTaskId,
-              attempt: reconnectAttempt,
-              maxAttempts: maxSshReconnectAttempts,
-              error: String(error?.message || error || ""),
-            });
+            `/v1/tasks/${encodeURIComponent(message.remoteTaskId)}`,
+            { timeoutMs: Math.min((waitTimeoutSeconds + 5) * 1_000, 25_000) },
+          );
+          const task = response?.task || {};
+          const outcome = String(task.outcome || "").trim().toLowerCase();
+          const rawStatus = String(task.rawStatus || "").trim().toLowerCase();
+          const taskStatus =
+            rawStatus ||
+            (outcome === "success" ? "done" : outcome === "cancelled" ? "cancelled" : outcome === "error" ? "error" : "running");
+          statusOutput = String(task.output || "");
+          status = {
+            taskStatus,
+            output: statusOutput,
+            raw: statusOutput,
+            eventFingerprint: JSON.stringify([taskStatus, task.startedAt || "", task.finishedAt || "", statusOutput.length]),
+            pid: "",
+            startedAt: String(task.startedAt || ""),
+            runnerStartedAt: String(task.runnerStartedAt || ""),
+            finishedAt: String(task.finishedAt || ""),
+            exitCode: String(task.exitCode || ""),
+          };
+          void appLog("info", "agent.direct.task_status", {
+            serverId,
+            remoteTaskId: message.remoteTaskId,
+            taskStatus,
+          });
+        } catch (error) {
+          // Keep SSH as a recovery path for old routes, LAN changes, or an
+          // Agent endpoint that was restarted while the app was backgrounded.
+          void appLog("warn", "agent.direct.task_status_failed", {
+            serverId,
+            remoteTaskId: message.remoteTaskId,
+            error: shortError(error),
+          });
+        }
+      }
+
+      if (!status) {
+        statusOutput = await runWithSshReconnect(
+          () =>
+            runRemoteCommandForProfile(
+              currentProfile,
+              buildWorkbenchAgentWaitTaskCommand(currentProfile, message.remoteTaskId, message.remoteEventFingerprint || "", {
+                timeoutSeconds: waitTimeoutSeconds,
+              }),
+              2_097_152,
+              waitTimeoutSeconds + 20,
+            ),
+          {
+            shouldRetry: (error) =>
+              isRetryableSshConnectionError(error) ||
+              (isTransientSshSyncError(error) && error?.code !== "AIWB_CLIENT_COMMAND_TIMEOUT"),
+            onRetry: ({ error, reconnectAttempt }) => {
+              setServerConnection(serverId, {
+                ...(server.connection || {}),
+                state: "testing",
+                label: "连接断开",
+                detail: `正在自动重连 ${reconnectAttempt}/${maxSshReconnectAttempts}`,
+                mode: "agent",
+              });
+              void appLog("warn", "agent.sync.reconnect", {
+                serverId,
+                remoteTaskId: message.remoteTaskId,
+                attempt: reconnectAttempt,
+                maxAttempts: maxSshReconnectAttempts,
+                error: String(error?.message || error || ""),
+              });
+            },
           },
-        },
-      );
-      const status = parseWorkbenchAgentOutput(statusOutput);
+        );
+        status = parseWorkbenchAgentOutput(statusOutput);
+      }
       const taskStatus = status.taskStatus || "unknown";
       const eventFingerprint = status.eventFingerprint || message.remoteEventFingerprint || "";
       const raw = status.output || status.raw || statusOutput;
@@ -5821,6 +6014,77 @@ export function useWorkbenchController() {
     }
   }
 
+  async function recoverUnsubmittedAgentMessage(server, message, reason = "startup") {
+    if (!server?.id || !message?.id || message?.backend !== "agent") return false;
+    if (String(message.remoteTaskId || "").trim()) return false;
+    if (taskStateForMessage(message) !== taskStateSubmitting) return false;
+
+    const promptText = taskTextFromValue(message.promptText || message.retryText || "");
+    if (!promptText || !server.conversationId) return false;
+
+    const recoveryAttempts = Number(message.submissionRecoveryAttempts || 0);
+    if (recoveryAttempts >= 1) {
+      updateAssistantMessageInServer(server.id, message.id, {
+        title: "没有提交成功",
+        body: "App 退出时这条消息尚未提交到 Agent，自动恢复已尝试一次但没有确认成功。可以编辑后重新发送。",
+        taskState: taskStateFailed,
+        remoteTaskStatus: "submission-not-confirmed",
+        completedAt: Date.now(),
+        forceUpdate: true,
+      });
+      return false;
+    }
+
+    updateAssistantMessageInServer(server.id, message.id, {
+      title: "正在恢复发送",
+      body: "正在确认 Agent 是否已经收到；未收到时会自动补发一次。",
+      taskState: taskStateSubmitting,
+      remoteTaskStatus: "submission-recovering",
+      remoteTaskCheckedAt: Date.now(),
+      forceUpdate: true,
+    });
+    void appLog("info", "agent.submission_recovery.check", {
+      serverId: server.id,
+      messageId: message.id,
+      reason,
+    });
+
+    await syncAgentConversationForServer(server, {
+      limit: 1,
+      reason: `submission-recovery:${reason}`,
+      confirmMissing: true,
+    });
+
+    const refreshedServer = serverById(server.id) || server;
+    const refreshedMessage = (refreshedServer.messages || []).find((item) => item.id === message.id);
+    if (String(refreshedMessage?.remoteTaskId || "").trim()) {
+      void appLog("info", "agent.submission_recovery.remote_found", {
+        serverId: server.id,
+        messageId: message.id,
+        remoteTaskId: refreshedMessage.remoteTaskId,
+      });
+      return true;
+    }
+
+    if (!refreshedMessage || taskStateForMessage(refreshedMessage) !== taskStateFailed) return false;
+
+    updateAssistantMessageInServer(server.id, message.id, {
+      submissionRecoveryAttempts: recoveryAttempts + 1,
+      title: "正在恢复发送",
+      body: "Agent 未收到上次消息，正在自动补发。",
+      taskState: taskStateFailed,
+      remoteTaskStatus: "submission-retrying",
+      forceUpdate: true,
+    });
+    void appLog("info", "agent.submission_recovery.resend", {
+      serverId: server.id,
+      messageId: message.id,
+      reason,
+    });
+    await sendTask(promptText, { retryMessage: { ...refreshedMessage, id: message.id } });
+    return true;
+  }
+
   async function syncRemoteAgentTasks() {
     if (syncingAgentSweepRef.current) return;
     syncingAgentSweepRef.current = true;
@@ -5869,11 +6133,8 @@ export function useWorkbenchController() {
           agentConnectionPollAtRef.current.set(connectionKey, Date.now());
           if (String(candidate.message.remoteTaskId || "").trim()) {
             await syncRemoteAgentMessage(candidate.server.id, candidate.message);
-          } else if (candidate.server.conversationId) {
-            await syncAgentConversationForServer(candidate.server, {
-              limit: 1,
-              reason: "pending-message-recovery",
-            });
+          } else if (candidate.server.id === activeServerIdRef.current) {
+            await recoverUnsubmittedAgentMessage(candidate.server, candidate.message, "background-sweep");
           }
           continue;
         }
@@ -5916,11 +6177,8 @@ export function useWorkbenchController() {
 
     if (!taskId) {
       const timer = window.setTimeout(() => {
-        syncAgentConversationForServer(server, {
-          limit: 1,
-          reason: "startup-missing-task-id",
-        }).catch((error) => {
-          console.warn("[aiwb:agent-startup-conversation-sync:error]", shortError(error));
+        recoverUnsubmittedAgentMessage(server, message, "startup").catch((error) => {
+          console.warn("[aiwb:agent-startup-submission-recovery:error]", shortError(error));
         });
       }, 350);
       return () => window.clearTimeout(timer);
@@ -6391,14 +6649,14 @@ export function useWorkbenchController() {
                     : routerEnabled
                       ? "判断中"
                       : "提交中"
-                  : "连接中",
+                  : "准备发送",
                 body: transportReadyForSend
                   ? pendingFiles.length
                     ? `正在上传 ${pendingFiles.length} 个文件。`
                     : routerEnabled
                       ? "正在判断这句话该怎么处理。"
                       : `正在重新提交给 ${selectedAgent.shortName}。`
-                  : "正在重新连接服务器。",
+                  : "正在连接服务器，连接后会自动提交。",
                 output: "",
                 liveOutput: "",
                 taskState: taskStateSubmitting,
@@ -6451,14 +6709,14 @@ export function useWorkbenchController() {
             : routerEnabled
               ? "判断中"
               : "提交中"
-          : "连接中",
+          : "准备发送",
         body: transportReadyForSend
           ? pendingFiles.length
             ? `正在上传 ${pendingFiles.length} 个文件。`
             : routerEnabled
               ? "正在判断这句话该怎么处理。"
               : `正在提交给 ${selectedAgent.shortName}。`
-          : "消息已保存在本地，正在连接服务器。",
+          : "消息已保存在本地，正在连接服务器，连接后会自动提交。",
         taskState: taskStateSubmitting,
         backend: initialBackend,
         conversationId: initialConversationId,
@@ -6530,12 +6788,16 @@ export function useWorkbenchController() {
     let completedOk = false;
     let pendingRemoteTask = false;
     let finalAgent = selectedAgent;
+    let sendStage = pendingFiles.length ? "uploading" : "executing";
+    let uploadedFileCount = 0;
     try {
       let agent = selectedAgent;
       let uploadedImages = [];
       let promptText = text;
       if (pendingFiles.length) {
         uploadedImages = await uploadImageAttachmentsForProfile(currentProfile, pendingFiles);
+        uploadedFileCount = uploadedImages.length;
+        sendStage = "executing";
         promptText = appendUploadedImagesToPrompt(text, uploadedImages);
         updateAssistantMessageInServer(serverId, userMessageId, {
           body: text,
@@ -6675,19 +6937,60 @@ export function useWorkbenchController() {
       }
     } catch (error) {
       const message = shortError(error);
-        const agentMode = agentPreferredForProfile(currentProfile);
-      const transientAgentDisconnect = agentMode && isTransientSshSyncError(error);
+      const agentMode = agentPreferredForProfile(currentProfile);
+      const uploadFailed = sendStage === "uploading";
+      const transientAgentDisconnect = !uploadFailed && agentMode && isTransientSshSyncError(error);
       void appLog("error", "send.remote.failed", {
         serverId,
         assistantMessageId,
         agentId: finalAgent.id,
         backend: agentMode ? "agent" : "ssh",
+        stage: sendStage,
+        uploadedFileCount,
         error: message,
         transientAgentDisconnect,
       });
       if (!transientAgentDisconnect && serverId === activeServerIdRef.current) setRawOpen(true);
       setServerRawOutput(serverId, transientAgentDisconnect ? "连接断开" : message);
-      if (transientAgentDisconnect) {
+      if (uploadFailed) {
+        const totalFiles = pendingFiles.length;
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: "文件上传失败",
+          body: [
+            `已完成：消息已保存在本机，服务器连接成功。`,
+            `中断位置：上传附件（${uploadedFileCount}/${totalFiles}）。`,
+            `尚未执行：Agent 没有创建任务，${finalAgent.shortName} 没有收到这条消息。`,
+            "",
+            message,
+          ].join("\n"),
+          taskState: taskStateFailed,
+          backend: agentMode ? "agent" : "ssh",
+          remoteTaskStatus: "upload-failed",
+          resultMissing: false,
+          completedAt: Date.now(),
+          loginAction: undefined,
+          modelChoice: undefined,
+          forceUpdate: true,
+        });
+        setServerTaskMetadata(serverId, {
+          backend: agentMode ? "agent" : "ssh",
+          remoteTaskId: "",
+          agentId: finalAgent.id,
+          finishedAt: Date.now(),
+          label: "附件上传失败",
+        });
+        setServerConnection(serverId, {
+          state: "error",
+          label: "上传失败",
+          detail: `${uploadedFileCount}/${totalFiles} 个附件已上传，AI 尚未启动`,
+          mode: agentMode ? "agent" : "ssh",
+        });
+        enqueueTaskNotice({
+          serverId,
+          title: "附件上传失败，AI 尚未启动",
+          tone: "warning",
+        });
+      } else if (transientAgentDisconnect) {
         const currentMessage = (serverById(serverId)?.messages || []).find((item) => item.id === assistantMessageId) || {};
         const remoteTaskId = String(currentMessage.remoteTaskId || "").trim();
         const taskWasAccepted = Boolean(remoteTaskId);
@@ -6698,7 +7001,7 @@ export function useWorkbenchController() {
           title: taskWasAccepted ? "连接断开" : "提交状态未知",
           body: taskWasAccepted
             ? "正在自动重新连接。远端任务可能仍在运行，连接恢复后会继续同步。"
-            : "没有确认任务是否成功提交。为避免重复执行，请重新连接后检查状态。",
+            : "没有拿到远端任务编号，当前没有可查询的状态。请直接重新发送这条任务。",
           taskState: taskWasAccepted ? taskStateSyncing : taskStateFailed,
           backend: "agent",
           conversationId,
@@ -6723,7 +7026,7 @@ export function useWorkbenchController() {
           agentId: finalAgent.id,
           startedAt: Number(currentMessage.startedAt || currentMessage.createdAtMs || Date.now()),
           finishedAt: taskWasAccepted ? undefined : Date.now(),
-          label: taskWasAccepted ? `等待同步 ${finalAgent.shortName}` : "提交状态未知",
+          label: taskWasAccepted ? `等待同步 ${finalAgent.shortName}` : "需要重新发送",
         });
         setServerConnection(serverId, {
           state: taskWasAccepted ? "testing" : "error",
@@ -6733,13 +7036,15 @@ export function useWorkbenchController() {
         });
         enqueueTaskNotice({
           serverId,
-          title: taskWasAccepted ? "连接断开，正在重连" : "提交状态未知",
+          title: taskWasAccepted ? "连接断开，正在重连" : "任务没有确认提交，请重新发送",
           tone: "warning",
         });
       } else {
         updateAssistantMessageInServer(serverId, assistantMessageId, {
-          title: "远端执行失败",
-          body: message,
+          title: uploadedFileCount ? "AI 执行失败" : "远端执行失败",
+          body: uploadedFileCount
+            ? `附件已上传，但 ${finalAgent.shortName} 没有完成任务：${message}`
+            : message,
           taskState: taskStateFailed,
           loginAction: undefined,
           modelChoice: undefined,
@@ -6990,6 +7295,22 @@ export function useWorkbenchController() {
     await startVoiceInput();
   }
 
+  function startPushToTalk() {
+    if (voiceStateRef.current !== "idle") return false;
+    return startVoiceInput({ silentOnEmpty: true });
+  }
+
+  async function stopPushToTalk() {
+    if (voiceStateRef.current !== "listening") return;
+    voiceSessionActiveRef.current = false;
+    applyVoiceState("stopping");
+    try {
+      await VoiceWorkbench.stop();
+    } catch {
+      applyVoiceState("idle");
+    }
+  }
+
   async function chooseCodexModel(message, choice) {
     if (busy || !message?.modelChoice) return;
 
@@ -7149,12 +7470,20 @@ export function useWorkbenchController() {
       requestedAgentMessage ||
       lastIncompleteAgentResponse(server);
     if (runningAgentMessage) {
-      enqueueTaskNotice({ serverId, title: "正在检查远端任务状态", tone: "progress" });
+      const refreshNoticeKey = `refresh:${serverId}:${runningAgentMessage.id}`;
+      enqueueTaskNotice({
+        serverId,
+        title: "正在检查远端任务状态",
+        tone: "progress",
+        persistent: true,
+        key: refreshNoticeKey,
+      });
       setBusy(true);
       try {
         await syncRemoteAgentMessage(serverId, runningAgentMessage);
       } finally {
         setBusy(false);
+        dismissTaskNoticeByKey(refreshNoticeKey);
       }
       return;
     }
@@ -7549,6 +7878,8 @@ export function useWorkbenchController() {
     onRemoveImageAttachment: removeImageAttachment,
     onSend: sendTask,
     onVoice: toggleVoiceInput,
+    onPushToTalkStart: startPushToTalk,
+    onPushToTalkEnd: stopPushToTalk,
     onWake: toggleWakeWord,
     onReleaseRunningTask: releaseActiveRunningTask,
     onCancelRunningTask: interruptAgent,
@@ -7568,7 +7899,7 @@ export function useWorkbenchController() {
     onOpenTerminal:
       editingServerId && editingServerId !== "global" && canOpenInteractiveTerminal ? () => openSshTerminal() : undefined,
     onLoginRemoteAgent:
-      editingServerId && editingServerId !== "global" && canOpenInteractiveTerminal ? (agentId) => openRemoteAgentLogin(agentId) : undefined,
+      editingServerId && editingServerId !== "global" ? (agentId, mode) => openRemoteAgentLogin(agentId, mode) : undefined,
     agentManagementTargetId,
     onInstallAgent: installWorkbenchAgentForServer,
     onInstallCli: installCliForServer,

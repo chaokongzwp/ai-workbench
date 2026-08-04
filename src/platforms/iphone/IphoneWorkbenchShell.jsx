@@ -176,10 +176,15 @@ function IphoneComposer({
   onOpenRemoteDirectory,
   onSend,
   onVoice,
+  onPushToTalkStart,
+  onPushToTalkEnd,
   onWake,
   onCancelRunningTask,
 }) {
   const fileInputRef = useRef(null);
+  const pushToTalkTimerRef = useRef(null);
+  const pushToTalkActiveRef = useRef(false);
+  const suppressPrimaryClickRef = useRef(false);
   const textareaRef = useAutoGrowingTextarea(composer);
   const repairKeyboardFocus = useIphoneKeyboardFocusGuard(textareaRef);
   const taskLocked = Boolean(runningTask);
@@ -203,6 +208,7 @@ function IphoneComposer({
     wakeState === "stopping";
   const wakePhraseLabel = (wakePhrases || defaultWakeWordPhrases).slice(0, 2).join(" / ");
   const voiceDisabled = !profileReady || taskLocked || (operationBusy && !voiceActive);
+  const pushToTalkAvailable = voiceInputEnabled && !voiceDisabled && !sendConnecting && !stopMode;
   const wakeDisabled = !profileReady || taskLocked || (operationBusy && !wakeActive);
   const wakeButtonLabel = wakeState === "stopping" ? "关闭中" : wakeActive ? "监听中" : "唤醒";
   const statusText = !inputLock.locked && inputLock.sendBlocked
@@ -221,11 +227,36 @@ function IphoneComposer({
 
   useEffect(() => {
     return () => {
+      if (pushToTalkTimerRef.current) window.clearTimeout(pushToTalkTimerRef.current);
       if (typeof document === "undefined") return;
       document.documentElement.classList.remove("aiwb-keyboard-focus");
       document.body?.classList.remove("aiwb-keyboard-focus");
     };
   }, []);
+
+  function clearPushToTalkTimer() {
+    if (!pushToTalkTimerRef.current) return;
+    window.clearTimeout(pushToTalkTimerRef.current);
+    pushToTalkTimerRef.current = null;
+  }
+
+  function startPushToTalk(event) {
+    if (!pushToTalkAvailable || event.button !== 0) return;
+    clearPushToTalkTimer();
+    pushToTalkTimerRef.current = window.setTimeout(() => {
+      pushToTalkTimerRef.current = null;
+      pushToTalkActiveRef.current = true;
+      suppressPrimaryClickRef.current = true;
+      void onPushToTalkStart?.();
+    }, 280);
+  }
+
+  function finishPushToTalk() {
+    clearPushToTalkTimer();
+    if (!pushToTalkActiveRef.current) return;
+    pushToTalkActiveRef.current = false;
+    void onPushToTalkEnd?.();
+  }
 
   function setKeyboardFocus(focused) {
     if (typeof document === "undefined") return;
@@ -402,17 +433,42 @@ function IphoneComposer({
             <div className="iphone-composer-actions iphone-composer-primary-action">
               <button
                 type="button"
-                className={`iphone-send-button ${stopMode ? "stop" : sendConnecting ? "is-sending" : ""}`}
+                className={`iphone-send-button ${stopMode ? "stop" : sendConnecting ? "is-sending" : ""} ${
+                  voiceActive && pushToTalkAvailable ? "push-to-talk-active" : ""
+                }`}
+                onPointerDown={startPushToTalk}
+                onPointerUp={finishPushToTalk}
+                onPointerCancel={finishPushToTalk}
                 onClick={() => {
+                  if (suppressPrimaryClickRef.current) {
+                    suppressPrimaryClickRef.current = false;
+                    return;
+                  }
                   if (stopMode) onCancelRunningTask?.();
-                  else onSend?.();
+                  else if (!sendDisabled) onSend?.();
                 }}
-                disabled={stopMode ? stopDisabled : sendDisabled}
+                disabled={stopMode ? stopDisabled : sendDisabled && !pushToTalkAvailable}
                 aria-label={
-                  stopMode ? "停止当前任务" : sendConnecting ? "正在发送" : inputLock.sendBlocked ? inputLock.text : "发送"
+                  stopMode
+                    ? "停止当前任务"
+                    : voiceActive && pushToTalkAvailable
+                      ? "松开发送语音"
+                      : sendConnecting
+                        ? "正在发送"
+                        : inputLock.sendBlocked
+                          ? inputLock.text
+                          : "发送；长按说话"
                 }
                 title={
-                  stopMode ? "停止当前任务" : sendConnecting ? "正在发送" : inputLock.sendBlocked ? inputLock.text : "发送"
+                  stopMode
+                    ? "停止当前任务"
+                    : voiceActive && pushToTalkAvailable
+                      ? "松开发送语音"
+                      : sendConnecting
+                        ? "正在发送"
+                        : inputLock.sendBlocked
+                          ? inputLock.text
+                          : "发送；长按说话"
                 }
               >
                 {stopMode ? (
@@ -532,13 +588,13 @@ export function IphoneWorkbenchShell({
   onRemoveImageAttachment,
   onSend,
   onVoice,
+  onPushToTalkStart,
+  onPushToTalkEnd,
   onWake,
   onReleaseRunningTask,
   onCancelRunningTask,
   onToggleRaw,
   onKillAgentSession,
-  onOpenTaskNotice,
-  onCloseTaskNotice,
   onCloseSettings,
   onScanSettings,
   onAddSelectedSessions,
@@ -576,7 +632,6 @@ export function IphoneWorkbenchShell({
     EmptyWorkspaceActions,
     MessageBubble,
     RawOutput,
-    TaskNotice,
     SettingsPanel,
     FilePreviewPanel,
     RemoteDirectoryDialog,
@@ -590,6 +645,7 @@ export function IphoneWorkbenchShell({
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalInitialCommand, setTerminalInitialCommand] = useState("");
   const [exportingLogs, setExportingLogs] = useState(false);
   const [exportNotice, setExportNotice] = useState(null);
   const { draggingId, getReorderProps } = useSessionReorder(onReorderServer);
@@ -743,6 +799,7 @@ export function IphoneWorkbenchShell({
         sessionKey={activeServerId}
         theme={resolvedTheme}
         formFactor="iphone"
+        initialCommand={terminalInitialCommand}
         onClose={() => setTerminalOpen(false)}
       />
 
@@ -773,11 +830,6 @@ export function IphoneWorkbenchShell({
           <div className="file-drop-overlay" aria-hidden="true">
             <strong>松开以添加文件</strong>
             <span>文件会加入当前任务，发送时上传到工作目录</span>
-          </div>
-        ) : null}
-        {taskNotice ? (
-          <div className="conversation-task-notice">
-            <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} />
           </div>
         ) : null}
         <div className="iphone-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleProgressiveScroll}>
@@ -862,6 +914,8 @@ export function IphoneWorkbenchShell({
             onOpenRemoteDirectory={onOpenRemoteDirectory}
             onSend={onSend}
             onVoice={onVoice}
+            onPushToTalkStart={onPushToTalkStart}
+            onPushToTalkEnd={onPushToTalkEnd}
             onWake={onWake}
             onReleaseRunningTask={onReleaseRunningTask}
             onCancelRunningTask={onCancelRunningTask}
@@ -1016,7 +1070,15 @@ export function IphoneWorkbenchShell({
           onDelete={onDeleteProfile}
           onDuplicate={onDuplicateEditingServer}
           onOpenTerminal={onOpenTerminal}
-          onLoginRemoteAgent={onLoginRemoteAgent}
+          onLoginRemoteAgent={
+            onLoginRemoteAgent ||
+            ((agentId) => {
+              onCloseSettings?.();
+              setTerminalInitialCommand(agentId === "claude" ? "claude" : "codex login --device-auth");
+              setTerminalOpen(true);
+              return Promise.resolve("已打开交互式 SSH 终端，请按提示完成登录。");
+            })
+          }
           agentManagementTargetId={agentManagementTargetId}
           onInstallAgent={onInstallAgent}
           onInstallCli={onInstallCli}

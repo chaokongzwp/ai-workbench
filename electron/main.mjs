@@ -819,7 +819,7 @@ function startEmbeddedSshTerminal(event, payload = {}) {
 
 function terminalLoginCommand(config) {
   const command = config.agentCommand || (config.agentId === "claude" ? "claude" : "codex");
-  return config.agentId === "claude" ? command : `${command} login`;
+  return config.agentId === "claude" ? command : `${command} login --device-auth`;
 }
 
 function terminalAgentLabel(agentId) {

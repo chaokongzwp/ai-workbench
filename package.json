@@ -1,6 +1,6 @@
 {
   "name": "ecs-ai-workbench",
-  "version": "1.0.56",
+  "version": "1.0.84",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",

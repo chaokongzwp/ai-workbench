@@ -396,6 +396,95 @@ export function cleanAgentFailureDetail(raw) {
   return clipPersistedText(text, 12_000);
 }
 
+function errorMessageFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const direct = payload?.error?.message || payload?.message;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+  const queue = [payload];
+  const visited = new Set();
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || visited.has(current)) continue;
+    visited.add(current);
+    for (const [key, value] of Object.entries(current)) {
+      // Some Windows terminal captures split "message" as "mes" + "ssage",
+      // producing a valid but misspelled JSON key such as "messsage".
+      if (/^mes+age$/i.test(key) && typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+      if (value && typeof value === "object") queue.push(value);
+    }
+  }
+  return "";
+}
+
+export function extractAgentFailureMessage(raw) {
+  const text = trimVisibleText(stripTerminalControl(raw));
+  if (!text) return "";
+
+  if (text.includes("__AIWB_AGENT_")) {
+    const parsed = parseWorkbenchAgentOutput(text);
+    if (parsed.output && parsed.output !== text) {
+      const nested = extractAgentFailureMessage(parsed.output);
+      if (nested) return nested;
+    }
+  }
+
+  const errorPrefixIndex = text.lastIndexOf("ERROR:");
+  const jsonStart = text.indexOf("{", errorPrefixIndex >= 0 ? errorPrefixIndex : 0);
+  const jsonEnd = text.lastIndexOf("}");
+  if (jsonStart >= 0 && jsonEnd > jsonStart) {
+    const joinedJson = text.slice(jsonStart, jsonEnd + 1).replace(/\r?\n\s*/g, "");
+    try {
+      const parsed = JSON.parse(joinedJson);
+      const message = errorMessageFromPayload(parsed);
+      if (message) return clipPersistedText(message, 800);
+    } catch {
+      // Fall through to tolerant extraction for incomplete CLI output.
+    }
+  }
+
+  for (const line of text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+    const jsonStart = line.indexOf("{");
+    if (jsonStart < 0) continue;
+    try {
+      const parsed = JSON.parse(line.slice(jsonStart));
+      const message = errorMessageFromPayload(parsed);
+      if (message) return clipPersistedText(message, 800);
+    } catch {
+      // Some CLIs wrap JSON over terminal lines. Regex extraction below
+      // still recovers the server-provided message.
+    }
+  }
+
+  const joinedText = text.replace(/\r?\n\s*/g, "");
+  const jsonMessage = joinedText.match(/["']message["']\s*:\s*["']((?:\\.|[^"'\\])+)["']/i)?.[1] || "";
+  if (jsonMessage) {
+    return clipPersistedText(
+      jsonMessage
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, "'")
+        .replace(/\\\\/g, "\\")
+        .trim(),
+      800,
+    );
+  }
+
+  const meaningful = text
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(
+      (item) =>
+        item &&
+        !/^__AIWB_/i.test(item) &&
+        !/^(?:Agent 状态|Agent 版本|服务状态|Daemon|任务 ID|任务状态|退出码|PID|启动次数|开始时间|Runner|结束时间)[：:]/i.test(item) &&
+        !/^输出[：:]?$/i.test(item),
+    );
+  return clipPersistedText(meaningful.at(-1) || "", 800);
+}
+
 function extractUsageLimitMessage(text) {
   const raw = String(text || "").trim();
   if (!raw) return "";
@@ -418,6 +507,8 @@ function extractUsageLimitMessage(text) {
 
 export function classifyAgentFailure(raw, agent, status = {}) {
   const text = String(raw || status?.raw || "");
+  const extractedErrorMessage = extractAgentFailureMessage(text);
+  const searchableText = extractedErrorMessage ? `${text}\n${extractedErrorMessage}` : text;
   const taskStatus = String(status?.taskStatus || "").toLowerCase();
   const exitCode = String(status?.exitCode || "").trim();
   const detail = cleanAgentFailureDetail(text);
@@ -456,6 +547,22 @@ export function classifyAgentFailure(raw, agent, status = {}) {
         ? `这台机器上的 Codex CLI 不支持 ${codexCliUpgradeModel}，所以任务没有执行成功。`
         : "这台机器上的 Codex CLI 版本过旧，不支持当前会话选择的模型。",
       hint: "请在这台机器上升级 Codex CLI，或先在会话设置里切回旧模型后重新发送。",
+      detail,
+      canRetry: true,
+      canOpenSettings: true,
+    };
+  }
+
+  const chatGptUnsupportedModel =
+    agent.id === "codex"
+      ? searchableText.match(/The ['"]([^'"]+)['"] model is not supported when using Codex with a ChatGPT account/i)?.[1]?.trim() || ""
+      : "";
+  if (chatGptUnsupportedModel) {
+    return {
+      kind: "agent_model_chatgpt_unsupported",
+      title: "Codex 模型与登录账号不兼容",
+      body: `当前会话选择了 ${chatGptUnsupportedModel}，但这台机器使用 ChatGPT 账号登录 Codex，因此该模型无法使用。`,
+      hint: "会话已自动改回默认模型。重新发送后，Codex 会使用这个账号支持的模型。",
       detail,
       canRetry: true,
       canOpenSettings: true,

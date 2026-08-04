@@ -1078,7 +1078,7 @@ body.mac-terminal-resizing {
   width: 100%;
   max-width: none !important;
   gap: 0;
-  margin-top: var(--aiwb-space-4);
+  margin: var(--aiwb-space-4) 0 0;
   border: 1px solid var(--mac-line);
   border-radius: var(--mac-surface-radius);
   background: color-mix(in srgb, var(--mac-surface) 88%, transparent);

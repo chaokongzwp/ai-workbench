@@ -184,6 +184,12 @@
   opacity: 1;
 }
 
+.iphone-shell .iphone-send-button.push-to-talk-active:not(.stop) {
+  color: #ffffff !important;
+  background: #007aff !important;
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.16);
+}
+
 .iphone-shell[data-theme="dark"] .iphone-send-button:not(.stop).is-sending:disabled {
   color: #24262b !important;
   background: #eef0f3 !important;
@@ -658,6 +664,10 @@
   min-height: 56px !important;
 }
 
+.iphone-shell .session-cli-panel .settings-status-row.no-icon {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .iphone-shell .session-cli-panel .settings-inline-button,
 .iphone-shell .session-cli-panel .settings-inline-button.primary {
   min-width: 0;
@@ -754,4 +764,47 @@
   height: 40px;
   padding: 0 15px;
   border-radius: 12px;
+}
+
+/*
+ * Every phone settings destination shares this geometry.  Settings used to
+ * inherit margins from several desktop/mobile layers, which could shift a
+ * subpage beyond the left edge after navigating between pages.
+ */
+.iphone-shell .settings-panel,
+.iphone-shell .settings-panel > .settings-scroll-body,
+.iphone-shell .settings-panel :is(.settings-root-page, .settings-page-content, .settings-add-connection),
+.iphone-shell .settings-panel .settings-section,
+.iphone-shell .settings-panel .settings-section-group {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.iphone-shell .settings-panel > .settings-scroll-body {
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow-x: clip !important;
+  overscroll-behavior-x: none;
+}
+
+.iphone-shell .settings-panel :is(.settings-root-page, .settings-page-content, .settings-add-connection) {
+  display: block;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 18px 16px calc(28px + var(--safe-bottom)) !important;
+}
+
+.iphone-shell .settings-panel .settings-section {
+  width: 100% !important;
+  margin: 0 0 18px !important;
+}
+
+.iphone-shell .settings-panel .settings-section-title {
+  margin: 0 8px 6px !important;
+}
+
+.iphone-shell .settings-panel .settings-section-footer {
+  margin: 6px 8px 0 !important;
 }

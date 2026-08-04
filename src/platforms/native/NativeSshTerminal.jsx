@@ -88,24 +88,13 @@ function decodeBase64Bytes(value) {
   return bytes;
 }
 
-function statusPresentation(status, detail) {
-  if (status === "connecting") {
-    return {
-      label: String(detail || "").startsWith("连接断开") ? "连接断开" : "连接中",
-      tone: "connecting",
-    };
-  }
-  if (status === "connected") return { label: "已连接", tone: "connected" };
-  if (status === "error") return { label: "连接异常", tone: "error" };
-  return { label: "已断开", tone: "closed" };
-}
-
 export function NativeSshTerminal({
   open,
   profile,
   sessionKey,
   theme,
   formFactor = "iphone",
+  initialCommand = "",
   onClose,
 }) {
   const containerRef = useRef(null);
@@ -120,11 +109,11 @@ export function NativeSshTerminal({
   const [listenersReady, setListenersReady] = useState(false);
   const [status, setStatus] = useState("closed");
   const [detail, setDetail] = useState("");
+  const initialCommandRef = useRef("");
   const endpoint = useMemo(
     () => `${String(profile?.username || "").trim() || "user"}@${String(profile?.host || "").trim() || "server"}`,
     [profile?.host, profile?.username],
   );
-  const statusCopy = statusPresentation(status, detail);
 
   const fitTerminal = useCallback(() => {
     if (!open || !terminalRef.current || !fitAddonRef.current || !containerRef.current) return;
@@ -251,6 +240,19 @@ export function NativeSshTerminal({
       setDetail("连接异常");
     });
   }, []);
+
+  useEffect(() => {
+    const command = String(initialCommand || "").trim();
+    if (command) initialCommandRef.current = command;
+  }, [initialCommand]);
+
+  useEffect(() => {
+    if (status !== "connected" || !terminalIdRef.current || !initialCommandRef.current) return;
+    const command = initialCommandRef.current;
+    initialCommandRef.current = "";
+    const timer = window.setTimeout(() => writeData(`${command}\r`), 160);
+    return () => window.clearTimeout(timer);
+  }, [initialCommand, status, writeData]);
 
   useEffect(() => {
     if (!open || terminalRef.current || !containerRef.current) return undefined;
@@ -425,10 +427,6 @@ export function NativeSshTerminal({
           <span>{endpoint}</span>
         </div>
         <div className="native-ssh-actions">
-          <span className={`native-ssh-state ${statusCopy.tone}`}>
-            <i aria-hidden="true" />
-            {statusCopy.label}
-          </span>
           {status !== "connected" ? (
             <button type="button" onClick={() => void connect({ afterDisconnect: false })} aria-label="重新连接">
               <ArrowClockwise size={17} weight="bold" aria-hidden="true" />

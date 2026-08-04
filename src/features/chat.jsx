@@ -68,6 +68,7 @@ const {
   classifyAgentFailure,
   claudeSetupAutomationSnippet,
   cleanAgentFailureDetail,
+  extractAgentFailureMessage,
   cleanAgentOutput,
   cleanBase64Payload,
   clipPersistedText,
@@ -527,11 +528,25 @@ export function AgentFailureCard({ message, failure, operationBusy, onRetry, onS
   if (!failure) return null;
   const canRetry = Boolean(failure.canRetry && message?.promptText);
   const hasDetail = Boolean(failure.detail || message?.technicalDetail);
+  const realError = extractAgentFailureMessage(failure.detail || message?.technicalDetail || "");
 
   return (
     <section className="agent-failure-card" aria-label="执行异常">
       <div className="agent-failure-copy">
         <p>{failure.body || "这条任务没有返回可直接展示的结果。"}</p>
+        {realError ? (
+          <div className="agent-failure-real-error">
+            <span>远端错误</span>
+            <code>{realError}</code>
+            <CopyButton
+              text={realError}
+              label="复制错误"
+              copiedLabel="已复制"
+              className="copy-agent-error"
+              icon={false}
+            />
+          </div>
+        ) : null}
       </div>
       <div className="agent-failure-actions">
         {canRetry ? (
@@ -591,11 +606,23 @@ export function MessageBubble({
     /__AIWB_AGENT_|runner process is not alive|runner pid:/i.test(legacyFailureSource)
       ? classifyAgentFailure(legacyFailureSource, agent)
       : null;
+  const storedFailureDetail =
+    message.agentFailure && typeof message.agentFailure === "object"
+      ? cleanAgentFailureDetail(message.agentFailure.detail || message.technicalDetail || "")
+      : "";
+  const refreshedStoredFailure = storedFailureDetail
+    ? classifyAgentFailure(storedFailureDetail, agent, {
+        taskStatus: message.remoteTaskStatus,
+        exitCode: message.remoteTaskExitCode,
+        taskId: message.remoteTaskId,
+      })
+    : null;
   const storedAgentFailure =
     message.agentFailure && typeof message.agentFailure === "object"
       ? {
           ...message.agentFailure,
-          detail: cleanAgentFailureDetail(message.agentFailure.detail || message.technicalDetail || ""),
+          ...(refreshedStoredFailure || {}),
+          detail: storedFailureDetail,
         }
       : message.agentFailure;
   const agentFailure = storedAgentFailure || legacyAgentFailure;
@@ -671,7 +698,7 @@ export function MessageBubble({
     message.backend === "agent" &&
     taskState === taskStateFailed &&
     !taskId &&
-    waitingLikeMessage(message);
+      waitingLikeMessage(message);
   const canRetryFailedMessage = Boolean(
     !agentFailure && taskState === taskStateFailed && String(message?.promptText || "").trim(),
   );
@@ -806,7 +833,7 @@ export function MessageBubble({
       ) : assistantBodyText || taskStatusUnconfirmed ? (
         <p className="assistant-copy">
           {taskStatusUnconfirmed
-            ? "App 没有拿到这条任务的远端编号，暂时无法确认是否已经提交。请重新发送。"
+            ? "App 没有拿到远端任务编号，因此没有可查询的状态。请重新发送这条任务。"
             : assistantBodyText}
         </p>
       ) : null}
@@ -814,6 +841,13 @@ export function MessageBubble({
         <div className="agent-failure-actions message-recovery-actions">
           <button type="button" className="primary" onClick={() => onRetryMessage?.(message)} disabled={operationBusy}>
             重试
+          </button>
+        </div>
+      ) : null}
+      {!agentFailure && !taskRunning && !taskStatusUnconfirmed && canRefreshRemoteTask ? (
+        <div className="agent-failure-actions message-recovery-actions">
+          <button type="button" className="primary" onClick={() => onRefreshOutput?.(message)} disabled={operationBusy}>
+            检查状态
           </button>
         </div>
       ) : null}

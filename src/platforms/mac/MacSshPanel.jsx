@@ -69,18 +69,6 @@ function terminalTheme(theme) {
   };
 }
 
-function connectionCopy(status, detail) {
-  if (status === "connecting") {
-    return {
-      label: String(detail || "").startsWith("连接断开") ? "连接断开" : "连接中",
-      tone: "connecting",
-    };
-  }
-  if (status === "connected") return { label: "已连接", tone: "connected" };
-  if (status === "error") return { label: "连接异常", tone: "error" };
-  return { label: "已断开", tone: "closed" };
-}
-
 function createTerminalId(sessionKey) {
   const suffix =
     globalThis.crypto?.randomUUID?.() ||
@@ -116,7 +104,6 @@ export function MacSshPanel({
     [profile?.host, profile?.username],
   );
   const workdir = String(profile?.workdir || "").trim();
-  const statusCopy = connectionCopy(status, detail);
   openRef.current = open;
 
   const fitTerminal = useCallback(() => {
@@ -393,10 +380,6 @@ export function MacSshPanel({
           {workdir ? <code>{workdir}</code> : null}
         </div>
         <div className="mac-ssh-header-actions">
-          <span className={`mac-ssh-state ${statusCopy.tone}`}>
-            <i aria-hidden="true" />
-            {statusCopy.label}
-          </span>
           {status !== "connected" ? (
             <button
               type="button"

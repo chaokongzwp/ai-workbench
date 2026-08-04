@@ -1511,6 +1511,49 @@ fi
 `);
 }
 
+function toolLoginSessionName(profile, agent) {
+  return `${sessionName(profile, agent.id)}-login`;
+}
+
+export function buildToolLoginStartCommand(profile, agent) {
+  if (isWindowsProfile(profile)) {
+    return buildWindowsNoTmuxCommand(
+      `${agent.shortName} 的网页授权暂不支持 Windows PowerShell。请改用 Windows + WSL，或先在 Windows 主机完成一次 ${agent.id === "codex" ? "codex login" : "claude"} 登录。`,
+    );
+  }
+
+  const targetSession = toolLoginSessionName(profile, agent);
+  const loginCommand = agent.id === "codex" ? `${agentCommand(profile, agent)} login --device-auth` : agentCommand(profile, agent);
+
+  return remoteBashCommand(profile, `
+set +e
+AIWB_LOGIN_SESSION=${shQuote(targetSession)}
+if ! tmux has-session -t "$AIWB_LOGIN_SESSION" 2>/dev/null; then
+  tmux new-session -d -s "$AIWB_LOGIN_SESSION" -c ${shQuote(profile.workdir || ".")} ${shQuote(loginCommand)}
+  sleep 1.2
+fi
+${agent.id === "claude" ? claudeSetupAutomationSnippet(targetSession) : ""}
+tmux capture-pane -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true
+`);
+}
+
+export function buildToolLoginStatusCommand(profile, agent) {
+  const statusCommand = agent.id === "claude" ? `${agentCommand(profile, agent)} auth status` : `${agentCommand(profile, agent)} login status`;
+  if (isWindowsProfile(profile)) {
+    return powershellCommand(`
+$ErrorActionPreference = 'Continue'
+Invoke-Expression ${powershellLiteral(statusCommand)}
+exit 0
+`);
+  }
+
+  return remoteBashCommand(profile, `
+set +e
+${statusCommand}
+exit 0
+`);
+}
+
 export function buildModelChoiceCommand(profile, agent, choice) {
   if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式使用 codex exec，不需要操作 Codex TUI 模型选择。请重新发送任务。");
 

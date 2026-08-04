@@ -107,8 +107,6 @@ export function NativeWorkbenchShell({
   onCancelRunningTask,
   onToggleRaw,
   onKillAgentSession,
-  onOpenTaskNotice,
-  onCloseTaskNotice,
   onCloseSettings,
   onScanSettings,
   onAddSelectedSessions,
@@ -148,7 +146,6 @@ export function NativeWorkbenchShell({
     MessageBubble,
     Composer,
     RawOutput,
-    TaskNotice,
     SettingsPanel,
     FilePreviewPanel,
     RemoteDirectoryDialog,
@@ -161,6 +158,7 @@ export function NativeWorkbenchShell({
   const terminalEnabled = isIpad || embeddedTerminalEnabled;
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalInitialCommand, setTerminalInitialCommand] = useState("");
   const hasWorkSession = servers.length > 0;
   const {
     visibleMessages,
@@ -365,14 +363,9 @@ export function NativeWorkbenchShell({
           sessionKey={activeServerId}
           theme={resolvedTheme}
           formFactor={nativeFormFactor}
+          initialCommand={terminalInitialCommand}
           onClose={() => setTerminalOpen(false)}
         />
-
-        {taskNotice ? (
-          <div className="conversation-task-notice">
-            <TaskNotice notice={taskNotice} onOpen={onOpenTaskNotice} onClose={onCloseTaskNotice} />
-          </div>
-        ) : null}
 
         <div className="native-chat-scroll conversation-scroll" ref={conversationScrollRef} onScroll={handleProgressiveScroll}>
           {!hasWorkSession ? (
@@ -530,7 +523,15 @@ export function NativeWorkbenchShell({
           onDelete={onDeleteProfile}
           onDuplicate={onDuplicateEditingServer}
           onOpenTerminal={onOpenTerminal}
-          onLoginRemoteAgent={onLoginRemoteAgent}
+          onLoginRemoteAgent={
+            onLoginRemoteAgent ||
+            ((agentId) => {
+              onCloseSettings?.();
+              setTerminalInitialCommand(agentId === "claude" ? "claude" : "codex login --device-auth");
+              setTerminalOpen(true);
+              return Promise.resolve("已打开交互式 SSH 终端，请按提示完成登录。");
+            })
+          }
           agentManagementTargetId={agentManagementTargetId}
           onInstallAgent={onInstallAgent}
           onInstallCli={onInstallCli}
