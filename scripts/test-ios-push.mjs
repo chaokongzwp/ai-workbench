@@ -85,7 +85,7 @@ test("Push gateway registers a device and issues an authenticated ticket", async
   });
 
   const health = await waitForHealth(endpoint, child);
-  assert.equal(health.version, 4);
+  assert.equal(health.version, 5);
   assert.deepEqual(health.push, { platforms: ["ios"], ready: false });
 
   const registrationResponse = await fetch(`${endpoint}/v1/push/devices/register`, {

@@ -45,6 +45,11 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       if (bridge?.runCommand) return bridge.runCommand(payload);
       throw new Error("浏览器预览不能直接发起 SSH，请在 iPhone 或 iPad App 中测试。");
     },
+    async agentRequest(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.agentRequest) return bridge.agentRequest(payload);
+      throw new Error("当前环境不支持安全的 Agent 直连请求。");
+    },
     async haptic(payload = {}) {
       const bridge = desktopBridge();
       if (bridge?.haptic) return bridge.haptic(payload);
@@ -424,7 +429,10 @@ export const defaultProfile = {
   // HTTPS endpoint and a per-machine access token provisioned by the installer.
   agentDirectEndpoint: "",
   agentDirectAccessToken: "",
+  agentDirectTlsFingerprint: "",
   agentDirectAllowInsecure: false,
+  agentDirectInsecureReason: "",
+  sshHostKeyFingerprint: "",
   executionPermissionMode: "standard",
   appearanceMode: "light",
   messageFontFamily: "system",
@@ -1363,7 +1371,10 @@ export function normalizeProfile(profile) {
         : Boolean(profile.useWorkbenchAgent),
     agentDirectEndpoint: String(profile?.agentDirectEndpoint || "").trim(),
     agentDirectAccessToken: String(profile?.agentDirectAccessToken || "").trim(),
+    agentDirectTlsFingerprint: String(profile?.agentDirectTlsFingerprint || "").trim(),
     agentDirectAllowInsecure: profile?.agentDirectAllowInsecure === true,
+    agentDirectInsecureReason: String(profile?.agentDirectInsecureReason || "").trim(),
+    sshHostKeyFingerprint: String(profile?.sshHostKeyFingerprint || "").trim(),
     executionPermissionMode: normalizeExecutionPermissionMode(profile?.executionPermissionMode),
     appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
     messageFontFamily: normalizeMessageFontFamily(profile?.messageFontFamily),

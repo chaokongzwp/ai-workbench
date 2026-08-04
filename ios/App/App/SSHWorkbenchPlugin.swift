@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 import AVFoundation
 import Capacitor
 import Citadel
@@ -17,9 +18,10 @@ private struct SSHConnectionConfig {
     let commandTimeoutSeconds: Int64
     let stdin: String
     let uploadScript: Bool
+    let sshHostKeyFingerprint: String
 
     var connectionFingerprint: String {
-        [host, String(port), username, password].joined(separator: "\u{0}")
+        [host, String(port), username, password, sshHostKeyFingerprint].joined(separator: "\u{0}")
     }
 
     init(call: CAPPluginCall) throws {
@@ -42,6 +44,48 @@ private struct SSHConnectionConfig {
         self.commandTimeoutSeconds = Int64(max(5, min(call.getInt("commandTimeoutSeconds", 180), 7200)))
         self.stdin = call.getString("stdin") ?? ""
         self.uploadScript = call.getBool("uploadScript", false)
+        self.sshHostKeyFingerprint = (call.getString("sshHostKeyFingerprint") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private enum SSHHostKeyTrustError: LocalizedError {
+    case untrusted(String)
+    case changed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .untrusted(let fingerprint):
+            return "SSH_HOST_KEY_UNTRUSTED:\(fingerprint)"
+        case .changed(let fingerprint):
+            return "SSH_HOST_KEY_CHANGED:\(fingerprint)"
+        }
+    }
+}
+
+private final class PinnedSSHHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+    private let expectedFingerprint: String
+
+    init(expectedFingerprint: String) {
+        self.expectedFingerprint = expectedFingerprint
+    }
+
+    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let openSSHKey = String(openSSHPublicKey: hostKey)
+        let encodedKey = openSSHKey.split(separator: " ", maxSplits: 2).dropFirst().first.map(String.init) ?? ""
+        let rawKey = Data(base64Encoded: encodedKey) ?? Data(openSSHKey.utf8)
+        let digest = Data(SHA256.hash(data: rawKey)).base64EncodedString()
+        let presentedFingerprint = "sha256/\(digest)"
+
+        guard !expectedFingerprint.isEmpty else {
+            validationCompletePromise.fail(SSHHostKeyTrustError.untrusted(presentedFingerprint))
+            return
+        }
+        guard expectedFingerprint == presentedFingerprint else {
+            validationCompletePromise.fail(SSHHostKeyTrustError.changed(presentedFingerprint))
+            return
+        }
+        validationCompletePromise.succeed(())
     }
 }
 
@@ -1237,6 +1281,38 @@ private enum SSHWorkbenchError: LocalizedError {
     }
 }
 
+private final class PinnedAgentSessionDelegate: NSObject, URLSessionDelegate {
+    private let expectedFingerprint: String
+
+    init(expectedFingerprint: String) {
+        self.expectedFingerprint = expectedFingerprint
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        guard let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let certificateData = SecCertificateCopyData(certificate) as Data
+        let actualFingerprint = Data(SHA256.hash(data: certificateData)).base64EncodedString()
+        guard !expectedFingerprint.isEmpty,
+              actualFingerprint == expectedFingerprint else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
 @objc(SSHWorkbenchPlugin)
 public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "SSHWorkbenchPlugin"
@@ -1245,6 +1321,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "connectSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "disconnectSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "runCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "agentRequest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resizeTerminal", returnType: CAPPluginReturnPromise),
@@ -1386,6 +1463,63 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    @objc func agentRequest(_ call: CAPPluginCall) {
+        guard let endpoint = call.getString("endpoint"), let baseURL = URL(string: endpoint),
+              let accessToken = call.getString("accessToken"), !accessToken.isEmpty else {
+            call.reject("Agent 直连配置不完整。", "AGENT_REQUEST_INVALID")
+            return
+        }
+        let path = call.getString("path") ?? "/"
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+            call.reject("Agent 请求地址无效。", "AGENT_REQUEST_INVALID")
+            return
+        }
+        let allowInsecure = call.getBool("allowInsecure", false)
+        let expectedFingerprint = (call.getString("tlsFingerprint") ?? "")
+            .replacingOccurrences(of: "sha256/", with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.scheme == "http" && !allowInsecure {
+            call.reject("Agent 未启用 TLS，拒绝使用不加密连接。", "AGENT_TLS_REQUIRED")
+            return
+        }
+        if url.scheme == "https" && expectedFingerprint.isEmpty {
+            call.reject("缺少 Agent TLS 证书指纹，无法建立安全连接。", "AGENT_TLS_FINGERPRINT_MISSING")
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = (call.getString("method") ?? "GET").uppercased()
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        if let body = call.getObject("body") {
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            } catch {
+                call.reject("Agent 请求内容无效。", "AGENT_REQUEST_INVALID", error)
+                return
+            }
+        }
+        let timeoutMs = max(1_000, min(call.getInt("timeoutMs", 12_000), 120_000))
+        request.timeoutInterval = TimeInterval(timeoutMs) / 1000
+        let delegate = PinnedAgentSessionDelegate(expectedFingerprint: expectedFingerprint)
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                call.reject(self.safeErrorMessage(error), "AGENT_REQUEST_FAILED", error)
+                return
+            }
+            guard let response = response as? HTTPURLResponse else {
+                call.reject("Agent 没有返回有效响应。", "AGENT_REQUEST_FAILED")
+                return
+            }
+            call.resolve([
+                "status": response.statusCode,
+                "body": String(data: data ?? Data(), encoding: .utf8) ?? ""
+            ])
+        }.resume()
+    }
+
     @objc func startTerminal(_ call: CAPPluginCall) {
         let terminalId = (call.getString("terminalId") ?? UUID().uuidString)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1412,7 +1546,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                     authenticationMethod: {
                         .passwordBased(username: config.username, password: config.password)
                     },
-                    hostKeyValidator: .acceptAnything()
+                    hostKeyValidator: .custom(PinnedSSHHostKeyValidator(expectedFingerprint: config.sshHostKeyFingerprint))
                 )
                 settings.connectTimeout = .seconds(config.connectTimeoutSeconds)
                 var didResolve = false
@@ -1944,6 +2078,9 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     private func friendlySSHErrorMessage(_ error: Error, config: SSHConnectionConfig) -> String {
         let raw = safeErrorMessage(error)
         let message = raw.lowercased()
+        if raw.hasPrefix("SSH_HOST_KEY_UNTRUSTED:") || raw.hasPrefix("SSH_HOST_KEY_CHANGED:") {
+            return raw
+        }
         if message.contains("auth") || message.contains("password") || message.contains("authentication") {
             return "SSH 登录失败：请检查用户名和登录密码。原始错误：\(raw)"
         }
@@ -1983,7 +2120,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             authenticationMethod: {
                 .passwordBased(username: config.username, password: config.password)
             },
-            hostKeyValidator: .acceptAnything()
+            hostKeyValidator: .custom(PinnedSSHHostKeyValidator(expectedFingerprint: config.sshHostKeyFingerprint))
         )
         settings.connectTimeout = .seconds(config.connectTimeoutSeconds)
         return try await SSHClient.connect(to: settings)

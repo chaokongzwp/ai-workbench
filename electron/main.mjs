@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { appendFile, chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 import { StringDecoder } from "node:string_decoder";
@@ -550,6 +552,7 @@ function normalizeConnection(input = {}) {
     host,
     username,
     password,
+    sshHostKeyFingerprint: String(input.sshHostKeyFingerprint || "").trim(),
     command,
     stdin,
     uploadScript,
@@ -576,6 +579,7 @@ function normalizeSshSessionRequest(input = {}) {
     host,
     username,
     password,
+    sshHostKeyFingerprint: String(input.sshHostKeyFingerprint || "").trim(),
     port: Math.max(1, Number(input.port || 22) || 22),
     connectTimeoutSeconds: Math.max(3, Math.min(Number(input.connectTimeoutSeconds || 15) || 15, 60)),
   };
@@ -636,6 +640,7 @@ function normalizeEmbeddedTerminalRequest(input = {}) {
   const cols = Math.max(20, Math.min(Number(input.cols || 100) || 100, 500));
   const rows = Math.max(5, Math.min(Number(input.rows || 28) || 28, 200));
   const connectTimeoutSeconds = Math.max(3, Math.min(Number(input.connectTimeoutSeconds || 30) || 30, 60));
+  const sshHostKeyFingerprint = String(input.sshHostKeyFingerprint || "").trim();
 
   if (!host) throw new Error("请先填写服务器 IP 或域名");
   if (!username) throw new Error("请先填写登录用户名");
@@ -649,6 +654,7 @@ function normalizeEmbeddedTerminalRequest(input = {}) {
     platform,
     wslDistro,
     workdir,
+    sshHostKeyFingerprint,
     terminalId,
     cols,
     rows,
@@ -725,6 +731,7 @@ function startEmbeddedSshTerminal(event, payload = {}) {
 
   return new Promise((resolvePromise, reject) => {
     const client = new Client();
+    let hostKeyError = null;
     const record = {
       id: config.terminalId,
       ownerId: event.sender.id,
@@ -797,7 +804,7 @@ function startEmbeddedSshTerminal(event, payload = {}) {
       })
       .on("error", (error) => {
         if (!record.settled) {
-          rejectStart(error);
+          rejectStart(hostKeyError || error);
           return;
         }
         closeEmbeddedTerminalRecord(record, "error", error?.message || String(error));
@@ -813,6 +820,18 @@ function startEmbeddedSshTerminal(event, payload = {}) {
         readyTimeout: config.connectTimeoutSeconds * 1000,
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
+        hostVerifier: (key) => {
+          const candidate = `sha256/${createHash("sha256").update(key).digest("base64")}`;
+          if (!config.sshHostKeyFingerprint) {
+            hostKeyError = new Error(`SSH_HOST_KEY_UNTRUSTED:${candidate}`);
+            return false;
+          }
+          if (config.sshHostKeyFingerprint !== candidate) {
+            hostKeyError = new Error(`SSH_HOST_KEY_CHANGED:${candidate}`);
+            return false;
+          }
+          return true;
+        },
       });
   });
 }
@@ -2321,6 +2340,7 @@ function createConnectedSshClient(config) {
   return new Promise((resolvePromise, reject) => {
     const client = new Client();
     let settled = false;
+    let hostKeyError = null;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -2340,7 +2360,7 @@ function createConnectedSshClient(config) {
         settled = true;
         clearTimeout(timer);
         client.end();
-        reject(error);
+        reject(hostKeyError || error);
       })
       .connect({
         host: config.host,
@@ -2350,6 +2370,19 @@ function createConnectedSshClient(config) {
         readyTimeout: config.connectTimeoutSeconds * 1000,
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
+        hostVerifier: (key) => {
+          const candidate = `sha256/${createHash("sha256").update(key).digest("base64")}`;
+          const expected = String(config.sshHostKeyFingerprint || "").trim();
+          if (!expected) {
+            hostKeyError = new Error(`SSH_HOST_KEY_UNTRUSTED:${candidate}`);
+            return false;
+          }
+          if (expected !== candidate) {
+            hostKeyError = new Error(`SSH_HOST_KEY_CHANGED:${candidate}`);
+            return false;
+          }
+          return true;
+        },
       });
   });
 }
@@ -2725,6 +2758,78 @@ async function readClipboardAttachments() {
 ipcMain.handle("aiwb:run-command", async (_event, payload) => {
   return runSshCommand(payload);
 });
+
+function normalizeTlsFingerprint(value) {
+  return String(value || "").trim().replace(/^sha256\//i, "");
+}
+
+function requestAgentDirect(payload = {}) {
+  const endpoint = String(payload.endpoint || "").trim();
+  const accessToken = String(payload.accessToken || "").trim();
+  const tlsFingerprint = normalizeTlsFingerprint(payload.tlsFingerprint);
+  const allowInsecure = payload.allowInsecure === true;
+  const method = String(payload.method || "GET").toUpperCase();
+  const path = String(payload.path || "/");
+  const timeoutMs = Math.max(1000, Math.min(120_000, Number(payload.timeoutMs) || 12_000));
+  if (!endpoint || !accessToken) throw new Error("Agent 直连配置不完整。");
+
+  const url = new URL(path, endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
+  if (!["https:", "http:"].includes(url.protocol)) throw new Error("Agent 地址协议无效。");
+  if (url.protocol === "http:" && !allowInsecure) throw new Error("Agent 未启用 TLS，拒绝使用不加密连接。");
+  if (url.protocol === "https:" && !tlsFingerprint) throw new Error("缺少 Agent TLS 证书指纹，无法建立安全连接。");
+
+  const encodedBody = payload.body === undefined ? "" : JSON.stringify(payload.body);
+  const requester = url.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise((resolvePromise, reject) => {
+    let certificateVerified = url.protocol === "http:";
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error instanceof Error ? error : new Error(String(error || "Agent 请求失败。")));
+    };
+    const request = requester(url, {
+      method,
+      agent: false,
+      rejectUnauthorized: false,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        ...(encodedBody ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(encodedBody) } : {}),
+      },
+    }, (response) => {
+      let raw = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { raw += chunk; });
+      response.once("error", fail);
+      response.once("end", () => {
+        if (settled) return;
+        if (!certificateVerified) return fail(new Error("Agent TLS 证书校验失败。"));
+        settled = true;
+        resolvePromise({ status: Number(response.statusCode || 0), body: raw });
+      });
+    });
+    request.once("socket", (socket) => {
+      if (url.protocol !== "https:") return;
+      socket.once("secureConnect", () => {
+        const certificate = socket.getPeerCertificate?.(true);
+        const rawCertificate = certificate?.raw;
+        const received = rawCertificate ? createHash("sha256").update(rawCertificate).digest("base64") : "";
+        if (!received || received !== tlsFingerprint) {
+          request.destroy(new Error("Agent TLS 证书指纹不匹配，已阻止连接。"));
+          return;
+        }
+        certificateVerified = true;
+      });
+    });
+    request.once("error", fail);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("连接 Agent 超时。")));
+    if (encodedBody) request.write(encodedBody);
+    request.end();
+  });
+}
+
+ipcMain.handle("aiwb:agent-request", async (_event, payload) => requestAgentDirect(payload));
 
 ipcMain.handle("aiwb:session-connect", async (_event, payload) => {
   const config = normalizeSshSessionRequest(payload);

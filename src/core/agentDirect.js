@@ -1,3 +1,5 @@
+import { SSHWorkbench, desktopBridge } from "./foundation.js";
+
 const terminalOutcomes = new Set(["success", "error", "cancelled", "rejected"]);
 const activeStatuses = new Set(["queued", "accepted", "preparing", "running"]);
 
@@ -33,20 +35,24 @@ export function agentDirectConfig(profile = {}) {
   const endpoint = normalizeAgentDirectEndpoint(profile?.agentDirectEndpoint);
   const accessToken = text(profile?.agentDirectAccessToken);
   const insecure = endpoint.startsWith("http:");
+  const tlsFingerprint = text(profile?.agentDirectTlsFingerprint);
+  const insecureReason = text(profile?.agentDirectInsecureReason);
   return {
     endpoint,
     accessToken,
     insecure,
-    enabled: Boolean(endpoint && accessToken && (!insecure || profile?.agentDirectAllowInsecure === true)),
+    tlsFingerprint,
+    insecureReason,
+    enabled: Boolean(endpoint && accessToken && (insecure ? profile?.agentDirectAllowInsecure === true && insecureReason : tlsFingerprint)),
   };
 }
 
 export function agentDirectEventUrl(profile = {}) {
-  const { endpoint, enabled } = agentDirectConfig(profile);
-  if (!enabled) return "";
-  const url = new URL(`${endpoint}/v1/events`);
-  url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
-  return url.toString();
+  // Browser WebSockets cannot pin the Agent's self-signed certificate. Keep
+  // status transport on the native pinned HTTPS request until a native event
+  // stream implementation is available on every client.
+  void profile;
+  return "";
 }
 
 export function agentDirectTaskLifecycle(task = {}) {
@@ -110,9 +116,38 @@ export class AgentDirectRequestError extends Error {
 }
 
 export async function agentDirectRequest(profile, path, { method = "GET", body, timeoutMs = 12_000, fetchImpl = globalThis.fetch } = {}) {
-  const { endpoint, accessToken, enabled } = agentDirectConfig(profile);
+  const { endpoint, accessToken, enabled, insecure, tlsFingerprint } = agentDirectConfig(profile);
   if (!enabled) {
     throw new AgentDirectRequestError("Agent 直连尚未配置。", { code: "agent_direct_not_configured" });
+  }
+  const nativePlatform = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
+  const nativeRequest = desktopBridge()?.agentRequest || (nativePlatform ? SSHWorkbench?.agentRequest : null);
+  if (typeof nativeRequest === "function") {
+    try {
+      const response = await nativeRequest({
+        endpoint,
+        accessToken,
+        tlsFingerprint,
+        allowInsecure: insecure && profile?.agentDirectAllowInsecure === true && Boolean(profile?.agentDirectInsecureReason),
+        path,
+        method,
+        body,
+        timeoutMs,
+      });
+      const raw = String(response?.body || "");
+      const parsed = jsonOrNull(raw);
+      const status = Number(response?.status || 0);
+      if (status < 200 || status >= 300) {
+        throw new AgentDirectRequestError(
+          text(parsed?.error?.message || parsed?.message || raw) || `Agent 请求失败（${status || "未知状态"}）。`,
+          { status, code: text(parsed?.error?.code) || "agent_direct_http_error", body: parsed },
+        );
+      }
+      return parsed ?? {};
+    } catch (error) {
+      if (error instanceof AgentDirectRequestError) throw error;
+      throw new AgentDirectRequestError(text(error?.message) || "无法建立安全的 Agent 连接。", { code: "agent_direct_network_error" });
+    }
   }
   if (typeof fetchImpl !== "function") {
     throw new AgentDirectRequestError("当前平台不支持 Agent 直连请求。", { code: "agent_direct_fetch_unavailable" });

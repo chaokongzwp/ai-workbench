@@ -159,7 +159,7 @@ assert.match(controllerSource, /allowCachedReady: true/);
 assert.match(controllerSource, /refreshAgentHealthForServer\(target\.id, "background-connect"\)/);
 const agentRouteSource = controllerSource.slice(
   controllerSource.indexOf("const probedAgent = parseWorkbenchAgentOutput(probeOutput);"),
-  controllerSource.indexOf("const runtimeProfile = agentRuntimeProfile(currentProfile);"),
+  controllerSource.indexOf("const runtimeProfile = agentRuntimeProfile(directProfile);"),
 );
 assert.match(agentRouteSource, /patchServersByConnection\(/);
 assert.doesNotMatch(agentRouteSource, /setServers\(/);

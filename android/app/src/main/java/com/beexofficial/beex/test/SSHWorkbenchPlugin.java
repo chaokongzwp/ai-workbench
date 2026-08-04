@@ -19,8 +19,12 @@ import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.HostKey;
+import com.jcraft.jsch.HostKeyRepository;
 import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
+import com.jcraft.jsch.UserInfo;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -35,6 +39,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -57,6 +65,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 @CapacitorPlugin(name = "SSHWorkbench")
 public class SSHWorkbenchPlugin extends Plugin {
@@ -175,7 +188,62 @@ public class SSHWorkbenchPlugin extends Plugin {
                     "durationMs", System.currentTimeMillis() - startedAt,
                     "error", safeError(error)
                 ));
-                call.reject("SSH command failed: " + safeError(error), "SSH_COMMAND_FAILED", error);
+                String hostKeyError = safeError(error);
+                call.reject(
+                    hostKeyError.startsWith("SSH_HOST_KEY_") ? hostKeyError : "SSH command failed: " + hostKeyError,
+                    "SSH_COMMAND_FAILED",
+                    error
+                );
+            }
+        });
+    }
+
+    @PluginMethod
+    public void agentRequest(PluginCall call) {
+        String endpoint = stringValue(call.getString("endpoint")).trim();
+        String accessToken = stringValue(call.getString("accessToken")).trim();
+        String path = stringValue(call.getString("path"));
+        String expectedFingerprint = stringValue(call.getString("tlsFingerprint"))
+            .replaceFirst("(?i)^sha256/", "").trim();
+        boolean allowInsecure = Boolean.TRUE.equals(call.getBoolean("allowInsecure", false));
+        if (endpoint.isEmpty() || accessToken.isEmpty()) {
+            call.reject("Agent 直连配置不完整。", "AGENT_REQUEST_INVALID");
+            return;
+        }
+        executor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL base = new URL(endpoint.endsWith("/") ? endpoint : endpoint + "/");
+                URL url = new URL(base, path.startsWith("/") ? path.substring(1) : path);
+                boolean secure = "https".equalsIgnoreCase(url.getProtocol());
+                if (!secure && !allowInsecure) throw new IOException("Agent 未启用 TLS，拒绝使用不加密连接。");
+                if (secure && expectedFingerprint.isEmpty()) throw new IOException("缺少 Agent TLS 证书指纹，无法建立安全连接。");
+                connection = (HttpURLConnection) url.openConnection();
+                if (secure) configurePinnedHttps((HttpsURLConnection) connection, expectedFingerprint);
+                connection.setRequestMethod(stringValue(call.getString("method")).isEmpty() ? "GET" : call.getString("method").toUpperCase(Locale.ROOT));
+                connection.setConnectTimeout(Math.max(1_000, Math.min(call.getInt("timeoutMs", 12_000), 120_000)));
+                connection.setReadTimeout(Math.max(1_000, Math.min(call.getInt("timeoutMs", 12_000), 120_000)));
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+                JSObject body = call.getObject("body");
+                if (body != null) {
+                    byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+                    connection.setDoOutput(true);
+                    connection.setRequestProperty("Content-Type", "application/json");
+                    connection.setRequestProperty("Content-Length", String.valueOf(bytes.length));
+                    try (OutputStream output = connection.getOutputStream()) { output.write(bytes); }
+                }
+                int status = connection.getResponseCode();
+                InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                String responseBody = stream == null ? "" : readStream(stream);
+                JSObject result = new JSObject();
+                result.put("status", status);
+                result.put("body", responseBody);
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject(safeError(error), "AGENT_REQUEST_FAILED", error);
+            } finally {
+                if (connection != null) connection.disconnect();
             }
         });
     }
@@ -212,16 +280,15 @@ public class SSHWorkbenchPlugin extends Plugin {
             boolean didResolve = false;
 
             try {
-                JSch jsch = new JSch();
-                session = jsch.getSession(config.username, config.host, config.port);
-                session.setPassword(config.password);
-                Properties props = new Properties();
-                props.put("StrictHostKeyChecking", "no");
-                props.put("PreferredAuthentications", "password,keyboard-interactive");
-                session.setConfig(props);
-                session.setServerAliveInterval(15_000);
-                session.setServerAliveCountMax(3);
-                session.connect(config.connectTimeoutSeconds * 1000);
+                session = createPinnedSession(
+                    config.username,
+                    config.password,
+                    config.host,
+                    config.port,
+                    config.connectTimeoutSeconds,
+                    config.sshHostKeyFingerprint,
+                    15_000
+                );
 
                 channel = (ChannelShell) session.openChannel("shell");
                 channel.setPty(true);
@@ -588,17 +655,46 @@ public class SSHWorkbenchPlugin extends Plugin {
     }
 
     private Session createCommandSession(SSHConfig config) throws Exception {
+        return createPinnedSession(
+            config.username,
+            config.password,
+            config.host,
+            config.port,
+            config.connectTimeoutSeconds,
+            config.sshHostKeyFingerprint,
+            10_000
+        );
+    }
+
+    private Session createPinnedSession(
+        String username,
+        String password,
+        String host,
+        int port,
+        int connectTimeoutSeconds,
+        String expectedFingerprint,
+        int serverAliveInterval
+    ) throws Exception {
         JSch jsch = new JSch();
-        Session session = jsch.getSession(config.username, config.host, config.port);
-        session.setPassword(config.password);
+        FingerprintHostKeyRepository hostKeys = new FingerprintHostKeyRepository(expectedFingerprint);
+        jsch.setHostKeyRepository(hostKeys);
+        Session session = jsch.getSession(username, host, port);
+        session.setPassword(password);
         Properties props = new Properties();
-        props.put("StrictHostKeyChecking", "no");
+        props.put("StrictHostKeyChecking", "yes");
         props.put("PreferredAuthentications", "password,keyboard-interactive");
         session.setConfig(props);
-        session.setServerAliveInterval(10_000);
+        session.setServerAliveInterval(serverAliveInterval);
         session.setServerAliveCountMax(3);
-        session.connect(config.connectTimeoutSeconds * 1000);
-        return session;
+        try {
+            session.connect(connectTimeoutSeconds * 1000);
+            return session;
+        } catch (Exception error) {
+            if (session.isConnected()) session.disconnect();
+            String trustError = hostKeys.trustError();
+            if (!trustError.isEmpty()) throw new HostKeyValidationException(trustError, error);
+            throw error;
+        }
     }
 
     private Session ensureCommandSession(SSHConfig config) throws Exception {
@@ -1174,9 +1270,95 @@ public class SSHWorkbenchPlugin extends Plugin {
         return message.replace("\n", " ");
     }
 
+    private static final class HostKeyValidationException extends JSchException {
+        HostKeyValidationException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    private static final class FingerprintHostKeyRepository implements HostKeyRepository {
+        private final String expectedFingerprint;
+        private volatile String error = "";
+
+        FingerprintHostKeyRepository(String expectedFingerprint) {
+            this.expectedFingerprint = stringValue(expectedFingerprint).trim();
+        }
+
+        @Override
+        public int check(String host, byte[] key) {
+            String presented = "sha256/" + Base64.encodeToString(sha256(key), Base64.NO_WRAP);
+            if (expectedFingerprint.isEmpty()) {
+                error = "SSH_HOST_KEY_UNTRUSTED:" + presented;
+                return HostKeyRepository.NOT_INCLUDED;
+            }
+            if (!MessageDigest.isEqual(expectedFingerprint.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8))) {
+                error = "SSH_HOST_KEY_CHANGED:" + presented;
+                return HostKeyRepository.CHANGED;
+            }
+            return HostKeyRepository.OK;
+        }
+
+        @Override public void add(HostKey hostkey, UserInfo ui) { }
+        @Override public void remove(String host, String type) { }
+        @Override public void remove(String host, String type, byte[] key) { }
+        @Override public String getKnownHostsRepositoryID() { return "AI Workbench pinned host"; }
+        @Override public HostKey[] getHostKey() { return new HostKey[0]; }
+        @Override public HostKey[] getHostKey(String host, String type) { return new HostKey[0]; }
+
+        String trustError() {
+            return error;
+        }
+
+        private static byte[] sha256(byte[] value) {
+            try {
+                return MessageDigest.getInstance("SHA-256").digest(value);
+            } catch (Exception error) {
+                throw new IllegalStateException("Unable to calculate SSH host key fingerprint.", error);
+            }
+        }
+    }
+
+    private static String readStream(InputStream stream) throws IOException {
+        try (InputStream input = stream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8_192];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            return output.toString(StandardCharsets.UTF_8.name());
+        }
+    }
+
+    private static void configurePinnedHttps(HttpsURLConnection connection, String expectedFingerprint) throws Exception {
+        final byte[] expected = Base64.decode(expectedFingerprint, Base64.DEFAULT);
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(null, new TrustManager[] { new X509TrustManager() {
+            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
+            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                try {
+                    if (chain == null || chain.length == 0) throw new CertificateException("Agent TLS 证书缺失。");
+                    byte[] actual = MessageDigest.getInstance("SHA-256").digest(chain[0].getEncoded());
+                    if (!MessageDigest.isEqual(expected, actual)) {
+                        throw new CertificateException("Agent TLS 证书指纹不匹配，已阻止连接。");
+                    }
+                } catch (CertificateException error) {
+                    throw error;
+                } catch (Exception error) {
+                    throw new CertificateException("Agent TLS 证书校验失败。", error);
+                }
+            }
+        } }, new SecureRandom());
+        connection.setSSLSocketFactory(context.getSocketFactory());
+        // The pinned leaf certificate is the identity check. Agent certificates
+        // use a stable product CN, not the server's changing LAN/IP address.
+        connection.setHostnameVerifier((hostname, session) -> true);
+    }
+
     private static String friendlySSHError(Exception error, SSHConfig config) {
         String raw = safeError(error);
         String message = raw.toLowerCase(Locale.ROOT);
+        if (raw.startsWith("SSH_HOST_KEY_UNTRUSTED:") || raw.startsWith("SSH_HOST_KEY_CHANGED:")) {
+            return raw;
+        }
         if (message.contains("auth fail") || message.contains("authentication") || message.contains("password")) {
             return "SSH 登录失败：请检查用户名和登录密码。";
         }
@@ -1227,6 +1409,7 @@ public class SSHWorkbenchPlugin extends Plugin {
         final String password;
         final String command;
         final String stdin;
+        final String sshHostKeyFingerprint;
         final boolean uploadScript;
         final int port;
         final int connectTimeoutSeconds;
@@ -1240,6 +1423,7 @@ public class SSHWorkbenchPlugin extends Plugin {
             String password,
             String command,
             String stdin,
+            String sshHostKeyFingerprint,
             boolean uploadScript,
             int port,
             int connectTimeoutSeconds,
@@ -1252,6 +1436,7 @@ public class SSHWorkbenchPlugin extends Plugin {
             this.password = password;
             this.command = command;
             this.stdin = stdin;
+            this.sshHostKeyFingerprint = sshHostKeyFingerprint;
             this.uploadScript = uploadScript;
             this.port = port;
             this.connectTimeoutSeconds = connectTimeoutSeconds;
@@ -1260,7 +1445,7 @@ public class SSHWorkbenchPlugin extends Plugin {
         }
 
         String connectionFingerprint() {
-            return host + "\u0000" + port + "\u0000" + username + "\u0000" + password;
+            return host + "\u0000" + port + "\u0000" + username + "\u0000" + password + "\u0000" + sshHostKeyFingerprint;
         }
 
         static SSHConfig from(PluginCall call) {
@@ -1283,6 +1468,7 @@ public class SSHWorkbenchPlugin extends Plugin {
                 password,
                 command,
                 stdin,
+                stringValue(call.getString("sshHostKeyFingerprint")).trim(),
                 uploadScript,
                 clamp(intValue(call.getInt("port"), 22), 1, 65_535),
                 clamp(intValue(call.getInt("connectTimeoutSeconds"), 15), 3, 60),
@@ -1307,6 +1493,7 @@ public class SSHWorkbenchPlugin extends Plugin {
                 password,
                 "true",
                 "",
+                stringValue(call.getString("sshHostKeyFingerprint")).trim(),
                 false,
                 clamp(intValue(call.getInt("port"), 22), 1, 65_535),
                 clamp(intValue(call.getInt("connectTimeoutSeconds"), 15), 3, 60),
@@ -1323,6 +1510,7 @@ public class SSHWorkbenchPlugin extends Plugin {
         final String password;
         final String platform;
         final String workdir;
+        final String sshHostKeyFingerprint;
         final int port;
         final int connectTimeoutSeconds;
         final int cols;
@@ -1335,6 +1523,7 @@ public class SSHWorkbenchPlugin extends Plugin {
             String password,
             String platform,
             String workdir,
+            String sshHostKeyFingerprint,
             int port,
             int connectTimeoutSeconds,
             int cols,
@@ -1346,6 +1535,7 @@ public class SSHWorkbenchPlugin extends Plugin {
             this.password = password;
             this.platform = platform;
             this.workdir = workdir;
+            this.sshHostKeyFingerprint = sshHostKeyFingerprint;
             this.port = port;
             this.connectTimeoutSeconds = connectTimeoutSeconds;
             this.cols = cols;
@@ -1370,6 +1560,7 @@ public class SSHWorkbenchPlugin extends Plugin {
                 password,
                 stringValue(call.getString("platform", "linux")).trim().toLowerCase(Locale.ROOT),
                 stringValue(call.getString("workdir")).trim(),
+                stringValue(call.getString("sshHostKeyFingerprint")).trim(),
                 clamp(intValue(call.getInt("port"), 22), 1, 65_535),
                 clamp(intValue(call.getInt("connectTimeoutSeconds"), 15), 3, 60),
                 clamp(intValue(call.getInt("cols"), 80), 20, 500),

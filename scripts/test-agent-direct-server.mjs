@@ -14,7 +14,15 @@ for (const [name, value] of Object.entries({
 })) writeFileSync(join(taskDir, name), value);
 
 process.env.AIWB_AGENT_HOME = home;
-const { createAgentDirectServer, startAgentDirectServer } = await import("../agent/runtime/aiwb-agent-http.mjs");
+const { createAgentDirectServer, loadAgentDirectConfig, startAgentDirectServer } = await import("../agent/runtime/aiwb-agent-http.mjs");
+const defaultConfig = loadAgentDirectConfig();
+assert.equal(defaultConfig.securityVersion, 1);
+if (defaultConfig.tls) {
+  assert.equal(defaultConfig.tls.enabled, true);
+  assert.match(defaultConfig.tls.fingerprint, /^sha256\/[A-Za-z0-9+/=]+$/);
+} else {
+  assert.equal(defaultConfig.insecureReason, "openssl_unavailable");
+}
 const server = createAgentDirectServer({
   config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
   control: async () => ({ code: 0, stdout: "", stderr: "" }),

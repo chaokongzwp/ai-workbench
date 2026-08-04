@@ -178,6 +178,7 @@ export function MacSshPanel({
               port: profile?.port,
               username,
               password,
+              sshHostKeyFingerprint: profile?.sshHostKeyFingerprint,
               platform: profile?.platform,
               wslDistro: profile?.wslDistro,
               workdir,

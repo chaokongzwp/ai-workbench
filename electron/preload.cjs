@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   runCommand(payload) {
     return ipcRenderer.invoke("aiwb:run-command", payload);
   },
+  agentRequest(payload) {
+    return ipcRenderer.invoke("aiwb:agent-request", payload);
+  },
   openTerminal(payload) {
     return ipcRenderer.invoke("aiwb:open-terminal", payload);
   },

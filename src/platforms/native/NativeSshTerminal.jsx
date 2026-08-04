@@ -183,6 +183,7 @@ export function NativeSshTerminal({
               port: profile?.port,
               username,
               password,
+              sshHostKeyFingerprint: profile?.sshHostKeyFingerprint,
               platform: profile?.platform,
               wslDistro: profile?.wslDistro,
               workdir: profile?.workdir,

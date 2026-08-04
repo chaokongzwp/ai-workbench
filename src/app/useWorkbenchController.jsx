@@ -386,6 +386,7 @@ function nativeSshSessionPayload(profile, sessionId) {
     port: current.port,
     username: current.username,
     password: current.password,
+    sshHostKeyFingerprint: current.sshHostKeyFingerprint,
     connectTimeoutSeconds: current.connectTimeoutSeconds,
   };
 }
@@ -687,6 +688,7 @@ export function useWorkbenchController() {
             port: currentProfile.port,
             username: currentProfile.username,
             password: currentProfile.password,
+            sshHostKeyFingerprint: currentProfile.sshHostKeyFingerprint,
             connectTimeoutSeconds: currentProfile.connectTimeoutSeconds,
             commandTimeoutSeconds,
             ...commandPayload,
@@ -3322,6 +3324,31 @@ export function useWorkbenchController() {
       return true;
     } catch (error) {
       const message = shortError(error);
+      const hostKeyMatch = String(error?.message || error || "").match(/^SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)$/);
+      const changedHostKeyMatch = String(error?.message || error || "").match(/^SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)$/);
+      if (hostKeyMatch && typeof window !== "undefined") {
+        const approved = window.confirm(
+          `首次连接 ${targetProfile.host}。请确认这是你的服务器后继续。\n\nSSH 主机指纹：\n${hostKeyMatch[1]}`,
+        );
+        if (approved) {
+          const trustedProfile = { ...targetProfile, sshHostKeyFingerprint: hostKeyMatch[1] };
+          const nextServers = updateServer(target.id, (server) => ({ ...server, profile: { ...server.profile, ...trustedProfile } }));
+          await saveWorkspace(nextServers, target.id);
+          return connectExistingSessionOnce(target.id);
+        }
+      }
+      if (changedHostKeyMatch) {
+        updateServer(target.id, {
+          connection: {
+            state: "error",
+            label: "安全校验失败",
+            detail: `SSH 主机指纹已变化：${changedHostKeyMatch[1]}`,
+          },
+          discovery: null,
+          rawOutput: "SSH 主机指纹已变化。为保护登录密码，App 已阻止连接。请先核对服务器身份后在会话设置中重新确认。",
+        });
+        return false;
+      }
       void appLog("error", "connection.failed", {
         serverId: target.id,
         host: targetProfile.host,
@@ -3633,6 +3660,7 @@ export function useWorkbenchController() {
         host: currentProfile.host,
         port: currentProfile.port,
         username: currentProfile.username,
+        sshHostKeyFingerprint: currentProfile.sshHostKeyFingerprint,
         platform: normalizeServerPlatform(currentProfile.platform),
         wslDistro: currentProfile.wslDistro,
         workdir: currentProfile.workdir,
@@ -4865,12 +4893,16 @@ export function useWorkbenchController() {
             const transport = directConfig?.tls ? "https" : "http";
             const endpoint = `${transport}://${currentProfile.host}:${port}`;
             const accessToken = String(directConfig?.accessToken || "").trim();
-            if (accessToken) {
+            const tlsFingerprint = String(directConfig?.tls?.fingerprint || "").trim();
+            const insecureReason = String(directConfig?.insecureReason || "").trim();
+            if (accessToken && (transport === "http" || tlsFingerprint)) {
               directProfile = {
                 ...currentProfile,
                 agentDirectEndpoint: endpoint,
                 agentDirectAccessToken: accessToken,
+                agentDirectTlsFingerprint: tlsFingerprint,
                 agentDirectAllowInsecure: transport === "http",
+                agentDirectInsecureReason: transport === "http" ? insecureReason : "",
               };
               updateServer(serverId, (server) => ({ ...server, profile: { ...server.profile, ...directProfile } }));
               void appLog("info", "agent.direct.configured", { serverId, endpoint, transport });

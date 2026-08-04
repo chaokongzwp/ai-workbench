@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "38";
+export const latestWorkbenchAgentVersion = "39";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -1832,7 +1832,7 @@ export function buildInstallWorkbenchAgentCommand(profile) {
   const agentDirectHost = String(profile?.host || "").trim().includes(":") && !String(profile?.host || "").trim().startsWith("[")
     ? `[${String(profile?.host || "").trim()}]`
     : String(profile?.host || "").trim();
-  const agentAdvertisedEndpoint = agentDirectHost ? `http://${agentDirectHost}:8787` : "";
+  const agentAdvertisedEndpoint = agentDirectHost ? `https://${agentDirectHost}:8787` : "";
   if (isWindowsProfile(profile)) {
     return powershellStdinCommand(`
 $AIWB_HOME = Join-Path $env:USERPROFILE ".ai-workbench\\agent"
@@ -1947,7 +1947,7 @@ Install-AiwbRuntime $AIWB_UPDATER_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-upda
 if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-http.mjs") -PathType Leaf) {
   $direct = Join-Path $AIWB_HOME "aiwb-agent-http.mjs"
   $directConfig = Join-Path $AIWB_HOME "http.json"
-  if (-not (Test-Path -LiteralPath $directConfig -PathType Leaf)) { '{"listenHost":"0.0.0.0","port":8787,"tls":false}' | Set-Content -LiteralPath $directConfig -Encoding UTF8 }
+  if (-not (Test-Path -LiteralPath $directConfig -PathType Leaf)) { '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}' | Set-Content -LiteralPath $directConfig -Encoding UTF8 }
   $directRunning = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$direct*" } | Select-Object -First 1
   if ($directRunning) { Stop-Process -Id $directRunning.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Process -FilePath $AIWB_NODE_COMMAND.Source -ArgumentList @($direct) -WindowStyle Hidden
@@ -2116,7 +2116,7 @@ cat > "$AIWB_AGENT_HOME/updater.json" <<AIWB_UPDATER_CONFIG
 AIWB_UPDATER_CONFIG
 if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" ]; then
   if [ ! -s "$AIWB_AGENT_HOME/http.json" ]; then
-    printf '%s\n' '{"listenHost":"0.0.0.0","port":8787,"tls":false}' > "$AIWB_AGENT_HOME/http.json"
+    printf '%s\n' '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}' > "$AIWB_AGENT_HOME/http.json"
     chmod 600 "$AIWB_AGENT_HOME/http.json"
   fi
   pkill -f "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" >/dev/null 2>&1 || true

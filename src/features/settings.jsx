@@ -1624,6 +1624,19 @@ export function SettingsPanel({
                 value={agentAvailable ? (agentNeedsUpdate ? "自动升级" : "已是最新") : agentUnsupported ? "不支持" : "未安装"}
                 tone={agentAvailable ? (agentNeedsUpdate ? "warning" : "success") : "neutral"}
               />
+              {draftProfile.agentDirectEndpoint ? (
+                <SettingsStatusRow
+                  icon={ShieldCheck}
+                  title={draftProfile.agentDirectEndpoint.startsWith("https:") ? "Agent 安全连接" : "Agent 非加密连接"}
+                  detail={
+                    draftProfile.agentDirectEndpoint.startsWith("https:")
+                      ? "HTTPS 已固定校验证书指纹。证书变更时会阻止连接。"
+                      : "OpenSSL 不可用，当前仅作为兼容降级使用；请在服务器安装 OpenSSL 后重新安装 Agent。"
+                  }
+                  value={draftProfile.agentDirectEndpoint.startsWith("https:") ? "已加密" : "未加密"}
+                  tone={draftProfile.agentDirectEndpoint.startsWith("https:") ? "success" : "warning"}
+                />
+              ) : null}
               <SettingsButtonRow>
                 <button
                   type="button"

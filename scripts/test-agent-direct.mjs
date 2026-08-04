@@ -19,13 +19,20 @@ assert.equal(normalizeAgentDirectEndpoint("https://agent.example.com/"), "https:
 assert.equal(normalizeAgentDirectEndpoint("http://agent.example.com"), "http://agent.example.com");
 assert.equal(normalizeAgentDirectEndpoint("not a url"), "");
 
-const profile = { agentDirectEndpoint: "https://agent.example.com/", agentDirectAccessToken: "secret" };
+const profile = {
+  agentDirectEndpoint: "https://agent.example.com/",
+  agentDirectAccessToken: "secret",
+  agentDirectTlsFingerprint: "sha256/example-pinned-certificate",
+};
 assert.equal(agentDirectConfig(profile).enabled, true);
-assert.equal(agentDirectEventUrl(profile), "wss://agent.example.com/v1/events");
+assert.equal(agentDirectEventUrl(profile), "");
+assert.equal(agentDirectConfig({ ...profile, agentDirectTlsFingerprint: "" }).enabled, false);
 const httpProfile = { agentDirectEndpoint: "http://agent.example.com", agentDirectAccessToken: "secret" };
 assert.equal(agentDirectConfig(httpProfile).enabled, false);
-assert.equal(agentDirectConfig({ ...httpProfile, agentDirectAllowInsecure: true }).enabled, true);
-assert.equal(agentDirectEventUrl({ ...httpProfile, agentDirectAllowInsecure: true }), "ws://agent.example.com/v1/events");
+assert.equal(agentDirectConfig({ ...httpProfile, agentDirectAllowInsecure: true }).enabled, false);
+const explicitHttpFallbackProfile = { ...httpProfile, agentDirectAllowInsecure: true, agentDirectInsecureReason: "openssl_unavailable" };
+assert.equal(agentDirectConfig(explicitHttpFallbackProfile).enabled, true);
+assert.equal(agentDirectEventUrl(explicitHttpFallbackProfile), "");
 assert.deepEqual(agentDirectTaskLifecycle({ status: "queued" }), { status: "running", outcome: "" });
 assert.deepEqual(agentDirectTaskLifecycle({ status: "done" }), { status: "completed", outcome: "success" });
 assert.deepEqual(agentDirectTaskLifecycle({ status: "error" }), { status: "completed", outcome: "error" });
