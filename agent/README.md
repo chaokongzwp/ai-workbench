@@ -6,14 +6,15 @@ current release directory used by the Linux and Windows installers.
 
 ## Current release
 
-- Current version: `v40`
-- Linux entry: `agent/v40/aiwbctl`
-- Windows entry: `agent/v40/aiwb-agent.mjs`
+- Current version: `v41`
+- Linux entry: `agent/v41/aiwbctl`
+- Windows entry: `agent/v41/aiwb-agent.mjs`
 
-Version 40 records the actual command PID separately from the runner PID. Task
-cancellation and stale-task cleanup terminate the complete descendant process
-tree, preventing a hung Codex or Claude process from surviving after the App
-shows the task as cancelled.
+Version 41 is the clean-break Agent release. AI tasks require Agent HTTPS;
+clients no longer fall back to direct SSH or tmux execution. The health endpoint
+exposes the real Agent version and protocol version so clients reject mismatched
+runtimes before creating a task. Process-tree cancellation from v40 remains in
+place.
 
 Do not determine the current version by counting directories or choosing a folder
 manually. Read the matching `latest` manifest.

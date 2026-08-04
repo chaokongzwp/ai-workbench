@@ -35,7 +35,6 @@
 | `sync-lost` | App 有任务 ID，但暂时无法同步远端状态 |
 | `sync-lost-no-task-id` | App 没拿到任务 ID，无法自动恢复，只能提示用户检查 |
 | `sync-timeout` | 同步等待超过 2 小时 |
-| `ssh-waiting` | SSH 直连正在等待命令返回 |
 
 ## 主时序图
 
@@ -125,14 +124,14 @@ sequenceDiagram
 4. 将当前会话标记为 `running`。
 5. 开始远端执行。
 
-## Agent 与 SSH 的区别
+## Agent 与 SSH 的职责
 
 | 通道 | 是否可后台恢复 | 状态来源 | 适用场景 |
 |---|---|---|---|
-| Agent 代理 | 是 | `remoteTaskId` + Agent 状态文件 | 默认通道，适合长任务、多设备同步 |
-| SSH 直连 | 否 | 当前 SSH 命令返回 | Agent 不可用时降级，适合短任务 |
+| Agent HTTPS | 是 | `remoteTaskId` + Agent 状态文件 | 唯一 AI 任务通道 |
+| SSH | 不适用 | SSH 会话 | 仅用于 Agent/CLI 安装修复和人工终端 |
 
-Agent 连续 2 次启动后台 runner 失败时，当前实现会自动降级到 SSH 直连。
+Agent 启动失败、版本过旧或协议不匹配时，任务明确失败并提示修复，不会降级到 SSH/tmux。
 
 ## 多设备状态一致性
 
@@ -155,7 +154,7 @@ Agent 连续 2 次启动后台 runner 失败时，当前实现会自动降级到
 | UI 文案 | 包含底层状态 |
 |---|---|
 | 提交中 | `preparing`、创建远端任务中 |
-| 执行中 | `queued`、`running`、`ssh-waiting` |
+| 执行中 | `queued`、`running` |
 | 恢复同步中 | `sync-lost`、网络恢复后的重新查询 |
 
 终态只保留 4 个：

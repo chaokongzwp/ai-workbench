@@ -19,16 +19,12 @@ const {
   automaticTaskWakePhrases,
   bashCommand,
   browserDiagnosticLogStorageKey,
-  buildAgentSendCommand,
-  buildCaptureCommand,
   buildClaudePrintCommand,
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildHealthCommand,
   buildInstallWorkbenchAgentCommand,
-  buildInterruptCommand,
-  buildKillCommand,
   buildMainAIRouteRequest,
   buildModelChoiceCommand,
   buildRemoteFileReadCommand,
@@ -294,13 +290,12 @@ export function RawOutput({
   onToggle,
   onRefresh,
   onInterrupt,
-  onKill,
 }) {
   const copyText = [
     `AI: ${agent.shortName}`,
     `会话: ${sessionName(profile, agent.id)}`,
     `状态: ${connection.label}`,
-    `通道: ${connectionMode?.label || "直接 SSH"}`,
+    `通道: ${connectionMode?.label || "Agent 代理"}`,
     connection.detail ? `详情: ${connection.detail}` : "",
     "",
     String(rawOutput || "暂无输出。"),
@@ -331,9 +326,6 @@ export function RawOutput({
             </button>
             <button type="button" onClick={onInterrupt} disabled={busy}>
               中断
-            </button>
-            <button type="button" onClick={onKill} disabled={busy}>
-              关闭会话
             </button>
           </div>
         ) : (

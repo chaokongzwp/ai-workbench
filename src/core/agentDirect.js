@@ -21,7 +21,7 @@ export function normalizeAgentDirectEndpoint(value) {
   if (!candidate) return "";
   try {
     const url = new URL(candidate);
-    if (!["https:", "http:"].includes(url.protocol)) return "";
+    if (url.protocol !== "https:") return "";
     url.pathname = url.pathname.replace(/\/+$/, "");
     url.search = "";
     url.hash = "";
@@ -34,16 +34,13 @@ export function normalizeAgentDirectEndpoint(value) {
 export function agentDirectConfig(profile = {}) {
   const endpoint = normalizeAgentDirectEndpoint(profile?.agentDirectEndpoint);
   const accessToken = text(profile?.agentDirectAccessToken);
-  const insecure = endpoint.startsWith("http:");
   const tlsFingerprint = text(profile?.agentDirectTlsFingerprint);
-  const insecureReason = text(profile?.agentDirectInsecureReason);
   return {
     endpoint,
     accessToken,
-    insecure,
+    insecure: false,
     tlsFingerprint,
-    insecureReason,
-    enabled: Boolean(endpoint && accessToken && (insecure ? profile?.agentDirectAllowInsecure === true && insecureReason : tlsFingerprint)),
+    enabled: Boolean(endpoint && accessToken && tlsFingerprint),
   };
 }
 
@@ -116,7 +113,7 @@ export class AgentDirectRequestError extends Error {
 }
 
 export async function agentDirectRequest(profile, path, { method = "GET", body, timeoutMs = 12_000, fetchImpl = globalThis.fetch } = {}) {
-  const { endpoint, accessToken, enabled, insecure, tlsFingerprint } = agentDirectConfig(profile);
+  const { endpoint, accessToken, enabled, tlsFingerprint } = agentDirectConfig(profile);
   if (!enabled) {
     throw new AgentDirectRequestError("Agent 直连尚未配置。", { code: "agent_direct_not_configured" });
   }
@@ -128,7 +125,7 @@ export async function agentDirectRequest(profile, path, { method = "GET", body, 
         endpoint,
         accessToken,
         tlsFingerprint,
-        allowInsecure: insecure && profile?.agentDirectAllowInsecure === true && Boolean(profile?.agentDirectInsecureReason),
+        allowInsecure: false,
         path,
         method,
         body,

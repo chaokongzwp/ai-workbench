@@ -109,7 +109,6 @@ export function MacWorkbenchShell({
   onReleaseRunningTask,
   onCancelRunningTask,
   onToggleRaw,
-  onKillAgentSession,
   onOpenTaskNotice,
   onCloseTaskNotice,
   onCloseSettings,
@@ -373,7 +372,6 @@ export function MacWorkbenchShell({
         onToggle={onToggleRaw}
         onRefresh={onRefreshOutput}
         onInterrupt={onInterruptAgent}
-        onKill={onKillAgentSession}
       />
 
       {mobileNavOpen ? (

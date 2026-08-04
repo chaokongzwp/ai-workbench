@@ -106,7 +106,6 @@ export function NativeWorkbenchShell({
   onReleaseRunningTask,
   onCancelRunningTask,
   onToggleRaw,
-  onKillAgentSession,
   onCloseSettings,
   onScanSettings,
   onAddSelectedSessions,
@@ -497,7 +496,6 @@ export function NativeWorkbenchShell({
         onToggle={onToggleRaw}
         onRefresh={onRefreshOutput}
         onInterrupt={onInterruptAgent}
-        onKill={onKillAgentSession}
       />
 
       {settingsOpen ? (

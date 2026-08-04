@@ -26,16 +26,12 @@ const {
   automaticTaskWakePhrases,
   bashCommand,
   browserDiagnosticLogStorageKey,
-  buildAgentSendCommand,
-  buildCaptureCommand,
   buildClaudePrintCommand,
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildHealthCommand,
   buildInstallWorkbenchAgentCommand,
-  buildInterruptCommand,
-  buildKillCommand,
   buildModelChoiceCommand,
   buildRemoteFileReadCommand,
   buildRemoteImageUploadCommand,
@@ -315,27 +311,20 @@ export function serverSidebarMeta(server, index, connected = false) {
 }
 
 export function connectionModeForServer(server, liveConnection = null) {
-  const connection = liveConnection || server?.connection || {};
-  const explicitMode = String(connection.mode || connection.transport || connection.backend || "").toLowerCase();
-  const profile = normalizeProfile(server?.profile || {});
-  if (server?.task?.backend === "agent") {
-    return { id: "agent", label: "Agent 代理", shortLabel: "Agent", description: "通过远端 Agent 后台执行" };
-  }
-  if (explicitMode === "agent" && profile.useWorkbenchAgent === true) {
-    return { id: "agent", label: "Agent 代理", shortLabel: "Agent", description: "通过远端 Agent 后台执行" };
-  }
-  if (explicitMode === "ssh") {
-    return { id: "ssh", label: "直接 SSH", shortLabel: "SSH", description: "通过 SSH 直连执行" };
-  }
   const diagnostics = server?.diagnostics || {};
-  if ((diagnostics.agent === "available" || diagnostics.agent_version) && profile.useWorkbenchAgent === true) {
-    return { id: "agent", label: "Agent 代理", shortLabel: "Agent", description: "远端 Agent 已可用" };
-  }
-  return { id: "ssh", label: "直接 SSH", shortLabel: "SSH", description: "通过 SSH 直连执行" };
+  const available = diagnostics.agent === "available" || diagnostics.agent_version;
+  void liveConnection;
+  return {
+    id: "agent",
+    label: "Agent 代理",
+    shortLabel: "Agent",
+    description: available ? "远端 Agent 已可用" : "需要安装或修复远端 Agent",
+  };
 }
 
 export function connectionModeFromHealth(health) {
-  return health?.agent === "available" || health?.agent_version ? "agent" : "ssh";
+  void health;
+  return "agent";
 }
 
 export function numericMetric(value) {

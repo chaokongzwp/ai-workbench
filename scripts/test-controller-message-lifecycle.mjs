@@ -106,9 +106,8 @@ assert.equal(recoveredAfterTcpShutdown.messages[0].remoteTaskStatus, "sync-lost"
 assert.equal(recoveredAfterTcpShutdown.messages[0].completedAt, undefined);
 assert.equal(recoveredAfterTcpShutdown.task.remoteTaskId, "task-accepted-before-disconnect");
 
-assert.equal(agentPreferredForProfile({ platform: "windows", useWorkbenchAgent: false }), true);
-assert.equal(agentPreferredForProfile({ platform: "linux", useWorkbenchAgent: true }), true);
-assert.equal(agentPreferredForProfile({ platform: "linux", useWorkbenchAgent: false }), false);
+assert.equal(agentPreferredForProfile({ platform: "windows" }), true);
+assert.equal(agentPreferredForProfile({ platform: "linux" }), true);
 assert.equal(messageTextKey({ promptText: " 继续执行 " }), "继续执行");
 assert.equal(isMessageListDiagnostic({ title: "消息列表已拉取" }), true);
 assert.equal(isMessageListDiagnostic({ title: "Claude 输出已刷新" }), true);
@@ -163,6 +162,7 @@ const agentRouteSource = controllerSource.slice(
 );
 assert.match(agentRouteSource, /patchServersByConnection\(/);
 assert.doesNotMatch(agentRouteSource, /setServers\(/);
+assert.doesNotMatch(controllerSource, /SSH 直连中|改用 SSH 直连|Agent 自动降级/);
 
 const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
 assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);

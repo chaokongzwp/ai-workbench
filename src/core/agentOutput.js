@@ -19,16 +19,12 @@ const {
   automaticTaskWakePhrases,
   bashCommand,
   browserDiagnosticLogStorageKey,
-  buildAgentSendCommand,
-  buildCaptureCommand,
   buildClaudePrintCommand,
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildHealthCommand,
   buildInstallWorkbenchAgentCommand,
-  buildInterruptCommand,
-  buildKillCommand,
   buildModelChoiceCommand,
   buildRemoteFileReadCommand,
   buildRemoteImageUploadCommand,
@@ -327,7 +323,7 @@ export function detectAgentIssue(output, agent) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
   }
   if (/Windows PowerShell 模式暂时不能使用持续会话/i.test(text)) {
-    return `${agent.shortName} 的 Windows 原生 Agent 还没有就绪。请先在全局设置中安装 Agent；未安装时仍可使用 SSH 直连。`;
+    return `${agent.shortName} 的 Windows 原生 Agent 还没有就绪。请先在全局设置中安装 Agent。`;
   }
   if (
     /Windows Agent 已启动，但没有找到/i.test(text) ||
@@ -627,7 +623,7 @@ export function classifyAgentFailure(raw, agent, status = {}) {
       kind: "agent_daemon_unavailable",
       title: "Agent 后台服务没有启动",
       body: "服务器 Agent 的常驻服务没有启动成功，这条排队任务无法继续。",
-      hint: "App 会自动改用 SSH 直连继续执行；之后可以到设置里重新安装 Agent 服务。",
+      hint: "请到设置里修复或重新安装 Agent 服务，然后重试任务。",
       detail,
       canRetry: true,
       canOpenSettings: true,

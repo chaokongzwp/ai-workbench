@@ -594,7 +594,6 @@ export function IphoneWorkbenchShell({
   onReleaseRunningTask,
   onCancelRunningTask,
   onToggleRaw,
-  onKillAgentSession,
   onCloseSettings,
   onScanSettings,
   onAddSelectedSessions,
@@ -1044,7 +1043,6 @@ export function IphoneWorkbenchShell({
         onToggle={onToggleRaw}
         onRefresh={onRefreshOutput}
         onInterrupt={onInterruptAgent}
-        onKill={onKillAgentSession}
       />
 
       {settingsOpen ? (

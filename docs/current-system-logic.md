@@ -18,8 +18,8 @@ AI Workbench 是一个把 **本地 App 会话**、**远端机器上的 Agent** �
 flowchart LR
     U[用户] --> A[AI Workbench App]
     A --> L[本地会话与聊天记录]
-    A -->|首选：HTTP / HTTPS| G[远端 AI Workbench Agent]
-    A -.安装、修复、降级.- S[SSH]
+    A -->|唯一任务通道：HTTPS| G[远端 AI Workbench Agent]
+    A -.安装、修复、人工终端.- S[SSH]
     S -.-> G
     G --> C[Codex CLI]
     G --> H[Claude CLI]
@@ -123,18 +123,16 @@ sequenceDiagram
 刷新不会重新发送，也不会创建新会话。它只对当前消息绑定的 `remoteTaskId` 做一次查询：
 
 1. 显示短暂提示“正在检查远端任务状态”。
-2. 优先调用 Agent HTTP `GET /v1/tasks/:taskId`。
+2. 调用 Agent HTTPS `GET /v1/tasks/:taskId`。
 3. 更新同一条 AI 消息的中间输出、完成、失败或取消状态。
-4. Agent HTTP 暂时不可达时，才回退 SSH 查询。
+4. Agent HTTPS 不可达时明确显示连接失败，不回退 SSH。
 5. 没有 `remoteTaskId` 时，不伪造刷新成功，而是说明这条消息无法远端恢复。
 
 ### 4.2 停止当前任务
 
 任务未结束时，发送按钮变为停止按钮。停止会向 Agent 请求取消对应 `remoteTaskId`。已收到的中间输出保留在消息中；任务变为“已取消”后立即解锁输入框。
 
-Agent v40 起，runner PID 与实际命令 PID 分开记录。停止任务、发现 runner 异常退出或卸载 Agent 时，会递归终止该任务的完整进程树，避免 Codex / Claude 子进程残留并继续占用会话。
-
-Windows PowerShell 的某些旧直连执行方式不能可靠中断；Agent 模式可提供一致的取消能力。
+Agent v40 起，runner PID 与实际命令 PID 分开记录。停止任务、发现 runner 异常退出或卸载 Agent 时，会递归终止该任务的完整进程树，避免 Codex / Claude 子进程残留并继续占用会话。v41 起只允许 Agent HTTPS 任务协议。
 
 ### 4.3 App 进入后台或被杀掉
 
@@ -154,17 +152,17 @@ App 退出不会终止 Agent 已接受的任务。远端 Agent 继续运行 CLI�
 
 ### 5.1 默认路径
 
-Agent 是默认执行方式。首次连接时 App 可通过 SSH 探测、安装或修复 Agent，并取得 Agent 直连地址与访问令牌。之后的日常任务创建和状态查询优先使用 Agent HTTP/HTTPS：
+Agent HTTPS 是唯一任务执行方式。首次连接时 App 通过 SSH 探测、安装或修复 Agent，并取得 HTTPS 地址、访问令牌与证书指纹。之后的任务创建、查询和取消全部使用 Agent HTTPS：
 
 | 场景 | 首选通道 | 说明 |
 |---|---|---|
-| 创建任务 | Agent HTTP `POST /v1/tasks` | App 很快拿到任务 ID，不等待 AI 完成。 |
-| 查询任务 | Agent HTTP `GET /v1/tasks/:id` | 获取状态、输出和终态。 |
-| 取消任务 | Agent HTTP `POST /v1/tasks/:id/cancel` | 停止远端任务。 |
+| 创建任务 | Agent HTTPS `POST /v1/tasks` | App 很快拿到任务 ID，不等待 AI 完成。 |
+| 查询任务 | Agent HTTPS `GET /v1/tasks/:id` | 获取状态、输出和终态。 |
+| 取消任务 | Agent HTTPS `POST /v1/tasks/:id/cancel` | 停止远端任务。 |
 | 实时事件 | Agent WebSocket `/v1/events` | Agent 支持推送任务变化；查询接口仍是恢复依据。 |
-| 安装、修复、查找 CLI | SSH | 首次初始化与应急回退。 |
+| 安装、修复、查找 CLI、人工终端 | SSH | 不参与 AI 任务执行。 |
 
-HTTP 直连配置不可用时，App 才使用 SSH 控制命令作为恢复路径。SSH 直连的旧任务没有可靠的后台任务 ID，因此不能像 Agent 任务一样跨设备恢复。
+Agent HTTPS 不可用、版本过旧或协议不匹配时，App 阻止任务并要求修复或升级，不会静默改走 SSH/tmux。
 
 ### 5.2 Agent 自身生命周期
 
@@ -213,7 +211,7 @@ iPhone/iPad 的敏感连接配置走原生 Keychain；其他运行时也使用�
 | 应用编排与状态 | `src/app/useWorkbenchController.jsx` | 会话、连接、发送、恢复、同步与动作入口。 |
 | 消息状态机 | `src/core/messageLifecycle.js`、`src/app/controllerMessageLifecycle.js` | 任务状态、占位消息去重、消息合并。 |
 | Agent 协议 | `src/core/agent.js`、`src/core/agentDirect.js`、`agent/runtime/` | Agent 命令、HTTP API、WebSocket、安装与更新。 |
-| SSH 与降级 | `src/core/sshReconnect.js`、`src/core/remoteCommands.js` | 重连、命令构造、Linux/Windows 差异。 |
+| SSH 引导与终端 | `src/core/sshReconnect.js`、`src/core/remoteCommands.js` | Agent/CLI 安装修复、人工终端、Linux/Windows 差异。 |
 | 聊天与输入 UI | `src/features/chat.jsx`、`src/features/composer.jsx` | 消息展示、刷新、停止、附件与复制。 |
 | 平台壳 | `src/platforms/mac/`、`iphone/`、`ipad/`、`android/` | 各平台布局和原生交互，不承载业务状态机。 |
 | 配置同步 | `services/config-sync/` | 账号鉴权、加密配置包、分享、Agent 更新登记与 APNs。 |

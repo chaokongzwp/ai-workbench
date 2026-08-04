@@ -62,9 +62,7 @@ const {
   automaticTaskWakePhrases,
   bashCommand,
   browserDiagnosticLogStorageKey,
-  buildAgentSendCommand,
   buildAgentTaskCommand,
-  buildCaptureCommand,
   buildClaudePrintCommand,
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
@@ -79,8 +77,6 @@ const {
   buildInstallWslCommand,
   buildInstallWorkbenchAgentCommand,
   buildUninstallWorkbenchAgentCommand,
-  buildInterruptCommand,
-  buildKillCommand,
   buildMainAIRouteRequest,
   buildModelChoiceCommand,
   buildRemoteFileDeleteCommand,
@@ -1908,7 +1904,6 @@ export function useWorkbenchController() {
       "busy",
       "sync-lost",
       "sync-lost-no-task-id",
-      "ssh-waiting",
     ]);
 
     const nextServers = incomingServers.map((incomingServer) => {
@@ -2195,15 +2190,10 @@ export function useWorkbenchController() {
 
   function applyAgentHealthToConnection(targetProfile, agentHealth = {}, rawOutput = "", preferredServerId = "") {
     const normalizedProfile = normalizeProfile(targetProfile);
-    const preferAgent = agentPreferredForProfile(normalizedProfile);
     return patchServersByConnection(
       normalizedProfile,
-      (server, serverProfile) => ({
+      (server) => ({
         ...server,
-        profile:
-          isWindowsProfile(serverProfile) && preferAgent
-            ? { ...server.profile, useWorkbenchAgent: true }
-            : server.profile,
         diagnostics: {
           ...(server.diagnostics || {}),
           ...agentHealth,
@@ -2215,7 +2205,7 @@ export function useWorkbenchController() {
         rawOutput: server.id === preferredServerId && rawOutput.trim() ? rawOutput.trim() : server.rawOutput,
         connection: {
           ...(server.connection || {}),
-          mode: preferAgent ? "agent" : server.connection?.mode || "ssh",
+          mode: "agent",
           ...(server.id === preferredServerId
             ? {
                 state: "connected",
@@ -2237,11 +2227,7 @@ export function useWorkbenchController() {
     if (!agentPreferredForProfile(requestedProfile)) {
       return { available: false, skipped: true, output: "", parsed: null, error: null };
     }
-    const currentProfile = withKnownPassword(
-      isWindowsProfile(requestedProfile)
-        ? { ...requestedProfile, useWorkbenchAgent: true }
-        : requestedProfile,
-    );
+    const currentProfile = withKnownPassword(requestedProfile);
 
     const publish = (state, label, detail, mode = "agent") => {
       const next = { state, label, detail, mode };
@@ -2359,7 +2345,7 @@ export function useWorkbenchController() {
         probeError: probeError ? shortError(probeError) : "",
         error: detail,
       });
-      publish("connected", "已连接", "Agent 不可用，已降级 SSH", "ssh");
+      publish("error", "Agent 不可用", "请安装或修复 Agent 后重试", "agent");
       return { available: false, skipped: false, installed: false, output: probeOutput, parsed: probe, agentHealth: {}, error };
     }
   }
@@ -3910,14 +3896,16 @@ export function useWorkbenchController() {
           },
           connection: {
             ...(server.connection || {}),
-            mode: "ssh",
-            detail: server.id === serverId ? "Agent 已卸载，使用 SSH 直连" : server.connection?.detail,
+            mode: "agent",
+            state: server.id === serverId ? "error" : server.connection?.state,
+            label: server.id === serverId ? "Agent 未安装" : server.connection?.label,
+            detail: server.id === serverId ? "重新安装 Agent 后才能执行任务" : server.connection?.detail,
           },
           rawOutput: server.id === serverId ? output.trim() || "Agent 已卸载。" : server.rawOutput,
         };
       });
       await saveWorkspace(nextServers, activeServerIdRef.current);
-      window.alert("Agent 已卸载。后续任务会使用 SSH 直连；不会删除工作目录和 Codex/Claude。 ");
+      window.alert("Agent 已卸载。工作目录和 Codex/Claude 未删除；重新安装 Agent 前无法执行 AI 任务。");
     } catch (error) {
       const message = shortError(error);
       setRawOutput(message);
@@ -4816,30 +4804,53 @@ export function useWorkbenchController() {
     };
 
     const runWithWorkbenchAgent = async () => {
-      const agentPreferred = agentPreferredForProfile(currentProfile);
       void appLog("info", "agent.route.selected", {
         serverId,
         agentId: agent.id,
         host: currentProfile.host,
         platform: currentProfile.platform,
-        configured: currentProfile.useWorkbenchAgent === true,
-        effective: agentPreferred,
+        configured: true,
+        effective: true,
       });
-      if (!agentPreferred) return { used: false };
 
       const connectionKey = profileConnectionKey(currentProfile);
       const cachedProbe = agentRouteProbeByConnectionRef.current.get(connectionKey);
-      // A persisted direct endpoint is already authenticated by its own bearer
-      // token. Do not put every send behind an SSH status probe: the task POST
-      // below is both the faster path and the authoritative liveness check.
-      const directRouteReady = agentDirectConfig(currentProfile).enabled;
+      let directRouteReady = false;
+      let directHealthOutput = "";
+      if (agentDirectConfig(currentProfile).enabled) {
+        try {
+          const directHealth = await agentDirectRequest(currentProfile, "/v1/health", { timeoutMs: 10_000 });
+          const directVersion = String(directHealth?.version || "").trim();
+          const protocolVersion = Number(directHealth?.protocolVersion || 0);
+          const versionReady =
+            workbenchAgentVersionNumber(directVersion) >= workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
+          directRouteReady = protocolVersion === 1 && versionReady && directHealth?.transport === "https";
+          if (directRouteReady) {
+            directHealthOutput = `__AIWB_AGENT_STATUS__ready\n__AIWB_AGENT_VERSION__${directVersion}`;
+          } else {
+            void appLog("warn", "agent.direct.version_mismatch", {
+              serverId,
+              agentId: agent.id,
+              version: directVersion,
+              protocolVersion,
+              requiredVersion: latestWorkbenchAgentVersion,
+            });
+          }
+        } catch (error) {
+          void appLog("warn", "agent.direct.health_failed", {
+            serverId,
+            agentId: agent.id,
+            error: shortError(error),
+          });
+        }
+      }
       const probeIsFresh =
         directRouteReady ||
         (cachedProbe &&
           Date.now() - Number(cachedProbe.checkedAt || 0) < 15_000 &&
           workbenchAgentAvailableFromOutput(cachedProbe.output));
       let probeOutput = directRouteReady
-        ? "__AIWB_AGENT_STATUS__ready\n__AIWB_AGENT_VERSION__direct"
+        ? directHealthOutput
         : probeIsFresh
           ? cachedProbe.output
           : "";
@@ -4867,18 +4878,12 @@ export function useWorkbenchController() {
           reason: "send",
         });
         if (!setup.available) {
-          setServerConnection(serverId, {
-            state: "testing",
-            label: "兼容模式",
-            detail: "Agent 不可用，已回退 SSH",
-            mode: "ssh",
-          });
           void appLog("warn", "agent.route.fallback", {
             serverId,
             agentId: agent.id,
             error: setup.error ? shortError(setup.error) : "Agent status unavailable",
           });
-          return { used: false };
+          throw new Error(setup.error ? shortError(setup.error) : "Agent 不可用，请先完成安装或升级。");
         }
         probeOutput = setup.output || "";
         if (!workbenchAgentAvailableFromOutput(probeOutput)) {
@@ -4898,13 +4903,7 @@ export function useWorkbenchController() {
           }
         }
         if (!workbenchAgentAvailableFromOutput(probeOutput)) {
-          setServerConnection(serverId, {
-            state: "testing",
-            label: "兼容模式",
-            detail: "Agent 安装后仍不可用，已回退 SSH",
-            mode: "ssh",
-          });
-          return { used: false };
+          throw new Error("Agent 安装后仍不可用，请检查 Agent 服务状态。");
         }
       }
       agentRouteProbeByConnectionRef.current.set(connectionKey, {
@@ -4959,15 +4958,12 @@ export function useWorkbenchController() {
             const endpoint = `${transport}://${currentProfile.host}:${port}`;
             const accessToken = String(directConfig?.accessToken || "").trim();
             const tlsFingerprint = String(directConfig?.tls?.fingerprint || "").trim();
-            const insecureReason = String(directConfig?.insecureReason || "").trim();
-            if (accessToken && (transport === "http" || tlsFingerprint)) {
+            if (accessToken && transport === "https" && tlsFingerprint) {
               directProfile = {
                 ...currentProfile,
                 agentDirectEndpoint: endpoint,
                 agentDirectAccessToken: accessToken,
                 agentDirectTlsFingerprint: tlsFingerprint,
-                agentDirectAllowInsecure: transport === "http",
-                agentDirectInsecureReason: transport === "http" ? insecureReason : "",
               };
               updateServer(serverId, (server) => ({ ...server, profile: { ...server.profile, ...directProfile } }));
               void appLog("info", "agent.direct.configured", { serverId, endpoint, transport });
@@ -5169,22 +5165,7 @@ export function useWorkbenchController() {
         const createdTaskAccepted = ["queued", "running"].includes(created.taskStatus);
         if (created.status !== "ready" || !createdTaskAccepted) {
           if (created.status === "missing" || created.status === "unsupported") {
-            if (userMessageId) {
-              updateAssistantMessageInServer(serverId, userMessageId, {
-                remoteTaskId: undefined,
-                conversationId: undefined,
-                backend: "ssh",
-                forceUpdate: true,
-              });
-            }
-            updateAssistantMessageInServer(serverId, assistantMessageId, {
-              remoteTaskId: undefined,
-              conversationId: undefined,
-              backend: "ssh",
-              remoteTaskStatus: undefined,
-              forceUpdate: true,
-            });
-            return { used: false };
+            throw new Error("Agent 协议不受支持，请将客户端和 Agent 升级到同一版本。");
           }
           throw new Error(created.error || trimVisibleText(createOutput) || "Agent 创建任务失败。");
         }
@@ -5405,7 +5386,7 @@ export function useWorkbenchController() {
               return { used: true, ok: false, pending: false };
             }
             const failure = classifyAgentFailure(raw, agent, status);
-            const shouldFallbackToSsh =
+            const shouldRetryAgent =
               failure?.kind === "agent_stale_runner" || failure?.kind === "agent_daemon_unavailable";
             void appLog("error", "agent.task.failed", {
               serverId,
@@ -5417,7 +5398,7 @@ export function useWorkbenchController() {
               failureTitle: failure?.title || "执行失败",
               hasUploadedFiles: /\b\.ai-workbench[\\/]uploads[\\/]/i.test(text),
             });
-            if (shouldFallbackToSsh) {
+            if (shouldRetryAgent) {
               setServerRawOutput(serverId, raw);
               void appLog("warn", "agent.startup.failed", {
                 serverId,
@@ -5453,41 +5434,23 @@ export function useWorkbenchController() {
                 break;
               }
 
-              const fallbackStartedAt = Date.now();
-	              updateAssistantMessageInServer(serverId, assistantMessageId, {
-	                title: "改用 SSH 直连",
-	                body: `Agent 连续 ${maxAgentStartupAttempts} 次没有启动成功，正在用 SSH 直连执行同一条任务。`,
+              updateAssistantMessageInServer(serverId, assistantMessageId, {
+                title: failure?.title || "Agent 启动失败",
+                body: failure?.body || "Agent 连续两次没有启动任务。请修复 Agent 后重试。",
                 output: "",
-                taskState: taskStateRunning,
-                backend: "ssh",
+                liveOutput: "",
+                taskState: taskStateFailed,
+                backend: "agent",
                 conversationId,
-                remoteTaskId: undefined,
+                remoteTaskId,
                 agentId: agent.id,
                 promptText: text,
-                startedAt: fallbackStartedAt,
-                remoteTaskStatus: "ssh-waiting",
+                remoteTaskStatus: taskStatus,
                 remoteTaskCheckedAt: Date.now(),
-                remoteTaskPid: "",
-                remoteTaskStartedAt: "",
-                remoteTaskRunnerStartedAt: "",
-                remoteTaskExitCode: "",
-                remoteSyncError: "",
-                agentFailure: undefined,
-                technicalDetail: cleanAgentFailureDetail(raw),
+                agentFailure: failure,
+                technicalDetail: failure?.detail || cleanAgentFailureDetail(raw),
               });
-              setServerTaskMetadata(serverId, {
-                backend: "ssh",
-                agentId: agent.id,
-                startedAt: fallbackStartedAt,
-                label: `SSH 直连 ${agent.shortName}`,
-              });
-	            setServerConnection(serverId, {
-	              state: "connected",
-	              label: "已连接",
-	              detail: "Agent 自动降级",
-	              mode: "ssh",
-              });
-              return { used: false, fallbackReason: failure.kind };
+              return { used: true, ok: false, pending: false };
             }
 
 	            updateAssistantMessageInServer(serverId, assistantMessageId, {
@@ -5599,62 +5562,12 @@ export function useWorkbenchController() {
         return { used: true, ok: false, pending: true };
       }
 
-      return { used: false, fallbackReason: "agent_startup_failed" };
+      throw new Error("Agent 无法启动任务，请修复 Agent 后重试。");
     };
 
     const agentRun = await runWithWorkbenchAgent();
     if (agentRun.used) return agentRun;
-
-    setServerConnection(serverId, {
-      state: "testing",
-      label: "SSH 直连中",
-      detail: agent.shortName,
-      mode: "ssh",
-    });
-	    updateAssistantMessageInServer(serverId, assistantMessageId, {
-	      title: "执行中",
-	      body: "正在等待远端返回。SSH 直连需要保持 App 在线。",
-      taskState: taskStateRunning,
-      backend: "ssh",
-      agentId: agent.id,
-      promptText: text,
-      startedAt: Date.now(),
-      remoteTaskStatus: "ssh-waiting",
-      remoteTaskCheckedAt: Date.now(),
-      remoteSyncError: "",
-    });
-    const firstOutput = await runRemoteCommandForProfile(
-      currentProfile,
-      buildAgentSendCommand(currentProfile, agent, text),
-      2_097_152,
-      7200,
-    );
-    const completesFromCommand = agent.id === "codex" || agent.id === "claude";
-    if (!applyAgentOutput(firstOutput, completesFromCommand)) return { ok: false, pending: false };
-
-    if (completesFromCommand) {
-      setServerConnection(serverId, {
-        state: "connected",
-        label: "会话已完成",
-        detail: sessionName(currentProfile, agent.id),
-        mode: "ssh",
-      });
-      return { ok: true, pending: false };
-    }
-
-    for (let index = 0; index < 5; index += 1) {
-      await sleep(1800);
-      const output = await runRemoteCommandForProfile(currentProfile, buildCaptureCommand(currentProfile, agent), 2_097_152, 90);
-      if (!applyAgentOutput(output, index === 4)) return { ok: false, pending: false };
-    }
-
-    setServerConnection(serverId, {
-      state: "connected",
-      label: "会话运行中",
-      detail: sessionName(currentProfile, agent.id),
-      mode: "ssh",
-    });
-    return { ok: true, pending: false };
+    throw new Error("Agent 是唯一任务执行后端，请先安装或修复 Agent。");
   }
 
   async function syncRemoteAgentMessage(serverId, message) {
@@ -7576,15 +7489,12 @@ export function useWorkbenchController() {
         : null;
     if (hasExplicitTarget && !requestedAgentMessage) {
       const targetAgent = agentById(targetMessage?.agentId || currentProfile.agentId);
-      const targetBackend = targetMessage?.backend === "ssh" ? "ssh" : targetMessage?.backend === "agent" ? "agent" : "";
-	      const detail =
-	        targetBackend === "ssh"
-	          ? "这条任务是 SSH 直连提交的，App 关闭或连接中断后无法后台恢复。聊天记录以本机保存为准；确认需要继续时，请重新发送。"
-	          : "这条消息没有任务 ID，App 不能继续查询远端状态。聊天记录以本机保存为准；确认需要继续时，请重新发送。";
+      const detail = "这条消息没有 Agent 任务 ID，App 不能继续查询远端状态。请重新发送。";
       setConnection({
         state: "connected",
         label: "已连接",
-        detail: targetBackend === "ssh" ? "SSH 直连无法后台恢复" : "缺少 Agent 任务 ID",
+        detail: "缺少 Agent 任务 ID",
+        mode: "agent",
       });
       setRawOpen(true);
       setRawOutput(
@@ -7592,24 +7502,24 @@ export function useWorkbenchController() {
           .filter(Boolean)
           .join("\n\n"),
       );
-	      updateAssistantMessageInServer(serverId, targetMessage.id, {
-	        title: targetBackend === "ssh" ? "无法后台恢复" : "状态无法同步",
+      updateAssistantMessageInServer(serverId, targetMessage.id, {
+        title: "状态无法同步",
         body: detail,
         taskState: taskStateFailed,
         resultMissing: false,
-        remoteTaskStatus: targetBackend === "ssh" ? "ssh-unrecoverable" : "sync-lost-no-task-id",
+        remoteTaskStatus: "sync-lost-no-task-id",
         remoteSyncError: detail,
         remoteTaskCheckedAt: Date.now(),
         forceUpdate: true,
       });
       setServerTaskMetadata(serverId, {
-        backend: targetBackend,
+        backend: "agent",
         agentId: targetAgent.id,
         finishedAt: Date.now(),
       });
       enqueueTaskNotice({
         serverId,
-        title: targetBackend === "ssh" ? "SSH 直连任务无法后台恢复" : "缺少任务 ID，无法继续同步",
+        title: "缺少任务 ID，无法继续同步",
         tone: "warning",
       });
       return;
@@ -7635,42 +7545,14 @@ export function useWorkbenchController() {
       }
       return;
     }
-    if (server?.conversationId && agentPreferredForProfile(currentProfile)) {
-      setConnection({
-        ...(server.connection || {}),
-        state: "connected",
-        label: "已连接",
-        detail: "没有需要同步的未完成任务",
-        mode: "agent",
-      });
-      enqueueTaskNotice({ serverId, title: "最后一条回复已经完整保存在本地", tone: "done" });
-      return;
-    }
-    if (activeAgent.id === "claude") {
-      setConnection({ state: "connected", detail: "Claude 会直接返回最终结果" });
-      return;
-    }
-
-    setBusy(true);
-    setRawOpen(true);
-    try {
-      const output = await runRemoteCommand(buildCaptureCommand(currentProfile, activeAgent), 2_097_152, 90);
-      setRawOutput(output.trim());
-      setMessages((items) => [
-        ...items,
-        createMessage({
-          role: "assistant",
-          agentId: activeAgent.id,
-          title: `${activeAgent.shortName} 输出已刷新`,
-          body: `已读取 ${activeAgent.shortName} 当前输出。`,
-          output: cleanAgentOutput(output),
-        }),
-      ]);
-    } catch (error) {
-      setRawOutput(shortError(error));
-    } finally {
-      setBusy(false);
-    }
+    setConnection({
+      ...(server?.connection || {}),
+      state: "connected",
+      label: "已连接",
+      detail: "没有需要同步的未完成任务",
+      mode: "agent",
+    });
+    enqueueTaskNotice({ serverId, title: "最后一条回复已经完整保存在本地", tone: "done" });
   }
 
   async function interruptAgent() {
@@ -7737,69 +7619,16 @@ export function useWorkbenchController() {
         return;
       }
 
-      const output = await runRemoteCommandForProfile(currentProfile, buildInterruptCommand(currentProfile, taskAgent), 1_048_576, 60);
-      const raw = String(output || "").trim();
-      const visibleOutput = visibleOutputForStoppedTask(raw, runningMessage);
-      const now = Date.now();
-      setServerRawOutput(serverId, raw);
-      if (runningMessage) {
-        updateAssistantMessageInServer(serverId, runningMessage.id, {
-          title: `${taskAgent.shortName} 任务已停止`,
-          body: visibleOutput ? "已发送停止指令，下面保留停止前已经收到的内容。" : "已发送停止指令，可以继续输入。",
-          output: visibleOutput,
-          liveOutput: "",
-          taskState: taskStateCancelled,
-          backend: runningMessage.backend || "ssh",
-          agentId: taskAgent.id,
-          promptText: runningMessage.promptText || "",
-          cancelledAt: now,
-          completedAt: now,
-          forceUpdate: true,
-        });
-      }
-      setServerTaskMetadata(serverId, {
-        backend: runningMessage?.backend || "ssh",
-        agentId: taskAgent.id,
-        interruptedAt: now,
-        finishedAt: now,
-      });
-      setServerConnection(serverId, {
-        state: "connected",
-        label: "已连接",
-        detail: sessionName(currentProfile, taskAgent.id),
-        mode: runningMessage?.backend === "agent" ? "agent" : "ssh",
-      });
-      enqueueTaskNotice({ serverId, title: "任务已停止，可以继续输入", tone: "warning" });
+      throw new Error("当前任务缺少 Agent 任务 ID，不能执行旧式 SSH/tmux 停止操作。请重新连接会话。");
     } catch (error) {
       const message = shortError(error);
       setServerRawOutput(serverId, message);
       setServerConnection(serverId, {
         state: "error",
         detail: message,
-        mode: runningAgentMessage ? "agent" : "ssh",
+        mode: "agent",
       });
       enqueueTaskNotice({ serverId, title: "停止任务失败，请查看详情", tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function killAgentSession() {
-    if (busy) return;
-    const currentProfile = normalizeProfile(profileRef.current);
-    if (showProfileIssue(currentProfile)) return;
-
-    setBusy(true);
-    setRawOpen(true);
-    try {
-      const output = await runRemoteCommand(buildKillCommand(currentProfile, activeAgent), 512_000, 60);
-      setRawOutput(output.trim());
-      setConnection({
-        state: "idle",
-        detail: sessionName(currentProfile, activeAgent.id),
-      });
-    } catch (error) {
-      setRawOutput(shortError(error));
     } finally {
       setBusy(false);
     }
@@ -8032,7 +7861,6 @@ export function useWorkbenchController() {
     onReleaseRunningTask: releaseActiveRunningTask,
     onCancelRunningTask: interruptAgent,
     onToggleRaw: () => setRawOpen((value) => !value),
-    onKillAgentSession: killAgentSession,
     onOpenTaskNotice: async () => {
       if (activeTaskNotice?.serverId) await selectServer(activeTaskNotice.serverId);
       setTaskNotice(null);

@@ -115,15 +115,11 @@ export function loadAgentDirectConfig() {
   const certificatesDirectory = join(agentHome, "certificates");
   const defaultKeyPath = join(certificatesDirectory, "agent.key.pem");
   const defaultCertPath = join(certificatesDirectory, "agent.cert.pem");
-  // v39 upgrades legacy HTTP-only configs to TLS. HTTP is retained only as an
-  // explicit, recorded fallback when certificate generation is unavailable.
-  const tlsExplicitlyDisabled = raw.securityVersion >= 1 && (raw.tls === false || raw.tls?.enabled === false);
-  const tlsDisabled = tlsExplicitlyDisabled || process.env.AIWB_AGENT_DIRECT_TLS === "0";
   const requestedTls = raw.tls && typeof raw.tls === "object" ? raw.tls : {};
   const certPath = text(requestedTls.certPath) || defaultCertPath;
   const keyPath = text(requestedTls.keyPath) || defaultKeyPath;
-  let tls = tlsDisabled ? null : existsSync(certPath) && existsSync(keyPath) ? { certPath, keyPath } : null;
-  if (!tls && !tlsDisabled) {
+  let tls = existsSync(certPath) && existsSync(keyPath) ? { certPath, keyPath } : null;
+  if (!tls) {
     try {
       mkdirSync(certificatesDirectory, { recursive: true, mode: 0o700 });
       const result = spawnSync(
@@ -132,21 +128,19 @@ export function loadAgentDirectConfig() {
         { stdio: "ignore" },
       );
       if (result.status === 0 && existsSync(certPath) && existsSync(keyPath)) tls = { certPath, keyPath };
-    } catch {
-      // HTTP fallback is intentional when this host cannot generate a certificate.
-    }
+    } catch {}
   }
+  if (!tls) throw new Error("Agent HTTPS 需要 OpenSSL 生成本地证书。");
   const tlsFingerprint = tls ? certificateFingerprint(tls.certPath) : "";
   const next = {
     securityVersion: 1,
     listenHost: text(raw.listenHost) || "127.0.0.1",
     port: Math.max(1, Math.min(65535, Number(raw.port) || 8787)),
     accessToken: token,
-    tls: tls ? { enabled: true, ...tls, fingerprint: tlsFingerprint } : false,
-    insecureReason: tls ? "" : (tlsDisabled ? text(raw.insecureReason) || "tls_disabled" : "openssl_unavailable"),
+    tls: { enabled: true, ...tls, fingerprint: tlsFingerprint },
   };
   mkdirSync(dirname(configPath), { recursive: true });
-  if (!raw.accessToken || raw.securityVersion !== 1 || raw.tls !== false || !text(raw.insecureReason)) {
+  if (!raw.accessToken || raw.securityVersion !== 1 || raw.tls?.fingerprint !== tlsFingerprint || "insecureReason" in raw) {
     writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   }
   return next;
@@ -354,10 +348,10 @@ export function createAgentDirectServer({ config = loadAgentDirectConfig(), cont
       if (!authorize(request, config)) return json(response, 401, { error: { code: "unauthorized", message: "Agent access token 无效。" } });
       if (request.method === "GET" && url.pathname === "/v1/health") {
         return json(response, 200, {
-          version: "direct-v1",
-          transport: config.tls ? "https" : "http",
+          version: await agentVersion(control),
+          protocolVersion: 1,
+          transport: "https",
           tlsFingerprint: text(config.tls?.fingerprint),
-          insecureReason: text(config.insecureReason),
           agentHome,
         });
       }

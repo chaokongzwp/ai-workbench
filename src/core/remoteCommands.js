@@ -1365,111 +1365,12 @@ done
 `;
 }
 
-export function buildAgentSendCommand(profile, agent, prompt) {
-  if (agent.id === "codex") return buildCodexExecCommand(profile, agent, prompt);
-  if (agent.id === "claude") return buildClaudePrintCommand(profile, agent, prompt);
-  if (isWindowsProfile(profile)) return buildWindowsUnsupportedAgentCommand(agent);
-
-  const targetSession = sessionName(profile, agent.id);
-  const encodedPrompt = toBase64Utf8(formatAgentPrompt(prompt));
-  const command = agentCommand(profile, agent);
-  const starterPath = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench/start-${targetSession}.sh`;
-  const starterScript = `#!/usr/bin/env bash
-cd ${shQuote(profile.workdir)}
-printf 'AI Workbench: 正在启动 ${agent.shortName}...\\n'
-${command}
-code=$?
-printf '\\nAI Workbench: ${agent.shortName} 已退出，退出码 %s。\\n' "$code"
-printf '请在服务器上单独运行 ${commandName(command) || agent.shortName} 查看启动原因。\\n'
-exec bash -l
-`;
-
-  return remoteBashCommand(profile, `
-set -e
-mkdir -p ${shQuote(profile.workdir)}
-mkdir -p ${shQuote(dirnameRemote(starterPath))}
-cat > ${shQuote(starterPath)} <<'AIWB_STARTER'
-${starterScript}
-AIWB_STARTER
-chmod 700 ${shQuote(starterPath)}
-
-if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
-  CURRENT_COMMAND=$(tmux display-message -p -t ${shQuote(targetSession)} '#{pane_current_command}' 2>/dev/null || true)
-  AIWB_EXISTING=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -80 2>/dev/null || true)
-  if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$' &&
-     ! printf '%s' "$AIWB_EXISTING" | grep -Fq 'OpenAI Codex'; then
-    tmux kill-session -t ${shQuote(targetSession)}
-  fi
-fi
-
-if ! tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
-  tmux new-session -d -s ${shQuote(targetSession)} -c ${shQuote(profile.workdir)} ${shQuote(starterPath)}
-  sleep 1
-fi
-
-${agent.id === "claude" ? claudeSetupAutomationSnippet(targetSession) : ""}
-
-CURRENT_COMMAND=$(tmux display-message -p -t ${shQuote(targetSession)} '#{pane_current_command}' 2>/dev/null || true)
-AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
-if printf '%s' "$CURRENT_COMMAND" | grep -Eiq '^(bash|zsh|sh|fish)$' &&
-   ! printf '%s' "$AIWB_PANE" | grep -Fq 'OpenAI Codex'; then
-  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
-  exit 46
-fi
-
-${agent.id === "codex" ? `
-AIWB_READY=0
-for AIWB_READY_TRY in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
-  if printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with ChatGPT' &&
-     printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with Device Code'; then
-    tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
-    exit 48
-  fi
-  if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
-     printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
-    tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
-    exit 47
-  fi
-  if printf '%s' "$AIWB_PANE" | grep -Fq 'OpenAI Codex'; then
-    AIWB_READY=1
-    break
-  fi
-  sleep 0.5
-done
-
-if [ "$AIWB_READY" != "1" ]; then
-  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
-  exit 49
-fi
-` : ""}
-
-AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
-if printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with ChatGPT' &&
-   printf '%s' "$AIWB_PANE" | grep -Fq 'Sign in with Device Code'; then
-  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
-  exit 48
-fi
-
-AIWB_PANE=$(tmux capture-pane -t ${shQuote(targetSession)} -p -S -120 2>/dev/null || true)
-if printf '%s' "$AIWB_PANE" | grep -Fq 'Introducing GPT-5.5' &&
-   printf '%s' "$AIWB_PANE" | grep -Fq 'Use existing model'; then
-  tmux capture-pane -t ${shQuote(targetSession)} -p -S -220
-  exit 47
-fi
-
-AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
-tmux set-buffer -b aiwb-prompt "$AIWB_PROMPT"
-tmux paste-buffer -t ${shQuote(targetSession)} -b aiwb-prompt
-sleep 0.6
-tmux send-keys -t ${shQuote(targetSession)} C-m
-sleep 1.4
-tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
-`);
-}
-
 export function buildAgentTaskCommand(profile, agent, prompt) {
-  if (!isWindowsProfile(profile)) return buildAgentSendCommand(profile, agent, prompt);
+  if (!isWindowsProfile(profile)) {
+    if (agent.id === "codex") return buildCodexExecCommand(profile, agent, prompt);
+    if (agent.id === "claude") return buildClaudePrintCommand(profile, agent, prompt);
+    return buildWindowsUnsupportedAgentCommand(agent);
+  }
 
   const kind = agent.id === "claude" ? "claude" : "codex";
   const command = agentCommand(profile, agent) || kind;
@@ -1575,69 +1476,6 @@ if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
   tmux send-keys -t ${shQuote(targetSession)} ${shQuote(key)} C-m
   sleep 1.2
   tmux capture-pane -t ${shQuote(targetSession)} -p -S -180
-else
-  printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
-fi
-`);
-}
-
-export function buildCaptureCommand(profile, agent) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式使用一次性任务，没有可刷新的 tmux 会话。");
-  if (agent.id === "claude") {
-    return remoteBashCommand(profile, `
-printf 'Claude 当前使用非交互模式：任务会直接等待最终结果返回，不需要刷新 tmux 输出。\\n'
-`);
-  }
-
-  const targetSession = sessionName(profile, agent.id);
-  return remoteBashCommand(profile, `
-if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
-  ${agent.id === "claude" ? claudeSetupAutomationSnippet(targetSession) : ""}
-  tmux capture-pane -t ${shQuote(targetSession)} -p -S -260
-else
-  printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
-fi
-`);
-}
-
-export function buildInterruptCommand(profile, agent) {
-  if (isWindowsProfile(profile)) {
-    const stateDir = joinWindowsPath(profile.workdir, ".ai-workbench");
-    const pidFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.pid`);
-    return powershellCommand(`
-$AIWB_PID_FILE = ${psQuote(pidFile)}
-$AIWB_PID = if (Test-Path -LiteralPath $AIWB_PID_FILE) { (Get-Content -LiteralPath $AIWB_PID_FILE -Raw).Trim() } else { "" }
-if ($AIWB_PID -match "^\\d+$" -and (Get-Process -Id ([int]$AIWB_PID) -ErrorAction SilentlyContinue)) {
-  & taskkill.exe /PID $AIWB_PID /T /F | Out-Null
-  Remove-Item -LiteralPath $AIWB_PID_FILE -Force -ErrorAction SilentlyContinue
-  Write-Output "AI Workbench 已停止这条 Windows 任务。"
-} else {
-  Remove-Item -LiteralPath $AIWB_PID_FILE -Force -ErrorAction SilentlyContinue
-  Write-Output "任务进程已结束，可以继续输入。"
-}
-`);
-  }
-
-  const targetSession = sessionName(profile, agent.id);
-  return remoteBashCommand(profile, `
-if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
-  tmux send-keys -t ${shQuote(targetSession)} C-c
-  sleep 0.4
-  tmux capture-pane -t ${shQuote(targetSession)} -p -S -160
-else
-  printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
-fi
-`);
-}
-
-export function buildKillCommand(profile, agent) {
-  if (isWindowsProfile(profile)) return buildWindowsNoTmuxCommand("Windows PowerShell 模式没有需要关闭的 tmux 会话。");
-
-  const targetSession = sessionName(profile, agent.id);
-  return remoteBashCommand(profile, `
-if tmux has-session -t ${shQuote(targetSession)} 2>/dev/null; then
-  tmux kill-session -t ${shQuote(targetSession)}
-  printf 'killed tmux session: %s\\n' ${shQuote(targetSession)}
 else
   printf 'tmux session not running: %s\\n' ${shQuote(targetSession)}
 fi

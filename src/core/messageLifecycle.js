@@ -76,7 +76,7 @@ export function taskStateFromRemoteStatus(remoteStatus, { hasTaskId = false, res
   const status = text(remoteStatus);
   if (status === "preparing") return taskStateSubmitting;
   if (status === "queued" || status === "busy") return taskStateAccepted;
-  if (status === "running" || status === "ssh-waiting") return taskStateRunning;
+  if (status === "running") return taskStateRunning;
   if (status === "syncing" || status === "sync-lost" || status === "sync-timeout" || status === "unknown") {
     return hasTaskId ? taskStateSyncing : taskStateFailed;
   }

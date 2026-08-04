@@ -424,14 +424,11 @@ export const defaultProfile = {
   playResultAudio: false,
   resultAudioMode: "summary",
   taskPushNotificationsEnabled: false,
-  useWorkbenchAgent: true,
   // Direct Agent transport is opt-in until the remote machine has a trusted
   // HTTPS endpoint and a per-machine access token provisioned by the installer.
   agentDirectEndpoint: "",
   agentDirectAccessToken: "",
   agentDirectTlsFingerprint: "",
-  agentDirectAllowInsecure: false,
-  agentDirectInsecureReason: "",
   sshHostKeyFingerprint: "",
   executionPermissionMode: "standard",
   appearanceMode: "light",
@@ -1324,7 +1321,6 @@ export function normalizeProfile(profile) {
   const platform = normalizeServerPlatform(profile?.platform);
   const platformDefaults = serverPlatformDefaults[platform] || serverPlatformDefaults.linux;
   const normalizedAgentId = agents.some((agent) => agent.id === profile?.agentId) ? profile.agentId : defaultProfile.agentId;
-  const defaultUseWorkbenchAgent = defaultProfile.useWorkbenchAgent;
   const normalized = {
     ...defaultProfile,
     ...platformDefaults,
@@ -1360,15 +1356,9 @@ export function normalizeProfile(profile) {
       profile?.taskPushNotificationsEnabled === undefined
         ? defaultProfile.taskPushNotificationsEnabled
         : Boolean(profile.taskPushNotificationsEnabled),
-    useWorkbenchAgent:
-      profile?.useWorkbenchAgent === undefined
-        ? defaultUseWorkbenchAgent
-        : Boolean(profile.useWorkbenchAgent),
     agentDirectEndpoint: String(profile?.agentDirectEndpoint || "").trim(),
     agentDirectAccessToken: String(profile?.agentDirectAccessToken || "").trim(),
     agentDirectTlsFingerprint: String(profile?.agentDirectTlsFingerprint || "").trim(),
-    agentDirectAllowInsecure: profile?.agentDirectAllowInsecure === true,
-    agentDirectInsecureReason: String(profile?.agentDirectInsecureReason || "").trim(),
     sshHostKeyFingerprint: String(profile?.sshHostKeyFingerprint || "").trim(),
     executionPermissionMode: normalizeExecutionPermissionMode(profile?.executionPermissionMode),
     appearanceMode: normalizeAppearanceMode(profile?.appearanceMode),
@@ -1698,7 +1688,7 @@ export function createServerId() {
 
 export function initialConnectionForProfile(profile) {
   const normalized = normalizeProfile(profile || {});
-  const mode = normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : "ssh";
+  const mode = "agent";
   return profileReady(normalized)
     ? { state: "idle", channelState: "disconnected", label: "未连接", detail: `${normalized.username}@${normalized.host}`, mode }
     : { state: "idle", channelState: "disconnected", label: "未连接", detail: profileIssue(normalized), mode };
@@ -1723,10 +1713,9 @@ export function connectionForAppLaunch(server) {
 
 export function readyConnectionForSession(profile, previous = {}) {
   const normalized = normalizeProfile(profile);
-  const previousMode = previous?.mode || previous?.transport || previous?.backend || "";
   return {
     ...initialConnectionForProfile(normalized),
-    mode: normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : previousMode,
+    mode: "agent",
     state: "idle",
     label: "未连接",
     detail: String(normalized.workdir || "").trim() ? workdirDisplayName(normalized.workdir) : `${normalized.username}@${normalized.host}`,

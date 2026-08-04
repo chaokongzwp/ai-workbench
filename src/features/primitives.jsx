@@ -19,16 +19,12 @@ const {
   automaticTaskWakePhrases,
   bashCommand,
   browserDiagnosticLogStorageKey,
-  buildAgentSendCommand,
-  buildCaptureCommand,
   buildClaudePrintCommand,
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildHealthCommand,
   buildInstallWorkbenchAgentCommand,
-  buildInterruptCommand,
-  buildKillCommand,
   buildMainAIRouteRequest,
   buildModelChoiceCommand,
   buildRemoteFileReadCommand,
@@ -511,12 +507,9 @@ export function WorkbenchLogo() {
 }
 
 export function ConnectionModeBadge({ mode, compact = false }) {
-  const info =
-    typeof mode === "string"
-      ? mode === "agent"
-        ? { id: "agent", label: "Agent 代理", shortLabel: "Agent", description: "通过远端 Agent 后台执行" }
-        : { id: "ssh", label: "直接 SSH", shortLabel: "SSH", description: "通过 SSH 直连执行" }
-      : mode || { id: "ssh", label: "直接 SSH", shortLabel: "SSH", description: "通过 SSH 直连执行" };
+  const info = typeof mode === "object" && mode?.id === "agent"
+    ? mode
+    : { id: "agent", label: "Agent 代理", shortLabel: "Agent", description: "通过远端 Agent 后台执行" };
   return (
     <span className={`connection-mode-badge ${info.id} ${compact ? "compact" : ""}`} title={info.description}>
       {compact ? info.shortLabel : info.label}

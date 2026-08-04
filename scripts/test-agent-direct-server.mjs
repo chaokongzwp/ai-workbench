@@ -17,19 +17,21 @@ process.env.AIWB_AGENT_HOME = home;
 const { createAgentDirectServer, loadAgentDirectConfig, startAgentDirectServer } = await import("../agent/runtime/aiwb-agent-http.mjs");
 const defaultConfig = loadAgentDirectConfig();
 assert.equal(defaultConfig.securityVersion, 1);
-if (defaultConfig.tls) {
-  assert.equal(defaultConfig.tls.enabled, true);
-  assert.match(defaultConfig.tls.fingerprint, /^sha256\/[A-Za-z0-9+/=]+$/);
-} else {
-  assert.equal(defaultConfig.insecureReason, "openssl_unavailable");
-}
+assert.equal(defaultConfig.tls.enabled, true);
+assert.match(defaultConfig.tls.fingerprint, /^sha256\/[A-Za-z0-9+/=]+$/);
 const server = createAgentDirectServer({
   config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
-  control: async () => ({ code: 0, stdout: "", stderr: "" }),
+  control: async () => ({ code: 0, stdout: "__AIWB_AGENT_VERSION__41", stderr: "" }),
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 const baseUrl = `http://127.0.0.1:${address.port}`;
+const healthResponse = await fetch(`${baseUrl}/v1/health`, { headers: { Authorization: "Bearer test-token" } });
+assert.equal(healthResponse.status, 200);
+const health = await healthResponse.json();
+assert.equal(health.version, "41");
+assert.equal(health.protocolVersion, 1);
+assert.equal(health.transport, "https");
 const response = await fetch(`${baseUrl}/v1/tasks/task-1`, { headers: { Authorization: "Bearer test-token" } });
 assert.equal(response.status, 200);
 const payload = await response.json();

@@ -50,15 +50,11 @@ const {
   automaticTaskWakePhrases,
   bashCommand,
   browserDiagnosticLogStorageKey,
-  buildAgentSendCommand,
-  buildCaptureCommand,
   buildClaudePrintCommand,
   buildCodexExecCommand,
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildHealthCommand,
-  buildInterruptCommand,
-  buildKillCommand,
   buildMainAIRouteRequest,
   buildModelChoiceCommand,
   buildRemoteFileReadCommand,
@@ -854,30 +850,6 @@ export function SettingsPanel({
           ? "WSL 系统组件已存在，还需要安装 Ubuntu"
           : "连接后可自动安装 WSL 2 和 Ubuntu；需要管理员权限，可能需要重启";
 
-  function handleAgentModeChange(value) {
-    if (!value) {
-      if (isWindowsProfile(draftProfile)) {
-        setAgentSelectionNotice("Windows 会话默认使用 Agent；只有 Agent 不可用时才会自动回退 SSH。");
-        updateField("useWorkbenchAgent", true);
-        return;
-      }
-      setAgentSelectionNotice("");
-      updateField("useWorkbenchAgent", false);
-      return;
-    }
-    if (agentUnsupported) {
-      setAgentSelectionNotice("当前连接环境暂不支持 Agent，只能使用 SSH 直连。");
-      return;
-    }
-    if (!agentAvailable) {
-      setAgentSelectionNotice("已设为优先使用 Agent。当前机器还没检测到 Agent 时，本次会自动回退 SSH；安装或重新检测成功后，新任务会走 Agent。");
-      updateField("useWorkbenchAgent", true);
-      return;
-    }
-    setAgentSelectionNotice("");
-    updateField("useWorkbenchAgent", true);
-  }
-
   async function handleRefreshSessionAgent() {
     if (!editingServer?.id || !onRefreshAgent || busy) return;
     setAgentSelectionNotice("");
@@ -909,7 +881,7 @@ export function SettingsPanel({
 
   async function handleUninstallSessionAgent() {
     if (!editingServer?.id || !onUninstallAgent || busy) return;
-    const confirmed = window.confirm("卸载这台机器上的 AI Workbench Agent？\n\n这会停止 Agent 后台任务并删除 Agent 文件，但不会删除工作目录、Codex 或 Claude。之后会使用 SSH 直连。 ");
+    const confirmed = window.confirm("卸载这台机器上的 AI Workbench Agent？\n\n这会停止 Agent 后台任务并删除 Agent 文件，但不会删除工作目录、Codex 或 Claude。卸载后将无法执行 AI 任务，直到重新安装 Agent。");
     if (!confirmed) return;
     setAgentSelectionNotice("");
     await onUninstallAgent(editingServer.id);
@@ -1475,7 +1447,7 @@ export function SettingsPanel({
                 icon={HardDrives}
                 title="连接配置"
                 detail={`${currentAgent.shortName}，${currentModel} · ${draftProfile.username || "用户"}@${draftProfile.host || "未配置"}`}
-                value={draftProfile.useWorkbenchAgent === true || isWindowsProfile(draftProfile) ? "Agent" : "SSH"}
+                value="Agent"
                 onClick={() => setSettingsPage("session-general")}
               />
               <SettingsMenuRow
@@ -1758,15 +1730,9 @@ export function SettingsPanel({
             </SettingsSection>
             <SettingsSection
               title="运行方式"
-              footer="Agent 异常时会自动改用 SSH 直连。"
+              footer="AI 任务只通过 Agent HTTPS 执行；SSH 仅用于安装、修复和人工终端。"
               className="agent-mode-panel session-agent-panel"
             >
-              <ConfigToggle
-                label="使用 Agent"
-                checked={draftProfile.useWorkbenchAgent === true || isWindowsProfile(draftProfile)}
-                disabled={agentUnsupported || busy || isWindowsProfile(draftProfile)}
-                onChange={handleAgentModeChange}
-              />
               <SettingsStatusRow
                 icon={Robot}
                 title="当前机器 Agent"
@@ -1774,8 +1740,8 @@ export function SettingsPanel({
                   agentAvailable
                     ? `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · ${agentVersionDetail}${currentMachineHostHealth !== "未检测" ? ` · ${currentMachineHostHealth}` : ""}`
                     : agentUnsupported
-                      ? "当前连接环境暂不支持，将使用 SSH 直连"
-                      : `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 未检测到；SSH 可用，但无法可靠恢复长任务`
+                      ? "当前连接环境不支持 Agent，无法执行 AI 任务"
+                      : `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 未检测到；安装 Agent 后才能执行任务`
                 }
                 value={agentAvailable ? (agentNeedsUpdate ? "自动升级" : agentAheadOfPublished ? "版本较新" : "已对齐") : agentUnsupported ? "不支持" : "未安装"}
                 tone={agentAvailable ? (agentNeedsUpdate || agentAheadOfPublished ? "warning" : "success") : "neutral"}
@@ -1783,11 +1749,11 @@ export function SettingsPanel({
               {draftProfile.agentDirectEndpoint ? (
                 <SettingsStatusRow
                   icon={ShieldCheck}
-                  title={draftProfile.agentDirectEndpoint.startsWith("https:") ? "Agent 安全连接" : "Agent 非加密连接"}
+                  title={draftProfile.agentDirectEndpoint.startsWith("https:") ? "Agent 安全连接" : "Agent 配置无效"}
                   detail={
                     draftProfile.agentDirectEndpoint.startsWith("https:")
                       ? "HTTPS 已固定校验证书指纹。证书变更时会阻止连接。"
-                      : "OpenSSL 不可用，当前仅作为兼容降级使用；请在服务器安装 OpenSSL 后重新安装 Agent。"
+                      : "当前版本只允许 HTTPS。请在服务器安装 OpenSSL 后重新安装 Agent。"
                   }
                   value={draftProfile.agentDirectEndpoint.startsWith("https:") ? "已加密" : "未加密"}
                   tone={draftProfile.agentDirectEndpoint.startsWith("https:") ? "success" : "warning"}

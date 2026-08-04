@@ -1,6 +1,4 @@
 import {
-  isWindowsProfile,
-  normalizeProfile,
   taskForStorage,
 } from "../core/foundation.js";
 import {
@@ -232,7 +230,6 @@ export function dedupeServerRemoteTaskMessages(servers = []) {
   return servers.map(reconcileServerMessageLifecycle);
 }
 
-export function agentPreferredForProfile(profile) {
-  const normalized = normalizeProfile(profile || {});
-  return normalized.useWorkbenchAgent === true || isWindowsProfile(normalized);
+export function agentPreferredForProfile() {
+  return true;
 }

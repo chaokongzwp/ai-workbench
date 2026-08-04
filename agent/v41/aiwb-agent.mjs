@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
-const VERSION = "40";
+const VERSION = "41";
 const HOME = os.homedir();
 const ROOT = path.join(HOME, ".ai-workbench", "agent");
 const TASKS = path.join(ROOT, "tasks");

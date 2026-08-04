@@ -18,7 +18,6 @@ function loadedServer(connection, task = {}) {
       password: "secret",
       workdir: "/workspace",
       agentId: "claude",
-      useWorkbenchAgent: true,
     },
     connection,
     task,

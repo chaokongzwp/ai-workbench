@@ -57,7 +57,7 @@ export const assistantRuntimeCapabilities = [
     id: "session.connect",
     title: "连接工作会话",
     category: "session",
-    summary: "连接已保存的服务器/工作目录/AI 类型组合，优先使用 Agent 代理，失败时可降级直接 SSH。",
+    summary: "连接已保存的服务器/工作目录/AI 类型组合，AI 任务统一通过 Agent HTTPS 执行。",
     appAction: "connect_session",
     risk: "low",
     parameters: {
