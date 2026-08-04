@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 const root = new URL("../", import.meta.url).pathname;
 const dataDir = await mkdtemp(join(tmpdir(), "aiwb-agent-control-"));
-const port = 19_500 + Math.floor(Math.random() * 300);
+const port = 30_000 + Math.floor(Math.random() * 20_000);
 const endpoint = `http://127.0.0.1:${port}`;
 const child = spawn("python3", ["services/config-sync/aiwb_config_sync.py"], {
   cwd: root,

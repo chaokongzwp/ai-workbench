@@ -1700,8 +1700,8 @@ export function initialConnectionForProfile(profile) {
   const normalized = normalizeProfile(profile || {});
   const mode = normalized.useWorkbenchAgent === true || isWindowsProfile(normalized) ? "agent" : "ssh";
   return profileReady(normalized)
-    ? { state: "idle", label: "未连接", detail: `${normalized.username}@${normalized.host}`, mode }
-    : { state: "idle", label: "未连接", detail: profileIssue(normalized), mode };
+    ? { state: "idle", channelState: "disconnected", label: "未连接", detail: `${normalized.username}@${normalized.host}`, mode }
+    : { state: "idle", channelState: "disconnected", label: "未连接", detail: profileIssue(normalized), mode };
 }
 
 export function dormantConnectionForProfile(profile, previous = {}, label = "未连接") {
@@ -1734,10 +1734,16 @@ export function readyConnectionForSession(profile, previous = {}) {
 }
 
 export function connectionIsLive(connection) {
-  return connection?.state === "connected";
+  return String(connection?.channelState || "").trim() === "connected" || connection?.state === "connected";
 }
 
 export function connectionStatusPresentation(connection) {
+  const channelState = String(connection?.channelState || "").trim().toLowerCase();
+  if (channelState === "connected") return { label: "已连接", tone: "connected" };
+  if (channelState === "connecting") {
+    const label = String(connection?.label || "").trim();
+    return { label: label === "连接断开" ? "连接断开" : "连接中", tone: "testing" };
+  }
   const state = String(connection?.state || "idle").trim().toLowerCase();
   if (state === "connected") return { label: "已连接", tone: "connected" };
   if (state === "testing") {

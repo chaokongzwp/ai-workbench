@@ -21,6 +21,7 @@ import { reorderSessionsById } from "../core/sessionOrder.js";
 import { assertSessionDispatch } from "../core/session.js";
 import { patchSession, patchSessionsMatchingConnection, sessionById } from "../core/sessionStore.js";
 import { patchMessage } from "../core/messageStore.js";
+import { canonicalConnectionState } from "../core/connectionState.js";
 
 function nativeDeviceClassForRuntime(platform = Capacitor.getPlatform()) {
   if (typeof window === "undefined") return "phone";
@@ -1205,8 +1206,9 @@ export function useWorkbenchController() {
     updateServer(activeServerIdRef.current, updater);
   }
 
-  function canonicalConnectionUpdate(nextConnection = {}) {
-    const state = String(nextConnection?.state || "idle").trim();
+  function canonicalConnectionUpdate(nextConnection = {}, previousConnection = {}) {
+    const connection = canonicalConnectionState({ ...previousConnection, ...nextConnection });
+    const state = connection.state;
     const label =
       state === "connected"
         ? "已连接"
@@ -1215,14 +1217,14 @@ export function useWorkbenchController() {
           : state === "error"
             ? "连接异常"
             : "未连接";
-    return { ...nextConnection, state, label };
+    return { ...connection, state, label };
   }
 
   function setConnection(nextConnection) {
     updateActiveServer((server) => ({
       connection: {
         ...(server.connection || {}),
-        ...canonicalConnectionUpdate(nextConnection),
+        ...canonicalConnectionUpdate(nextConnection, server.connection),
       },
     }));
   }
@@ -1231,7 +1233,7 @@ export function useWorkbenchController() {
     updateServer(serverId, (server) => ({
       connection: {
         ...(server.connection || {}),
-        ...canonicalConnectionUpdate(nextConnection),
+        ...canonicalConnectionUpdate(nextConnection, server.connection),
       },
     }));
   }
@@ -3067,7 +3069,7 @@ export function useWorkbenchController() {
       if (sshHostKeyApprovalRequiredSessionIdsRef.current.has(serverId)) return;
 
       const latestServer = serverById(serverId);
-      if (!latestServer || connectionIsLive(latestServer.connection) || latestServer.connection?.state === "testing") {
+      if (!latestServer || connectionIsLive(latestServer.connection) || latestServer.connection?.channelState === "connecting" || latestServer.connection?.state === "testing") {
         return;
       }
 

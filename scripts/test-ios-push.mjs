@@ -63,7 +63,7 @@ test("Agent create command stores one-time Push ticket metadata", () => {
 
 test("Push gateway registers a device and issues an authenticated ticket", async (context) => {
   const dataDir = await mkdtemp(join(tmpdir(), "aiwb-push-test-"));
-  const port = 18_900 + Math.floor(Math.random() * 500);
+  const port = 30_000 + Math.floor(Math.random() * 20_000);
   const endpoint = `http://127.0.0.1:${port}`;
   const child = spawn("python3", ["services/config-sync/aiwb_config_sync.py"], {
     cwd: repoRoot,

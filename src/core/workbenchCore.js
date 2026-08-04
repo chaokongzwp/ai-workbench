@@ -9,3 +9,9 @@ export * from "./routingOutput.js";
 export * from "./assistantRuntime.js";
 export * from "./messageLifecycle.js";
 export * from "./sshReconnect.js";
+export {
+  canonicalConnectionState,
+  channelStateForConnection,
+  legacyConnectionState,
+  taskChannelState,
+} from "./connectionState.js";
