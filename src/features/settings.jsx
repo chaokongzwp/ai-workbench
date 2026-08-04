@@ -154,6 +154,7 @@ const {
   lastSpeakableMessageForServer,
   latestServerMessageSummary,
   latestWorkbenchAgentVersion,
+  workbenchAgentGithubManifestUrl,
   legacyDefaultWakeWordPhrases,
   legacyDefaultWorkdirs,
   loadBrowserDiagnosticLogs,
@@ -674,6 +675,7 @@ export function SettingsPanel({
   const [toolLoginStatus, setToolLoginStatus] = useState(null);
   const [settingsPage, setSettingsPage] = useState(() => initialPage || "root");
   const [appInfo, setAppInfo] = useState(() => normalizeAppInfo());
+  const [publishedAgentVersion, setPublishedAgentVersion] = useState(() => latestWorkbenchAgentVersion || "");
   const migrationInputRef = useRef(null);
   const settingsScrollRef = useRef(null);
   const gitSshKeyCheckedForRef = useRef("");
@@ -766,7 +768,7 @@ export function SettingsPanel({
     mergedHealth.agent ||
     "missing";
   const agentVersion = mergedHealth.agent_version || "";
-  const latestAgentVersion = latestWorkbenchAgentVersion || "";
+  const latestAgentVersion = publishedAgentVersion || latestWorkbenchAgentVersion || "";
   const installedAgentVersionNumber = workbenchAgentVersionNumber(agentVersion);
   const latestAgentVersionNumber = workbenchAgentVersionNumber(latestAgentVersion);
   const agentAvailable = agentHealth === "available";
@@ -784,6 +786,15 @@ export function SettingsPanel({
     latestAgentVersionNumber > 0 &&
     installedAgentVersionNumber > 0 &&
     installedAgentVersionNumber < latestAgentVersionNumber;
+  const agentAheadOfPublished =
+    agentAvailable &&
+    latestAgentVersionNumber > 0 &&
+    installedAgentVersionNumber > latestAgentVersionNumber;
+  const agentVersionDetail = agentNeedsUpdate
+    ? `已安装 v${agentVersion || "未知"} · 最新 v${latestAgentVersion || "未知"}，连接后会自动更新`
+    : agentAheadOfPublished
+      ? `已安装 v${agentVersion || "未知"} · 发布清单 v${latestAgentVersion || "未知"}，当前 Agent 版本较新`
+      : `已安装 v${agentVersion || "未知"} · 最新 v${latestAgentVersion || "未知"}，已对齐`;
   const currentMachineTasks = Array.isArray(mergedHealth.agent_task_list)
     ? mergedHealth.agent_task_list
     : [];
@@ -1075,6 +1086,30 @@ export function SettingsPanel({
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 5_000);
+
+    void fetch(workbenchAgentGithubManifestUrl, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((manifest) => {
+        const version = String(manifest?.version || "").trim();
+        if (workbenchAgentVersionNumber(version) > 0) setPublishedAgentVersion(version);
+      })
+      .catch(() => {
+        // The bundled version remains a safe fallback when the release pointer is unreachable.
+      })
+      .finally(() => window.clearTimeout(timer));
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, []);
+
+  useEffect(() => {
     const scrollBody = settingsScrollRef.current;
     if (!scrollBody) return undefined;
 
@@ -1086,6 +1121,80 @@ export function SettingsPanel({
     const frameId = window.requestAnimationFrame(resetHorizontalPosition);
     return () => window.cancelAnimationFrame(frameId);
   }, [mode, settingsPage, settingsDiscovery?.state]);
+
+  useEffect(() => {
+    const scrollBody = settingsScrollRef.current;
+    if (!scrollBody || typeof document === "undefined" || !document.querySelector(".iphone-shell")) return undefined;
+
+    const root = document.documentElement;
+    const body = document.body;
+    const timers = [];
+    let blurTimer = 0;
+
+    const clearTimers = () => {
+      timers.splice(0).forEach((timer) => window.clearTimeout(timer));
+      if (blurTimer) window.clearTimeout(blurTimer);
+      blurTimer = 0;
+    };
+
+    const syncViewport = (keyboardVisible) => {
+      const viewport = window.visualViewport;
+      const layoutHeight = Math.round(window.innerHeight || document.documentElement.clientHeight || viewport?.height || 0);
+      const visualHeight = Math.round(viewport?.height || layoutHeight);
+      const width = Math.round(window.innerWidth || document.documentElement.clientWidth || viewport?.width || 0);
+      const height = keyboardVisible ? Math.min(layoutHeight, visualHeight) : layoutHeight;
+      if (height > 0) root.style.setProperty("--app-viewport-height", `${height}px`);
+      if (width > 0) root.style.setProperty("--app-viewport-width", `${width}px`);
+      if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    };
+
+    const keepFocusedFieldVisible = (field) => {
+      if (!field || !scrollBody.contains(document.activeElement)) return;
+      syncViewport(true);
+      const target = field.closest(".config-field, .wake-word-field, .settings-action-row") || field;
+      const viewport = window.visualViewport;
+      const visibleBottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight || 0) - 16;
+      const headerBottom = scrollBody.getBoundingClientRect().top + 12;
+      const fieldRect = target.getBoundingClientRect();
+
+      if (fieldRect.bottom > visibleBottom) {
+        scrollBody.scrollTop += fieldRect.bottom - visibleBottom;
+      } else if (fieldRect.top < headerBottom) {
+        scrollBody.scrollTop -= headerBottom - fieldRect.top;
+      }
+      if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    };
+
+    const handleFocusIn = (event) => {
+      const field = event.target;
+      if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)) return;
+      clearTimers();
+      root.classList.add("aiwb-keyboard-focus");
+      body?.classList.add("aiwb-keyboard-focus");
+      [0, 80, 180, 360, 620].forEach((delay) => {
+        timers.push(window.setTimeout(() => keepFocusedFieldVisible(field), delay));
+      });
+    };
+
+    const handleFocusOut = () => {
+      blurTimer = window.setTimeout(() => {
+        if (scrollBody.contains(document.activeElement)) return;
+        root.classList.remove("aiwb-keyboard-focus");
+        body?.classList.remove("aiwb-keyboard-focus");
+        syncViewport(false);
+      }, 80);
+    };
+
+    scrollBody.addEventListener("focusin", handleFocusIn);
+    scrollBody.addEventListener("focusout", handleFocusOut);
+    return () => {
+      clearTimers();
+      scrollBody.removeEventListener("focusin", handleFocusIn);
+      scrollBody.removeEventListener("focusout", handleFocusOut);
+      root.classList.remove("aiwb-keyboard-focus");
+      body?.classList.remove("aiwb-keyboard-focus");
+    };
+  }, [mode, settingsPage]);
 
   const pageTitles = {
     root: addingSessions ? "添加工作会话" : editingSession ? "会话设置" : "全局设置",
@@ -1616,13 +1725,13 @@ export function SettingsPanel({
                 title="当前机器 Agent"
                 detail={
                   agentAvailable
-                    ? `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 已安装 v${agentVersion || "未知"} · 最新 v${latestAgentVersion || "未知"}${agentNeedsUpdate ? "，连接后会自动更新" : "，已是最新版"}${currentMachineHostHealth !== "未检测" ? ` · ${currentMachineHostHealth}` : ""}`
+                    ? `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · ${agentVersionDetail}${currentMachineHostHealth !== "未检测" ? ` · ${currentMachineHostHealth}` : ""}`
                     : agentUnsupported
                       ? "当前连接环境暂不支持，将使用 SSH 直连"
                       : `${draftProfile.username || "用户"}@${draftProfile.host || "未配置"} · 未检测到；SSH 可用，但无法可靠恢复长任务`
                 }
-                value={agentAvailable ? (agentNeedsUpdate ? "自动升级" : "已是最新") : agentUnsupported ? "不支持" : "未安装"}
-                tone={agentAvailable ? (agentNeedsUpdate ? "warning" : "success") : "neutral"}
+                value={agentAvailable ? (agentNeedsUpdate ? "自动升级" : agentAheadOfPublished ? "版本较新" : "已对齐") : agentUnsupported ? "不支持" : "未安装"}
+                tone={agentAvailable ? (agentNeedsUpdate || agentAheadOfPublished ? "warning" : "success") : "neutral"}
               />
               {draftProfile.agentDirectEndpoint ? (
                 <SettingsStatusRow
