@@ -261,7 +261,7 @@ export function shortError(error) {
     return "连接断开";
   }
   if (/SSH command timed out|timed out/i.test(message)) {
-    return "远端任务执行时间太长，App 暂时没有等到结果。任务可能仍在机器上运行，可以稍后刷新或重试。";
+    return "任务没有在等待时间内返回。";
   }
   if (/Connection lost before handshake|Handshake failed|Connection lost|Connection closed|ECONNRESET|EPIPE|Socket closed/i.test(message)) {
     return "连接断开";

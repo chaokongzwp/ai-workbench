@@ -6972,6 +6972,9 @@ export function useWorkbenchController() {
       const agentMode = agentPreferredForProfile(currentProfile);
       const uploadFailed = sendStage === "uploading";
       const transientAgentDisconnect = !uploadFailed && agentMode && isTransientSshSyncError(error);
+      const executionTimedOut =
+        !uploadFailed &&
+        /SSH command timed out|远端任务执行时间太长/i.test(String(error?.message || error || ""));
       void appLog("error", "send.remote.failed", {
         serverId,
         assistantMessageId,
@@ -7070,6 +7073,31 @@ export function useWorkbenchController() {
           serverId,
           title: taskWasAccepted ? "连接断开，正在重连" : "任务没有确认提交，请重新发送",
           tone: "warning",
+        });
+      } else if (executionTimedOut) {
+        updateAssistantMessageInServer(serverId, assistantMessageId, {
+          title: "暂未收到结果",
+          body: "任务没有在等待时间内返回。可以稍后重试。",
+          taskState: taskStateFailed,
+          backend: agentMode ? "agent" : "ssh",
+          remoteTaskStatus: "timeout",
+          resultMissing: false,
+          completedAt: Date.now(),
+          loginAction: undefined,
+          modelChoice: undefined,
+          forceUpdate: true,
+        });
+        setServerTaskMetadata(serverId, {
+          backend: agentMode ? "agent" : "ssh",
+          agentId: finalAgent.id,
+          finishedAt: Date.now(),
+          label: "暂未收到结果",
+        });
+        setServerConnection(serverId, {
+          state: "connected",
+          label: "已连接",
+          detail: finalAgent.shortName,
+          mode: agentMode ? "agent" : "ssh",
         });
       } else {
         updateAssistantMessageInServer(serverId, assistantMessageId, {
