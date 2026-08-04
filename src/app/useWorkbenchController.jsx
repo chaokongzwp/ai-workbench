@@ -5668,7 +5668,9 @@ export function useWorkbenchController() {
     const currentProfile = withKnownPassword(server.profile);
     if (profileIssue(currentProfile)) return false;
 
-    const agent = agentById(message.agentId || currentProfile.agentId, activeAgent);
+    // A stored response can be stale or originate from an older client. The
+    // session profile is the source of truth for which remote CLI may be used.
+    const agent = agentById(currentProfile.agentId, activeAgent);
     try {
       assertSessionDispatch(server, {
         sessionId: serverId,
@@ -6710,7 +6712,9 @@ export function useWorkbenchController() {
     }
 
     let sourceServer = serverById(serverId) || activeServer;
-    let currentProfile = withKnownPassword(profileRef.current);
+    // Never dispatch from the global active profile. During a fast session
+    // switch it can still point at the previously selected session.
+    let currentProfile = withKnownPassword(sourceServer?.profile || profileRef.current);
     if (showProfileIssue(currentProfile)) {
       enqueueTaskNotice({ serverId, title: "连接信息不完整，请先补全配置", tone: "error" });
       return;
@@ -6721,7 +6725,9 @@ export function useWorkbenchController() {
       enqueueTaskNotice({ serverId, title: "请先选择一个工作目录", tone: "error" });
       return;
     }
-    const selectedAgent = agentById(retryMessage?.agentId || currentProfile.agentId, activeAgent);
+    // Retried messages are historical UI data. They cannot override the
+    // immutable agent binding of the current work session.
+    const selectedAgent = agentById(currentProfile.agentId, activeAgent);
     // A configured direct Agent owns its own authenticated HTTP connection.
     // Do not make a task submission wait for the legacy SSH command channel.
     const directAgentReadyForSend =
