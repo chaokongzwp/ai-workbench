@@ -132,6 +132,8 @@ sequenceDiagram
 
 任务未结束时，发送按钮变为停止按钮。停止会向 Agent 请求取消对应 `remoteTaskId`。已收到的中间输出保留在消息中；任务变为“已取消”后立即解锁输入框。
 
+Agent v40 起，runner PID 与实际命令 PID 分开记录。停止任务、发现 runner 异常退出或卸载 Agent 时，会递归终止该任务的完整进程树，避免 Codex / Claude 子进程残留并继续占用会话。
+
 Windows PowerShell 的某些旧直连执行方式不能可靠中断；Agent 模式可提供一致的取消能力。
 
 ### 4.3 App 进入后台或被杀掉

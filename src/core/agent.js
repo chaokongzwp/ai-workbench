@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "39";
+export const latestWorkbenchAgentVersion = "40";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -454,6 +454,51 @@ aiwb_task_pid_alive() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
+aiwb_stop_pid_tree() {
+  local root_pid="$1"
+  local signal="\${2:-TERM}"
+  local child_pid
+
+  case "$root_pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+
+  if command -v pgrep >/dev/null 2>&1; then
+    for child_pid in $(pgrep -P "$root_pid" 2>/dev/null || printf ""); do
+      aiwb_stop_pid_tree "$child_pid" "$signal"
+    done
+  fi
+
+  kill -"$signal" "$root_pid" >/dev/null 2>&1 || true
+}
+
+aiwb_stop_task_processes() {
+  local task_dir="$1"
+  local runner_pid
+  local command_pid
+
+  runner_pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+  command_pid="$(cat "$task_dir/command_pid" 2>/dev/null || printf "")"
+
+  # Stop the actual command first. The runner can disappear independently and
+  # leave a long-running Claude/Codex descendant orphaned behind.
+  if [ -n "$command_pid" ] && kill -0 "$command_pid" 2>/dev/null; then
+    aiwb_stop_pid_tree "$command_pid" TERM
+  fi
+  if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+    aiwb_stop_pid_tree "$runner_pid" TERM
+  fi
+
+  sleep 0.4
+
+  if [ -n "$command_pid" ] && kill -0 "$command_pid" 2>/dev/null; then
+    aiwb_stop_pid_tree "$command_pid" KILL
+  fi
+  if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+    aiwb_stop_pid_tree "$runner_pid" KILL
+  fi
+}
+
 aiwb_task_attempts() {
   local task_dir="$1"
   cat "$task_dir/attempts" 2>/dev/null || printf 0
@@ -485,6 +530,8 @@ aiwb_mark_stale_if_needed() {
   if aiwb_task_pid_alive "$task_dir"; then
     return 0
   fi
+
+  aiwb_stop_task_processes "$task_dir"
 
   pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
   {
@@ -791,8 +838,12 @@ if [ "$AIWB_TASK_AGENT_ID" = "claude" ]; then
   export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
 fi
 
-eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1
+eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1 &
+AIWB_COMMAND_PID=$!
+aiwb_write_file "$AIWB_TASK_DIR/command_pid" "$AIWB_COMMAND_PID"
+wait "$AIWB_COMMAND_PID"
 AIWB_EXIT_CODE=$?
+aiwb_write_file "$AIWB_TASK_DIR/command_pid" ""
 aiwb_build_execution_summary "$AIWB_EXIT_CODE"
 AIWB_GIT_VERIFICATION_CODE=$?
 if [ "$AIWB_EXIT_CODE" -eq 0 ] && [ "$AIWB_GIT_VERIFICATION_CODE" -eq 65 ]; then
@@ -832,6 +883,7 @@ aiwb_launch_task() {
   aiwb_write_file "$task_dir/started_at" "$(aiwb_now)"
   aiwb_set_status "$task_dir" "running" ""
   aiwb_write_file "$task_dir/runner_started_at" ""
+  aiwb_write_file "$task_dir/command_pid" ""
   : > "$task_dir/launcher.log"
 
   nohup bash "$task_dir/run.sh" "$task_dir" </dev/null >"$task_dir/launcher.log" 2>&1 &
@@ -1129,21 +1181,15 @@ aiwb_cancel_task() {
   fi
 
   status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
+  aiwb_stop_task_processes "$task_dir"
+
   case "$status" in
     done|error|cancelled)
       aiwb_print_task "$task_id"
       return 0
       ;;
   esac
-
-  pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    sleep 0.4
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -9 "$pid" 2>/dev/null || true
-    fi
-  fi
 
   {
     printf "AI Workbench Agent: task cancelled by user.\\n"
@@ -1607,7 +1653,6 @@ AIWB_SYSTEMD_UNIT
 
 aiwb_uninstall_service() {
   local task_dir
-  local task_pid
   local daemon_pid
 
   if command -v systemctl >/dev/null 2>&1; then
@@ -1630,10 +1675,7 @@ aiwb_uninstall_service() {
   fi
   for task_dir in "$AIWB_TASKS"/*; do
     [ -d "$task_dir" ] || continue
-    task_pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
-    if [ -n "$task_pid" ]; then
-      kill "$task_pid" >/dev/null 2>&1 || true
-    fi
+    aiwb_stop_task_processes "$task_dir"
   done
 
   rm -rf "$AIWB_HOME"
