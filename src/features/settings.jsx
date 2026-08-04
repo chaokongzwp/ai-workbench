@@ -760,10 +760,10 @@ export function SettingsPanel({
     (diagnostics) => diagnostics.agent === "available" || diagnostics.agent_version,
   );
   const mergedHealth = {
-    ...sameMachineDiagnostics.reduce((health, diagnostics) => ({ ...health, ...diagnostics }), {}),
-    ...(editingServer?.diagnostics || {}),
-    ...(availableMachineDiagnostics || {}),
     ...(settingsDiscovery?.health || {}),
+    ...sameMachineDiagnostics.reduce((health, diagnostics) => ({ ...health, ...diagnostics }), {}),
+    ...(availableMachineDiagnostics || {}),
+    ...(editingServer?.diagnostics || {}),
   };
   const agentHealth =
     mergedHealth.agent ||
