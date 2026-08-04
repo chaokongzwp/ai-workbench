@@ -601,6 +601,8 @@ export function useWorkbenchController() {
   const hasPendingAction = messages.some((message) => Boolean(message.requiredAction));
   const profileRef = useRef(profile);
   const draftProfileRef = useRef(draftProfile);
+  const settingsOpenRef = useRef(settingsOpen);
+  const editingServerIdRef = useRef(editingServerId);
   const serversRef = useRef([]);
   const activeServerIdRef = useRef(activeServerId);
   const primaryActiveServerIdRef = useRef("");
@@ -671,6 +673,15 @@ export function useWorkbenchController() {
     const resolved = typeof nextProfile === "function" ? nextProfile(current) : nextProfile;
     draftProfileRef.current = resolved;
     setDraftProfile(resolved);
+  }
+
+  // Connection probes complete asynchronously. While a settings form is open,
+  // its local draft wins over a late probe so typed fields are never replaced
+  // with the server's previously saved profile.
+  function updateDraftProfileFromSession(serverId, nextProfile) {
+    if (settingsOpenRef.current && editingServerIdRef.current === serverId) return false;
+    updateDraftProfile(nextProfile);
+    return true;
   }
 
   async function runCommandWithHostFallback(currentProfile, sessionId, commandPayload, maxResponseSize, commandTimeoutSeconds) {
@@ -805,6 +816,14 @@ export function useWorkbenchController() {
   useEffect(() => {
     draftProfileRef.current = draftProfile;
   }, [draftProfile]);
+
+  useEffect(() => {
+    settingsOpenRef.current = settingsOpen;
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    editingServerIdRef.current = editingServerId;
+  }, [editingServerId]);
 
   useEffect(() => {
     profileRef.current = profile;
@@ -3219,8 +3238,11 @@ export function useWorkbenchController() {
     setActiveServerId(target.id);
     activeServerIdRef.current = target.id;
     profileRef.current = targetProfile;
-    setEditingServerId(target.id);
-    updateDraftProfile(targetProfile);
+    if (!settingsOpenRef.current || editingServerIdRef.current !== target.id) {
+      setEditingServerId(target.id);
+      editingServerIdRef.current = target.id;
+      updateDraftProfile(targetProfile);
+    }
     setActiveAgentId(targetProfile.agentId);
     setRawOpen(false);
 
@@ -3281,7 +3303,7 @@ export function useWorkbenchController() {
       const parsed = parseHealth(stdout);
       const detectedProfile = profileWithDetectedTools(targetProfile, parsed);
       profileRef.current = detectedProfile;
-      updateDraftProfile(detectedProfile);
+      updateDraftProfileFromSession(target.id, detectedProfile);
       setActiveAgentId(detectedProfile.agentId);
       const agentSetup = await ensureWorkbenchAgentForProfile(detectedProfile, {
         serverId: target.id,
@@ -3326,8 +3348,8 @@ export function useWorkbenchController() {
       return true;
     } catch (error) {
       const message = shortError(error);
-      const hostKeyMatch = String(error?.message || error || "").match(/^SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)$/);
-      const changedHostKeyMatch = String(error?.message || error || "").match(/^SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)$/);
+      const hostKeyMatch = String(error?.message || error || "").match(/SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)/);
+      const changedHostKeyMatch = String(error?.message || error || "").match(/SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)/);
       if (hostKeyMatch && typeof window !== "undefined") {
         sshHostKeyApprovalRequiredSessionIdsRef.current.add(target.id);
         const approved = window.confirm(
@@ -3432,8 +3454,8 @@ export function useWorkbenchController() {
       if (!target) return;
       const manuallyDisconnected = manualDisconnectSessionIdsRef.current.has(serverId);
 
-      const untrustedHostKey = detail.match(/^SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)$/);
-      const changedHostKey = detail.match(/^SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)$/);
+      const untrustedHostKey = detail.match(/SSH_HOST_KEY_UNTRUSTED:(sha256\/[A-Za-z0-9+/=]+)/);
+      const changedHostKey = detail.match(/SSH_HOST_KEY_CHANGED:(sha256\/[A-Za-z0-9+/=]+)/);
       if (untrustedHostKey || changedHostKey) {
         sshHostKeyApprovalRequiredSessionIdsRef.current.add(serverId);
         setServerConnection(serverId, {
@@ -3548,12 +3570,14 @@ export function useWorkbenchController() {
     const target = currentServers.find((server) => server.id === serverId) || activeServer;
     const targetProfile = withKnownPassword(target.profile, currentServers);
     setEditingServerId(target.id);
+    editingServerIdRef.current = target.id;
     updateDraftProfile(targetProfile);
     setSettingsDiscovery(null);
     setSettingsSelectedSessions([]);
     setSettingsAgentTab(targetProfile.agentId);
     setAgentManagementTargetId("");
     setSettingsInitialPage("root");
+    settingsOpenRef.current = true;
     setSettingsOpen(true);
   }
 
