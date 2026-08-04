@@ -282,18 +282,18 @@
       <strong>目录</strong>
       <a href="#one-page">一页结论</a>
       <a href="#prd">需求 PRD</a>
-      <a href="#conversation">自然对话方案</a>
+      <a href="#conversation">任务与状态</a>
       <a href="#architecture">架构方案</a>
-      <a href="#model">主 AI 要求</a>
+      <a href="#model">语音与主 AI</a>
       <a href="#security">鉴权与安全</a>
-      <a href="#roadmap">阶段计划</a>
-      <a href="#acceptance">验收标准</a>
+      <a href="#roadmap">已交付与下一步</a>
+      <a href="#acceptance">验收与排查</a>
     </nav>
     <div class="meta">
       <b>文档状态</b>
-      版本：v0.1<br>
-      日期：2026-06-21<br>
-      范围：产品需求、主流程、人工主控语音输入、远端 AI 会话架构。
+      版本：当前实现口径<br>
+      日期：2026-08-04<br>
+      范围：会话、连接、Agent、任务恢复、配置同步与语音能力。
     </div>
   </aside>
 
@@ -301,12 +301,12 @@
     <header class="hero">
       <div class="mark">AI</div>
       <h1>AI Workbench · PRD 与架构方案总览</h1>
-      <p class="lead">AI Workbench 是一个 iPhone、iPad、Mac 都能用的 AI 工作台。第一版不做自动主 AI 决策，先让用户自己选择服务器、AI 类型、工作目录和发送时机。语音先作为更自然的输入方式，把人说的话整理进输入框，真正执行前仍由人确认。</p>
+      <p class="lead">AI Workbench 是连接用户自己机器上 Codex 与 Claude 的多端工作台。App 负责会话、任务与结果；远端 Agent 负责持续执行和保存任务状态。用户无需看 SSH、tmux 或终端噪声，但随时能查看可读的任务进度与诊断。</p>
       <div class="status-row" aria-label="状态">
-        <span class="st done">已确认：隐藏 SSH 和终端复杂度</span>
-        <span class="st done">已确认：人工主控优先</span>
-        <span class="st wip">进行中：语音唤醒</span>
-        <span class="st todo">后置：主 AI 分流</span>
+        <span class="st done">已实现：Agent 后台任务</span>
+        <span class="st done">已实现：HTTP 任务接口</span>
+        <span class="st done">已实现：本地消息与配置同步</span>
+        <span class="st wip">持续优化：多端体验与语音</span>
       </div>
     </header>
 
@@ -315,19 +315,19 @@
       <div class="grid-2">
         <div class="card">
           <h3>产品定位</h3>
-          <p>不是重新做一个 Codex 或 Claude，而是做一层更好用的 Apple 风格“工作台外壳”。它连接用户自己的服务器，复用服务器上的 AI CLI、历史会话和工作目录。</p>
+          <p>不是重新做 Codex 或 Claude，而是做多端工作台：复用用户机器上的 CLI、工作目录和远端 Agent，把终端操作收进可读界面。</p>
         </div>
         <div class="card">
           <h3>核心体验</h3>
-          <p>第一次连接机器后自动扫描 AI 会话，列出工作目录。之后用户选择 AI 类型和工作目录，直接打字或说话发任务，界面只显示“我说了什么”和“AI 最终回复”。</p>
+          <p>会话以服务器、登录账号、工作目录和 AI 类型确定。用户发出任务后立即看到自己的消息；Agent 接收、AI 执行和最终结果都更新到同一条回复。</p>
         </div>
         <div class="card">
-          <h3>人工主控</h3>
-          <p>第一版由人自己完成关键判断：选 Codex 还是 Claude，选哪个工作目录，确认是否发送，必要时停止任务。系统负责把这些操作做得足够简单。</p>
+          <h3>稳定恢复</h3>
+          <p>App 进入后台或被杀掉不会中止 Agent 任务。再次打开或回到前台时，只同步当前会话最后一条未结束任务。</p>
         </div>
         <div class="card">
           <h3>关键原则</h3>
-          <p>人负责判断和拍板，AI 负责执行。文档是唯一通信介质。每次任务最终都要给“结果、影响、验证证据、下一步”。</p>
+          <p>连接状态和任务状态严格分开：顶部只表达通道是否可用；聊天消息只表达这一次任务的阶段与结果。</p>
         </div>
       </div>
     </section>
@@ -336,61 +336,59 @@
       <h2>需求 PRD</h2>
       <h3>1. 背景问题</h3>
       <ul>
-        <li>直接用 SSH、tmux 和命令行对非开发者不友好，尤其在 iPhone 和 iPad 上更难操作。</li>
-        <li>Codex/Claude CLI 的启动信息、警告、选择项、终端噪声会混进回复，用户只想看最终有用内容。</li>
-        <li>同一台机器可能有多个项目路径，用户希望像 Codex 一样按工作目录创建和复用会话。</li>
-        <li>后续要接语音，但第一版语音只做输入辅助，不自动替人判断和执行。</li>
+        <li>直接使用 SSH、tmux 和 CLI 对移动端不友好，且 App 退出后难以知道远端任务是否还在执行。</li>
+        <li>同一台机器可以有多个项目与多个 AI 会话；多设备进入同一会话时，必须避免重复下发任务。</li>
+        <li>用户只需要结果和必要进度，不能被 CLI 启动信息、模型选择提示或原始终端输出干扰。</li>
       </ul>
 
       <h3>2. 产品目标</h3>
       <table>
         <thead><tr><th>目标</th><th>说明</th><th>状态</th></tr></thead>
         <tbody>
-          <tr><td>连接机器</td><td>支持 IP 和域名，保存多个服务器配置，可复制服务器配置用于同机不同路径。</td><td><span class="st wip">部分待验</span></td></tr>
-          <tr><td>扫描会话</td><td>连接后自动扫描 Codex/Claude 历史，提取工作目录列表和最近使用情况。</td><td><span class="st wip">原型中</span></td></tr>
-          <tr><td>选择工作目录</td><td>用户从目录列表中选择项目，之后会话与“服务器 + AI 类型 + 工作目录”一对一映射。</td><td><span class="st wip">原型中</span></td></tr>
-          <tr><td>自然对话</td><td>聊天窗口只展示用户消息与 AI 最终回复；机器没回复前不允许继续发送。</td><td><span class="st done">交互已定</span></td></tr>
-          <tr><td>语音输入</td><td>支持唤醒、录音、转写和填入输入框；发送前仍由用户确认。</td><td><span class="st wip">唤醒已接入</span></td></tr>
-          <tr><td>多端支持</td><td>iPhone、iPad、Mac 共用核心逻辑，界面按 Apple 设计语言适配。</td><td><span class="st wip">持续优化</span></td></tr>
+          <tr><td>会话管理</td><td>支持 IP、域名、多地址备选、Linux/Windows、复制配置、手动或扫描添加工作目录。</td><td><span class="st done">已实现</span></td></tr>
+          <tr><td>后台任务</td><td>Agent 创建唯一任务 ID，在 App 离开后继续执行；可查询、取消、恢复最终结果。</td><td><span class="st done">已实现</span></td></tr>
+          <tr><td>多端连续性</td><td>完整历史各端本地保存；同一远端 conversationId 只同步最后一条未结束任务。</td><td><span class="st done">已实现</span></td></tr>
+          <tr><td>配置同步</td><td>加密上传会话配置，按服务器 + 账号 + 工作目录 + AI 类型去重。</td><td><span class="st done">已实现</span></td></tr>
+          <tr><td>语音输入与播放</td><td>唤醒、ASR、TTS、结果播报与打断；默认关闭，由用户开启。</td><td><span class="st wip">持续优化</span></td></tr>
+          <tr><td>多端界面</td><td>Mac、iPhone、iPad、Android 共用业务逻辑，平台独立维护布局与交互。</td><td><span class="st wip">持续优化</span></td></tr>
         </tbody>
       </table>
 
       <h3>3. 不做什么</h3>
       <ul>
         <li>不重新训练或替代 Codex/Claude，本产品只做交互入口、调度和结果整理。</li>
-        <li>不默认展示 SSH、tmux、命令窗口和完整终端日志，除非用户主动进入调试模式。</li>
+        <li>不默认展示 SSH、tmux、命令窗口和完整终端日志；它们只在 SSH 面板或诊断详情中按需打开。</li>
         <li>不在高风险操作上自动执行，例如删除文件、发布、付款、改生产配置等。</li>
-        <li>不默认永久保存全部聊天历史，历史能力后续作为可选配置。</li>
+        <li>不把完整聊天记录上传到云端；云端只保存用户加密后的配置包。</li>
       </ul>
     </section>
 
     <section id="conversation">
-      <h2>自然对话方案</h2>
-      <p>第一版语音和文字都走“人工主控”路径。系统可以帮用户听写、填充输入、停止录音、展示待发送内容，但不会自动判断任务是否应该执行。</p>
+      <h2>任务与状态</h2>
+      <p>当前任务模型只有一个核心原则：<strong>连接是机器状态，任务是消息状态。</strong>顶部显示通道是否可用；消息区显示这条请求是否已经被 Agent 接收、是否由 AI 执行、以及是否有最终结果。</p>
 
       <div class="flow" aria-label="主流程">
-        <div class="step"><b>1. 连接机器</b><span>只显示名称、地址和连接按钮。高级配置收进设置页。</span></div>
-        <div class="step"><b>2. 扫描会话</b><span>自动读取远端 AI 历史和工作目录，不把底层路径噪声暴露给用户。</span></div>
-        <div class="step"><b>3. 选择上下文</b><span>输入栏上方只保留两个选择：AI 类型、工作目录。</span></div>
-        <div class="step"><b>4. 人工确认</b><span>用户确认输入内容、AI 类型和工作目录后，再点击发送。</span></div>
-        <div class="step"><b>5. 返回结果</b><span>只显示最终回复、文件变更摘要、验证证据和必要按钮。</span></div>
+        <div class="step"><b>1. 本地落盘</b><span>立即保存用户消息与 AI 占位消息，用户不用等网络才看到自己已发送。</span></div>
+        <div class="step"><b>2. Agent 接收</b><span>优先通过 HTTP 创建任务，拿到唯一 remoteTaskId；同会话已有任务则拒绝重复提交。</span></div>
+        <div class="step"><b>3. AI 执行</b><span>Agent 在远端启动 Codex 或 Claude，可持续写入中间输出与状态。</span></div>
+        <div class="step"><b>4. 查询或推送</b><span>App 优先通过 Agent HTTP 查询指定任务；WebSocket 可推送变化，SSH 仅作回退。</span></div>
+        <div class="step"><b>5. 终态</b><span>成功、失败、取消都是结束；更新同一条回复，输入框立即解锁。</span></div>
       </div>
 
-      <h3>语音输入状态</h3>
+      <h3>用户可见状态</h3>
       <table>
         <thead><tr><th>状态</th><th>判断依据</th><th>系统动作</th></tr></thead>
         <tbody>
-          <tr><td>正在听</td><td>用户按住说话或唤醒后开始说话。</td><td>持续转写，先不发送。</td></tr>
-          <tr><td>停顿结束</td><td>检测到一段稳定停顿。</td><td>停止录音，把转写内容放入输入框。</td></tr>
-          <tr><td>用户编辑</td><td>用户修改转写内容、切 AI 类型或切工作目录。</td><td>保持待发送状态。</td></tr>
-          <tr><td>用户确认发送</td><td>用户点击发送。</td><td>锁定发送按钮，创建 worker 任务。</td></tr>
-          <tr><td>用户停止</td><td>用户点击停止或说出停止后手动确认。</td><td>中断当前录音或当前 worker 任务。</td></tr>
-          <tr><td>风险内容</td><td>用户输入里包含删除、发布、权限、生产等操作。</td><td>第一版用显式确认按钮提醒，后续再交给主 AI 判断。</td></tr>
+          <tr><td>准备发送 / 正在发送</td><td>本地已保存，正在建立通道或创建远端任务。</td><td>锁定输入。</td></tr>
+          <tr><td>Agent 已接收</td><td>远端返回 <code>queued</code> 或 <code>preparing</code>。</td><td>锁定输入，等待 AI 启动。</td></tr>
+          <tr><td>AI 执行中</td><td>远端返回 <code>running</code> 或已有中间输出。</td><td>锁定输入，可停止或刷新。</td></tr>
+          <tr><td>正在同步结果</td><td>App 回前台、重连或手动刷新指定任务。</td><td>锁定输入，保留原任务 ID。</td></tr>
+          <tr><td>AI 回复 / 失败 / 已取消</td><td><code>done</code>、<code>error</code> 或 <code>cancelled</code>。</td><td>解锁输入。</td></tr>
         </tbody>
       </table>
 
       <div class="decision">
-        <strong>交互决策：</strong>先不做自动主 AI。第一版把人放在主控位置：语音只是输入，发送必须由人确认。这样可以先把连接、会话复用、工作目录选择和结果展示打磨稳定。
+        <strong>前后台恢复：</strong>App 回到前台时，只查询当前会话最后一条未结束 Agent 任务。先立即查询；只有连接失败才在 1.5 秒后重试一次。已完成、失败或取消的任务不会重复同步。
       </div>
     </section>
 
@@ -401,78 +399,81 @@
   | 文字 / 语音
   v
 AI Workbench App
-  |-- Apple 风格界面：服务器、工作目录、AI 类型、聊天结果
-  |-- 语音层：录音、转写、停顿判断、填入输入框
-  |-- 人工主控层：用户选择 AI 类型、工作目录、发送或停止
-  |-- 会话层：服务器 + AI 类型 + 工作目录 一对一映射
+  |-- 平台界面：Mac / iPhone / iPad / Android 独立布局
+  |-- 会话层：服务器 + 账号 + 工作目录 + AI 类型 + conversationId
+  |-- 本地消息层：完整聊天仅保存在当前设备
+  |-- 语音层：唤醒、ASR、TTS、播放与打断
   |
   v
-本机安全层
-  |-- Keychain / safeStorage 保存密钥
-  |-- 未来如启用主 AI，再接短期 Token 或 API Key
+Agent HTTP / HTTPS（首选）
+  |-- POST /v1/tasks 创建任务
+  |-- GET /v1/tasks/:id 查询同一条任务
+  |-- POST /v1/tasks/:id/cancel 停止任务
+  |-- WebSocket /v1/events 推送任务变化
   |
   v
-SSH / 远端桥接
-  |-- 连接 Linux / Windows 服务器
-  |-- 扫描 Codex / Claude 历史和工作目录
-  |-- 启动或复用远端 worker 会话
+远端 AI Workbench Agent
+  |-- 持久任务目录、conversationId、remoteTaskId
+  |-- Linux / Windows 适配、版本登记与自更新
+  |-- 任务在 App 后台或退出后继续执行
   |
   v
-远端 AI Worker
+Codex / Claude CLI
   |-- Codex CLI：写代码、改工程、跑验证
   |-- Claude CLI：阅读、解释、分析、长上下文任务
   |
   v
-结果清洗层
-  |-- 过滤终端启动信息、模型提示、tmux 噪声
-  |-- 提取最终回答、文件变更、验证证据和风险提示</pre>
+可读结果层
+  |-- 提取最终回答、中间输出、文件、表格与 Mermaid 图
+  |-- 原始终端内容仅在详情/诊断中展示
+  |
+  +--> SSH：首次安装、修复、扫描与 HTTP 不可达时降级</pre>
 
       <h3>模块说明</h3>
       <table>
         <thead><tr><th>模块</th><th>职责</th><th>实现建议</th></tr></thead>
         <tbody>
-          <tr><td>App Shell</td><td>iPhone、iPad、Mac 的统一界面。</td><td>继续使用当前 Capacitor/Electron 思路，共用 React 前端。</td></tr>
-          <tr><td>Voice Layer</td><td>录音、转写、停顿判断、填入输入框。</td><td>短期用系统语音能力；后续可接实时语音模型。</td></tr>
-          <tr><td>Future Main AI Router</td><td>未来低成本快速理解用户意图。</td><td>第一版不启用；后续再评估 GPT-5.4 mini 或其他模型做可选分流。</td></tr>
-          <tr><td>Session Manager</td><td>维护服务器、AI 类型、工作目录、远端会话的一对一关系。</td><td>本地记录映射，远端用稳定 session id 或进程标记。</td></tr>
-          <tr><td>SSH Bridge</td><td>连接远端机器、执行扫描、启动 worker。</td><td>封装 Linux/Windows 差异，界面不展示命令。</td></tr>
-          <tr><td>Result Cleaner</td><td>只保留人需要看的最终内容。</td><td>识别最终标记、过滤 TUI 文本、生成变更卡片。</td></tr>
-          <tr><td>Token Broker</td><td>给客户端发短期访问凭证。</td><td>生产环境建议上后端，不把长期 API Key 放在 App 包内。</td></tr>
+          <tr><td>App Controller</td><td>统一会话、连接、发送、恢复、停止与配置保存。</td><td><code>src/app/useWorkbenchController.jsx</code></td></tr>
+          <tr><td>消息状态机</td><td>占位消息、状态迁移、去重与远端消息合并。</td><td><code>src/core/messageLifecycle.js</code></td></tr>
+          <tr><td>Agent Direct</td><td>HTTP、WebSocket、创建/查询/取消指定任务。</td><td><code>src/core/agentDirect.js</code>、<code>agent/runtime/</code></td></tr>
+          <tr><td>SSH Recovery</td><td>首次安装、扫描、登录、故障回退与 Linux/Windows 命令差异。</td><td><code>src/core/sshReconnect.js</code>、<code>remoteCommands.js</code></td></tr>
+          <tr><td>平台界面</td><td>业务逻辑共用，Mac/iPhone/iPad/Android 独立布局与安全区适配。</td><td><code>src/platforms/</code></td></tr>
+          <tr><td>配置同步服务</td><td>账号、加密配置包、分享、推送、Agent 更新控制面。</td><td><code>services/config-sync/</code></td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="model">
-      <h2>未来主 AI 要求</h2>
-      <p>主 AI 不进入第一版主流程。后续如果要做自动分流，它的核心不是“最会写代码”，而是“最会理解人什么时候真的要做事”。它要快、便宜、稳定输出结构化结果，并能把复杂任务交给更强 worker。</p>
+      <h2>语音与主 AI</h2>
+      <p>语音是当前 App 的输入与播报能力，不改变任务协议：唤醒后 ASR 实时写入输入框，用户或自动发送动作仍走同一条 Agent 任务链路。TTS 可播报任务完成或最后结果，并允许打断。</p>
       <div class="grid-3">
         <div class="card">
-          <h3>理解人话</h3>
-          <p>能识别闲聊、命令、否定、追问、补充条件、上下文切换和隐含对象。</p>
+          <h3>唤醒与转写</h3>
+          <p>默认关闭；启用后由唤醒词进入 ASR，唤醒前声音不进入任务文本。</p>
         </div>
         <div class="card">
-          <h3>不急着执行</h3>
-          <p>当用户还在说、多人还在讨论、关键信息不全时，先等待或追问。</p>
+          <h3>任务播报</h3>
+          <p>可选择只播报“任务完成”，或直接播放最后一条结果；播放中可打断。</p>
         </div>
         <div class="card">
-          <h3>会分配任务</h3>
-          <p>知道什么时候用 Codex，什么时候用 Claude，什么时候只需要自己回答。</p>
+          <h3>人工主控</h3>
+          <p>当前由用户选择会话与 AI，风险操作仍应由用户确认。</p>
         </div>
         <div class="card">
-          <h3>结构化输出</h3>
-          <p>稳定返回 action、agent、workdir、question、risk、userVisibleText。</p>
+          <h3>未来主 AI</h3>
+          <p>只做自然语言理解与结构化意图，不直接 SSH、不伪造任务完成。</p>
         </div>
         <div class="card">
-          <h3>风险意识</h3>
-          <p>删除、发布、权限、生产、资金相关操作必须先让用户确认。</p>
+          <h3>项目与角色</h3>
+          <p>一个工作目录可以有多个 AI 协作者；角色是任务视角，不是固定传统岗位。</p>
         </div>
         <div class="card">
-          <h3>文档意识</h3>
-          <p>复杂任务完成后沉淀成 PRD、方案、状态表和验证证据。</p>
+          <h3>CLI 能力目录</h3>
+          <p>未来主 AI 通过固定能力清单调用 App，不自行猜测底层命令。</p>
         </div>
       </div>
 
-      <h3>主 AI 输出协议</h3>
+      <h3>主 AI 预留协议</h3>
       <pre class="diagram">{
   "action": "run_agent_task | ask_clarification | switch_agent | stop | answer_directly | no_action",
   "agent": "codex | claude | main",
@@ -490,11 +491,11 @@ SSH / 远端桥接
       <table>
         <thead><tr><th>问题</th><th>建议方案</th><th>说明</th></tr></thead>
         <tbody>
-          <tr><td>GPT Pro 能否直接当 API 用</td><td>不建议按这个设计。</td><td>ChatGPT Pro 和 API 平台通常是两套授权与计费体系。Pro 可用于远端 Codex CLI 登录；未来如果启用主 AI API，再走 API Key 或短期 Token。</td></tr>
-          <tr><td>短期 Token 怎么做</td><td>App 请求自己的后端，后端换取短期访问凭证。</td><td>客户端不保存长期密钥，便于吊销、限流、统计和切换模型供应商。</td></tr>
-          <tr><td>服务器密码怎么存</td><td>iOS/iPadOS 用 Keychain，Mac 用 Keychain 或 safeStorage。</td><td>文档、日志、Git 仓库里都不能出现密码和长期密钥。</td></tr>
-          <tr><td>Windows 远端机器</td><td>SSH 连接可以支持，但扫描和启动命令需要 Windows 适配层。</td><td>路径、Shell、进程管理和会话复用都要按 Windows 单独封装。</td></tr>
-          <tr><td>高风险任务</td><td>第一版由界面和用户显式确认兜底。</td><td>确认后才交给 worker；确认记录应进入本地任务日志。未来可由主 AI 辅助识别风险。</td></tr>
+          <tr><td>服务器密码</td><td>iPhone/iPad 使用 Keychain；桌面端使用平台安全存储。</td><td>不得写入 Git、截图、普通日志或 UI 文案。</td></tr>
+          <tr><td>Agent 访问令牌</td><td>每台 Agent 单独生成 Bearer Token。</td><td>用于 Agent HTTP，不等同 SSH 密码；仅本地保存。</td></tr>
+          <tr><td>配置云端同步</td><td>App 本地加密后上传，服务端不解析会话正文。</td><td>配置不包含完整聊天记录；下载时做会话去重。</td></tr>
+          <tr><td>Windows 远端机器</td><td>支持 PowerShell 与 Agent HTTP。</td><td>命令、路径与进程管理有平台适配；Agent 是首选执行方式。</td></tr>
+          <tr><td>高风险操作</td><td>删除、发布、权限、生产变更应要求明确确认。</td><td>主 AI 上线后也不得绕过该确认边界。</td></tr>
         </tbody>
       </table>
       <div class="warn">
@@ -503,48 +504,44 @@ SSH / 远端桥接
     </section>
 
     <section id="roadmap">
-      <h2>阶段计划</h2>
+      <h2>已交付与下一步</h2>
       <table>
         <thead><tr><th>阶段</th><th>目标</th><th>交付物</th><th>状态</th></tr></thead>
         <tbody>
-          <tr><td>P0</td><td>能连机器，能选择工作目录，能把任务发给 Codex/Claude。</td><td>iOS/iPad/Mac 原型、SSH 桥、基础聊天 UI。</td><td><span class="st wip">原型待验</span></td></tr>
-          <tr><td>P1</td><td>人工主控版本打磨。</td><td>用户手动选择 AI 类型和工作目录，手动发送/停止，只展示最终结果。</td><td><span class="st wip">进行中</span></td></tr>
-          <tr><td>P2</td><td>接入语音输入。</td><td>唤醒词、录音、停顿结束、语音转文字、填入输入框、发送前人工确认。</td><td><span class="st wip">进行中</span></td></tr>
-          <tr><td>P3</td><td>可选主 AI 分流。</td><td>GPT-5.4 mini router、结构化 action、风险识别、结果清洗。</td><td><span class="st todo">后置</span></td></tr>
-          <tr><td>P4</td><td>生产级鉴权。</td><td>Token Broker、短期凭证、配额、审计、密钥轮换。</td><td><span class="st todo">待做</span></td></tr>
-          <tr><td>P5</td><td>多 worker 与协作能力。</td><td>多服务器、多目录、多会话、多人讨论识别、任务看板。</td><td><span class="st todo">待做</span></td></tr>
-          <tr><td>P6</td><td>发布与运营闭环。</td><td>App Connect、TestFlight、崩溃监控、使用统计、帮助文档。</td><td><span class="st todo">待做</span></td></tr>
+          <tr><td>会话与任务</td><td>多会话、会话排序、Agent 后台任务、刷新、取消与恢复。</td><td>本地消息状态机与远端 <code>remoteTaskId</code>。</td><td><span class="st done">已交付</span></td></tr>
+          <tr><td>Agent 直连</td><td>把日常任务创建、查询、取消从 SSH 切到 HTTP/HTTPS。</td><td>Agent API、直连令牌、失败回退 SSH。</td><td><span class="st done">已交付</span></td></tr>
+          <tr><td>跨端配置</td><td>账号登录、加密配置同步、分享与会话去重。</td><td>轻量配置服务与本地导入导出。</td><td><span class="st done">已交付</span></td></tr>
+          <tr><td>语音体验</td><td>提升 Android/iOS 唤醒、ASR 实时性、TTS 稳定性和打断体验。</td><td>平台原生能力与状态统一。</td><td><span class="st wip">进行中</span></td></tr>
+          <tr><td>主 AI 助理</td><td>理解自然语言，调用既有 App 能力，不直接接管远端命令。</td><td>能力清单、意图协议、风险确认。</td><td><span class="st todo">后置</span></td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="acceptance">
-      <h2>验收标准</h2>
+      <h2>验收与排查</h2>
       <ul>
-        <li>新用户只需要输入机器名称、地址和登录信息，就能完成连接，不需要理解 SSH 命令。</li>
-        <li>连接成功后自动扫描 AI 历史，列出工作目录，用户选择一个目录即可开始。</li>
-        <li>输入栏上方只有两个核心选择：AI 类型、工作目录。</li>
-        <li>第一版不自动替用户选择模型、目录或执行任务，发送前必须由用户确认。</li>
-        <li>聊天内容只显示用户发出的内容和 AI 最终回复，不展示启动 banner、TUI 选择项和无关终端输出。</li>
-        <li>AI 回复前发送按钮禁用；用户可以停止当前任务。</li>
-        <li>风险操作必须先确认；用户拒绝后不会继续执行。</li>
-        <li>iPhone、iPad、Mac 都能正常布局，侧边栏可收起，顶部只显示当前会话名称。</li>
-        <li>敏感信息不出现在 HTML、Git、日志和截图里。</li>
+        <li>用户发送后，自己的消息与 AI 占位消息立即出现在当前会话；网络慢不应让输入停留在输入框。</li>
+        <li>Agent 接收任务后，App 必须保存 <code>remoteTaskId</code>；刷新、停止和恢复都复用这个 ID，不创建新任务。</li>
+        <li>顶部“已连接”与消息“AI 执行中”可以同时存在，但聊天区不能再显示过期的“连接中”。</li>
+        <li>App 回前台时，只同步当前会话最后一条未结束任务；终态任务不重复查询。</li>
+        <li>同一会话在任意设备执行时，其他设备的新请求必须被拒绝或等待用户先停止前任务。</li>
+        <li>完整聊天历史只从本地读取；云端只同步加密会话配置，远端只用于恢复最后任务状态。</li>
+        <li>Mac、iPhone、iPad、Android 各自适配布局，业务状态机共用，不能用一个平台的 CSS 修另一个平台。</li>
       </ul>
 
-      <h3>待确认问题</h3>
+      <h3>排查顺序</h3>
       <table>
         <thead><tr><th>问题</th><th>为什么重要</th><th>建议默认值</th></tr></thead>
         <tbody>
-          <tr><td>未来是否启用主 AI</td><td>影响成本、稳定性和自动化边界。</td><td>第一版不启用；后续再评估 OpenAI GPT-5.4 mini 或其他 provider。</td></tr>
-          <tr><td>语音方案</td><td>影响实时性、费用和隐私。</td><td>短期做语音输入和人工确认，后续再接实时语音模型。</td></tr>
-          <tr><td>是否保存历史</td><td>影响隐私和跨设备体验。</td><td>默认不保存完整聊天，只保存会话映射和必要状态。</td></tr>
-          <tr><td>Token Broker 部署位置</td><td>影响 App Store 发布和密钥安全。</td><td>独立后端服务，支持短期凭证和限流。</td></tr>
+          <tr><td>任务没响应</td><td>先确认 AI 占位消息是否有 <code>remoteTaskId</code>。</td><td>有 ID 就点“刷新状态”；不要重新发送。</td></tr>
+          <tr><td>连接异常</td><td>Agent HTTP 与 SSH 都可能受网络影响。</td><td>等待一次自动重试后再手动重连；远端任务可能仍在执行。</td></tr>
+          <tr><td>没有任务 ID</td><td>App 未确认 Agent 是否收到任务。</td><td>检查详情；无法确认时重新发送，避免伪造恢复成功。</td></tr>
+          <tr><td>任务已结束但无结果</td><td>CLI 可能返回了异常、登录提示或非最终内容。</td><td>查看诊断详情与远端 CLI 登录、额度、权限状态。</td></tr>
         </tbody>
       </table>
     </section>
 
-    <footer>AI Workbench · PRD 与架构总览 · 产品状态以当前代码、测试结果和后续用户验收为准。</footer>
+    <footer>AI Workbench · 当前实现架构总览 · 详细状态机见 <a href="./current-system-logic.md">current-system-logic.md</a>。</footer>
   </main>
 </div>
 </body>
