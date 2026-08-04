@@ -7,7 +7,7 @@ const agentRoot = join(repoRoot, "agent");
 const args = new Set(process.argv.slice(2));
 const apply = args.has("--apply");
 const keepArgument = process.argv.slice(2).find((argument) => argument.startsWith("--keep="));
-const keepCount = Math.max(1, Number.parseInt(keepArgument?.split("=")[1] || "3", 10) || 3);
+const keepCount = Math.max(1, Number.parseInt(keepArgument?.split("=")[1] || "1", 10) || 1);
 
 async function readManifest(name) {
   return JSON.parse(await readFile(join(agentRoot, name), "utf8"));

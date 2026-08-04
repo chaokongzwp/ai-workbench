@@ -1,19 +1,19 @@
 {
   "kind": "ai-workbench-agent",
   "platform": "windows",
-  "version": "37",
-  "scriptUrl": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v37/aiwb-agent.mjs",
-  "scriptKey": "agent/v37/aiwb-agent.mjs",
-  "sha256": "5a24516282d445ccff9f4c656272050c72f3023d40c4eb377c3ce2465a6136c2",
+  "version": "38",
+  "scriptUrl": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v38/aiwb-agent.mjs",
+  "scriptKey": "agent/v38/aiwb-agent.mjs",
+  "sha256": "fa638bda7fd10e15d9378b565e8fc9a0f509114e6220c88d15276167297e0c7a",
   "runtime": "windows-node",
   "source": "github",
-  "publishedAt": "2026-08-03T10:04:23.156Z",
+  "publishedAt": "2026-08-03T12:22:53Z",
   "directRuntime": {
-    "url": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v37/aiwb-agent-http.mjs",
-    "sha256": "642f8b0ded098d76bad6389b8eaddac2e5a32202deb5bf407deb06d2620754fe"
+    "url": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v38/aiwb-agent-http.mjs",
+    "sha256": "b4541b4157ec16ecbf5de8e3e32aec6b8ea92ef39b40c3b15c1fae965bce1eec"
   },
   "updaterRuntime": {
-    "url": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v37/aiwb-agent-updater.mjs",
+    "url": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v38/aiwb-agent-updater.mjs",
     "sha256": "68a71c103a98ae2f2a39cde0664929aa02c94895c724fef643fa4f62584de4bb"
   }
 }
