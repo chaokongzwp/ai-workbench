@@ -6,9 +6,9 @@ current release directory used by the Linux and Windows installers.
 
 ## Current release
 
-- Current version: `v50`
-- Linux entry: `agent/v50/aiwbctl`
-- Windows entry: `agent/v50/aiwb-agent.mjs`
+- Current version: `v51`
+- Linux entry: `agent/v51/aiwbctl`
+- Windows entry: `agent/v51/aiwb-agent.mjs`
 
 Version 41 is the clean-break Agent release. AI tasks require Agent HTTPS;
 clients no longer fall back to direct SSH or tmux execution. The health endpoint
