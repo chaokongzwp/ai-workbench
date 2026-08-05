@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "41";
+export const latestWorkbenchAgentVersion = "43";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -1683,6 +1683,40 @@ aiwb_uninstall_service() {
   printf "__AIWB_AGENT_SERVICE_STATUS__removed\\n"
 }
 
+aiwb_clear_cache() {
+  local task_dir
+  local status
+  local task_count="0"
+  local conversation_count="0"
+
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    case "$status" in
+      queued|preparing|running|busy)
+        printf "__AIWB_AGENT_STATUS__error\\n"
+        printf "__AIWB_AGENT_ERROR__还有任务正在运行，不能清理 Agent 缓存。\\n"
+        return 3
+        ;;
+    esac
+    task_count="$((task_count + 1))"
+  done
+
+  for task_dir in "$AIWB_CONVERSATIONS"/*; do
+    [ -d "$task_dir" ] || continue
+    conversation_count="$((conversation_count + 1))"
+  done
+
+  find "$AIWB_TASKS" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  find "$AIWB_CONVERSATIONS" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  find "$AIWB_CONVERSATION_LOCKS" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  : > "$AIWB_DAEMON_LOG"
+  printf "__AIWB_AGENT_STATUS__ready\\n"
+  printf "__AIWB_AGENT_CACHE_CLEARED__1\\n"
+  printf "__AIWB_AGENT_CACHE_TASKS__%s\\n" "$task_count"
+  printf "__AIWB_AGENT_CACHE_CONVERSATIONS__%s\\n" "$conversation_count"
+}
+
 AIWB_CMD="status"
 if [ "$#" -gt 0 ]; then
   AIWB_CMD="$1"
@@ -1731,6 +1765,9 @@ case "$AIWB_CMD" in
     ;;
   uninstall-service)
     aiwb_uninstall_service
+    ;;
+  clear-cache)
+    aiwb_clear_cache
     ;;
   create)
     AIWB_TASK_ID=""

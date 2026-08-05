@@ -4,7 +4,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { latestWorkbenchAgentVersion, workbenchAgentGithubRawBaseUrl } from "../src/core/agent.js";
+import {
+  latestWorkbenchAgentVersion,
+  workbenchAgentControlEndpoint,
+  workbenchAgentGithubRawBaseUrl,
+} from "../src/core/agent.js";
 
 const repoRoot = join(fileURLToPath(new URL("..", import.meta.url)));
 const version = String(process.env.AIWB_AGENT_VERSION || latestWorkbenchAgentVersion).trim();
@@ -16,6 +20,8 @@ const directRuntimePath = join(repoRoot, "agent", `v${version}`, "aiwb-agent-htt
 const updaterRuntimePath = join(repoRoot, "agent", `v${version}`, "aiwb-agent-updater.mjs");
 const remote = String(process.env.AIWB_AGENT_GIT_REMOTE || "origin").trim();
 const branch = String(process.env.AIWB_AGENT_GIT_BRANCH || "main").trim();
+const controlEndpoint = String(process.env.AIWB_AGENT_CONTROL_ENDPOINT || workbenchAgentControlEndpoint).replace(/\/+$/, "");
+const agentControlKeychainService = "com.beexofficial.aiworkbench.agent-control-admin";
 
 function git(args, options = {}) {
   const output = execFileSync("git", args, {
@@ -24,6 +30,21 @@ function git(args, options = {}) {
     stdio: options.stdio || "pipe",
   });
   return typeof output === "string" ? output.trim() : "";
+}
+
+function agentControlAdminToken() {
+  const environmentToken = String(process.env.AIWB_AGENT_CONTROL_ADMIN_TOKEN || "").trim();
+  if (environmentToken) return environmentToken;
+  if (process.platform !== "darwin") return "";
+  try {
+    return execFileSync(
+      "security",
+      ["find-generic-password", "-s", agentControlKeychainService, "-w"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+  } catch {
+    return "";
+  }
 }
 
 execFileSync(process.execPath, ["scripts/export-agent-github.mjs"], {
@@ -97,6 +118,34 @@ if (cloudWindowsManifest.version !== version || cloudWindowsManifest.sha256 !== 
   throw new Error(`Cloud Windows manifest verification failed: expected Agent v${version}.`);
 }
 
+const controlAdminToken = agentControlAdminToken();
+if (!controlAdminToken) {
+  throw new Error(
+    `Agent 已推送到 GitHub，但配置中心尚未收到发布通知。请设置 AIWB_AGENT_CONTROL_ADMIN_TOKEN，` +
+    `或将凭证存入 macOS 钥匙串服务 ${agentControlKeychainService}，然后重新运行发布命令。`,
+  );
+}
+const controlPublishResponse = await fetch(`${controlEndpoint}/publish`, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${controlAdminToken}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ version, manifestUrl, windowsManifestUrl }),
+});
+if (!controlPublishResponse.ok) {
+  throw new Error(`配置中心发布通知失败：HTTP ${controlPublishResponse.status}`);
+}
+const controlLatestResponse = await fetch(`${controlEndpoint}/latest`, { cache: "no-store" });
+if (!controlLatestResponse.ok) {
+  throw new Error(`配置中心版本验证失败：HTTP ${controlLatestResponse.status}`);
+}
+const controlLatest = await controlLatestResponse.json();
+if (String(controlLatest?.agent?.version || "") !== version) {
+  throw new Error(`配置中心版本验证失败：目标版本不是 v${version}。`);
+}
+
 console.log(`Published AI Workbench Agent v${version} to GitHub cloud.`);
 console.log(`Manifest: ${manifestUrl}`);
 console.log(`Windows manifest: ${windowsManifestUrl}`);
+console.log(`Agent control target: v${version}`);

@@ -79,6 +79,10 @@ Agent 启动后调用 `POST /v1/agent-control/register` 登记自身可访问地
 
 服务端需要在 `apns.env` 或独立环境文件中配置 `AIWB_AGENT_CONTROL_ADMIN_TOKEN`。该令牌只用于发布端，不能放进 App 或 Agent。中心保存的是只能触发固定自更新操作的凭证，不是 Agent 的任务 API Token。
 
+`npm run agent:publish` 会在 GitHub 清单校验通过后调用配置中心，并再次读取目标版本确认发布闭环。发布机必须通过
+`AIWB_AGENT_CONTROL_ADMIN_TOKEN` 提供管理凭证；macOS 也可以把凭证保存在钥匙串服务
+`com.beexofficial.aiworkbench.agent-control-admin`。没有凭证时发布命令会失败，不再把“仅推送 GitHub”误报为发布成功。
+
 ## iPhone / iPad 任务通知
 
 App 可以把一次性通知票据交给远端 Agent。任务进入完成、失败或已取消状态后，Agent

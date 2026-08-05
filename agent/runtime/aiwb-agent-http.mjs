@@ -4,7 +4,7 @@
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { createHash, randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, platform } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -16,6 +16,7 @@ const taskRoot = join(agentHome, "tasks");
 const maxBodyBytes = 512 * 1024;
 const pollingIntervalMs = 700;
 const directRuntimePath = fileURLToPath(import.meta.url);
+const directRuntimePidPath = join(agentHome, "http.pid");
 
 function text(value) {
   return String(value ?? "").trim();
@@ -355,6 +356,18 @@ export function createAgentDirectServer({ config = loadAgentDirectConfig(), cont
           agentHome,
         });
       }
+      if (request.method === "POST" && url.pathname === "/v1/cache/clear") {
+        const result = await control(["clear-cache"]);
+        if (result.code !== 0) {
+          return json(response, 409, {
+            error: {
+              code: "agent_cache_busy",
+              message: text(result.stderr || result.stdout) || "Agent 缓存清理失败。",
+            },
+          });
+        }
+        return json(response, 200, { ok: true, detail: text(result.stdout) });
+      }
       if (request.method === "POST" && url.pathname === "/v1/tasks") {
         const payload = await readJson(request);
         const taskId = prepareTask(payload);
@@ -423,6 +436,12 @@ export async function startAgentDirectServer(options = {}) {
       server.off("error", reject);
       resolvePromise();
     });
+  });
+  writeFileSync(directRuntimePidPath, String(process.pid), { mode: 0o600 });
+  process.once("exit", () => {
+    try {
+      if (readText(directRuntimePidPath) === String(process.pid)) unlinkSync(directRuntimePidPath);
+    } catch {}
   });
   void registerWithControlPlane(config, options.control || invokeControl).catch(() => {});
   return server;

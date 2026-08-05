@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Keeps the local Agent runtime aligned with the published manifest. It is an
 // outbound-only control client: it never carries prompts or task output.
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -8,6 +9,7 @@ import { dirname, join } from "node:path";
 const home = process.env.AIWB_AGENT_HOME || join(process.env.HOME || process.env.USERPROFILE || ".", ".ai-workbench", "agent");
 const configPath = process.env.AIWB_AGENT_UPDATER_CONFIG || join(home, "updater.json");
 const intervalMs = Math.max(30_000, Number(process.env.AIWB_AGENT_UPDATE_INTERVAL_MS) || 5 * 60_000);
+const singleRun = process.argv.includes("--once");
 
 function text(value) {
   return String(value ?? "").trim();
@@ -82,17 +84,51 @@ async function updateOnce() {
     }
   }
   writeStatus({ ok: true, updated, version: manifest.version || "" });
+  return { updated, version: text(manifest.version) };
+}
+
+async function restartInstalledRuntime() {
+  const controlPath = join(home, process.platform === "win32" ? "aiwb-agent.mjs" : "aiwbctl");
+  if (existsSync(controlPath)) {
+    if (process.platform === "win32") {
+      spawnSync(process.execPath, [controlPath, "install-service"], { windowsHide: true, timeout: 30_000 });
+    } else {
+      spawnSync(controlPath, ["install-service"], { timeout: 30_000 });
+    }
+  }
+
+  const directRuntime = join(home, "aiwb-agent-http.mjs");
+  const directPid = Number(text(existsSync(join(home, "http.pid")) ? readFileSync(join(home, "http.pid"), "utf8") : ""));
+  if (Number.isInteger(directPid) && directPid > 1 && directPid !== process.pid) {
+    try { process.kill(directPid, "SIGTERM"); } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (existsSync(directRuntime)) {
+    const direct = spawn(process.execPath, [directRuntime], { detached: true, stdio: "ignore", windowsHide: true });
+    direct.unref();
+  }
+
+  const updaterPath = join(home, "aiwb-agent-updater.mjs");
+  if (existsSync(updaterPath)) {
+    const updater = spawn(process.execPath, [updaterPath], { detached: true, stdio: "ignore", windowsHide: true });
+    updater.unref();
+  }
 }
 
 async function tick() {
   try {
-    await updateOnce();
+    const result = await updateOnce();
+    if (!singleRun && result?.updated) {
+      writeStatus({ ok: true, updated: true, version: result.version, restarting: true });
+      await restartInstalledRuntime();
+      process.exit(0);
+    }
   } catch (error) {
     writeStatus({ ok: false, error: text(error?.message) || "升级检查失败" });
   }
 }
 
-if (process.argv.includes("--once")) {
+if (singleRun) {
   await tick();
 } else {
   await tick();
