@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("./release-agent.mjs", import.meta.url), "utf8");
 const updaterSource = readFileSync(new URL("../agent/runtime/aiwb-agent-updater.mjs", import.meta.url), "utf8");
 const directRuntimeSource = readFileSync(new URL("../agent/runtime/aiwb-agent-http.mjs", import.meta.url), "utf8");
+const linuxAgentSource = readFileSync(new URL("../src/core/agent.js", import.meta.url), "utf8");
+const windowsAgentSource = readFileSync(new URL("../src/core/windowsAgent.js", import.meta.url), "utf8");
 
 assert.match(source, /workbenchAgentControlEndpoint/);
 assert.match(source, /AIWB_AGENT_CONTROL_ADMIN_TOKEN/);
@@ -16,6 +18,16 @@ assert.match(source, /"src\/core\/windowsAgent\.js"/);
 assert.match(updaterSource, /if \(!singleRun && result\?\.updated\)/);
 assert.match(updaterSource, /await restartInstalledRuntime\(\)/);
 assert.match(updaterSource, /join\(home, "http\.pid"\)/);
+assert.match(updaterSource, /function managedServiceConfigured\(\)/);
+assert.match(updaterSource, /if \(managedServiceConfigured\(\)\) return/);
 assert.match(directRuntimeSource, /directRuntimePidPath/);
+assert.match(directRuntimeSource, /openSync\(directRuntimePidPath, "wx"/);
+assert.match(updaterSource, /openSync\(updaterPidPath, "wx"/);
+assert.match(linuxAgentSource, /aiwb_service_run\(\)/);
+assert.match(linuxAgentSource, /<string>service-run<\/string>/);
+assert.match(linuxAgentSource, /ExecStart=\$AIWB_HOME\/aiwbctl service-run/);
+assert.match(windowsAgentSource, /async function serviceRun\(\)/);
+assert.match(windowsAgentSource, /process\.argv\[1\], "service-run"/);
+assert.match(windowsAgentSource, /if \(installedVersion\(\) !== VERSION\)/);
 
 console.log("agent release control-center regression: ok");

@@ -132,7 +132,7 @@ sequenceDiagram
 
 任务未结束时，发送按钮变为停止按钮。停止会向 Agent 请求取消对应 `remoteTaskId`。已收到的中间输出保留在消息中；任务变为“已取消”后立即解锁输入框。
 
-Agent v40 起，runner PID 与实际命令 PID 分开记录。停止任务、发现 runner 异常退出或卸载 Agent 时，会递归终止该任务的完整进程树，避免 Codex / Claude 子进程残留并继续占用会话。v41 起只允许 Agent HTTPS 任务协议；v42 起支持在无运行任务时清理 Agent 任务历史、会话索引和日志缓存；v43 起主动轮询下载更新后会重启 Agent 服务与 HTTPS 运行时，不再依赖配置中心能够反向访问 Agent 端口。
+Agent v40 起，runner PID 与实际命令 PID 分开记录。停止任务、发现 runner 异常退出或卸载 Agent 时，会递归终止该任务的完整进程树，避免 Codex / Claude 子进程残留并继续占用会话。v41 起只允许 Agent HTTPS 任务协议；v42 起支持在无运行任务时清理 Agent 任务历史、会话索引和日志缓存；v43 起主动轮询下载更新后会重启 Agent 服务与 HTTPS 运行时，不再依赖配置中心能够反向访问 Agent 端口；v44 起系统服务统一托管任务 daemon、HTTPS API 与更新器，设备重启或子进程退出后会自动恢复并重新登记；v45 起修复 macOS 启动项重载竞态，并由系统服务完成更新后的整体重启；v46 起 HTTP API 与更新器使用原子单实例锁，升级切换时不会残留重复进程。
 
 ### 4.3 App 进入后台或被杀掉
 
