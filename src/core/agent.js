@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "43";
+export const latestWorkbenchAgentVersion = "44";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -1023,6 +1023,52 @@ aiwb_daemon_loop() {
   done
 }
 
+aiwb_node_command() {
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  for candidate in /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+    if [ -x "$candidate" ]; then
+      printf "%s\n" "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+aiwb_service_run() {
+  local node_command=""
+  local daemon_pid=""
+  local http_pid=""
+  local updater_pid=""
+
+  node_command="$(aiwb_node_command 2>/dev/null || printf "")"
+  if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-http.mjs" ]; then
+    "$node_command" "$AIWB_HOME/aiwb-agent-http.mjs" >> "$AIWB_HOME/http.log" 2>&1 &
+    http_pid="$!"
+  fi
+  if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-updater.mjs" ]; then
+    "$node_command" "$AIWB_HOME/aiwb-agent-updater.mjs" >> "$AIWB_HOME/updater.log" 2>&1 &
+    updater_pid="$!"
+  fi
+  aiwb_daemon_loop &
+  daemon_pid="$!"
+
+  trap 'for child_pid in "$daemon_pid" "$http_pid" "$updater_pid"; do [ -n "$child_pid" ] && kill "$child_pid" >/dev/null 2>&1 || true; done; wait >/dev/null 2>&1 || true; exit 0' INT TERM EXIT
+  while kill -0 "$daemon_pid" >/dev/null 2>&1; do
+    if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-http.mjs" ] && { [ -z "$http_pid" ] || ! kill -0 "$http_pid" >/dev/null 2>&1; }; then
+      "$node_command" "$AIWB_HOME/aiwb-agent-http.mjs" >> "$AIWB_HOME/http.log" 2>&1 &
+      http_pid="$!"
+    fi
+    if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-updater.mjs" ] && { [ -z "$updater_pid" ] || ! kill -0 "$updater_pid" >/dev/null 2>&1; }; then
+      "$node_command" "$AIWB_HOME/aiwb-agent-updater.mjs" >> "$AIWB_HOME/updater.log" 2>&1 &
+      updater_pid="$!"
+    fi
+    sleep 2
+  done
+}
+
 aiwb_start_daemon() {
   if aiwb_daemon_alive; then
     return 0
@@ -1583,7 +1629,7 @@ aiwb_install_service() {
   <array>
     <string>/bin/bash</string>
     <string>$AIWB_HOME/aiwbctl</string>
-    <string>daemon</string>
+    <string>service-run</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -1631,10 +1677,10 @@ After=network.target
 [Service]
 Type=simple
 Environment=HOME=$AIWB_USER_HOME
-ExecStart=$AIWB_HOME/aiwbctl daemon
+ExecStart=$AIWB_HOME/aiwbctl service-run
 Restart=always
 RestartSec=2
-KillMode=process
+KillMode=control-group
 WorkingDirectory=$AIWB_HOME
 
 [Install]
@@ -1758,6 +1804,9 @@ case "$AIWB_CMD" in
     ;;
   daemon)
     aiwb_daemon_loop
+    ;;
+  service-run)
+    aiwb_service_run
     ;;
   install-service)
     aiwb_install_service
