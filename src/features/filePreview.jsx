@@ -282,7 +282,60 @@ const {
 
 export function fileDataUrl(file) {
   if (!file?.base64) return "";
-  return `data:${file.mime || previewMimeFromExtension(file.extension)};base64,${file.base64}`;
+  const fallbackMime = previewMimeFromExtension(file.extension);
+  const mime = file.kind === "image" && !String(file.mime || "").startsWith("image/") ? fallbackMime : file.mime || fallbackMime;
+  return `data:${mime};base64,${file.base64}`;
+}
+
+function useFileObjectUrl(file) {
+  const [url, setUrl] = useState("");
+
+  useEffect(() => {
+    if (!file?.base64 || typeof window === "undefined" || typeof URL?.createObjectURL !== "function") {
+      setUrl("");
+      return undefined;
+    }
+
+    let objectUrl = "";
+    try {
+      const binary = window.atob(file.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      const fallbackMime = previewMimeFromExtension(file.extension);
+      const mime = file.kind === "image" && !String(file.mime || "").startsWith("image/") ? fallbackMime : file.mime || fallbackMime;
+      objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      setUrl(objectUrl);
+    } catch {
+      setUrl("");
+    }
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file?.base64, file?.extension, file?.kind, file?.mime]);
+
+  return url;
+}
+
+function TransferProgress({ state = "loading", progress, label }) {
+  const numericProgress = Number(progress);
+  const determinate = Number.isFinite(numericProgress);
+  const value = determinate ? Math.max(0, Math.min(100, numericProgress)) : undefined;
+  return (
+    <div className={`file-transfer-progress ${determinate ? "determinate" : "indeterminate"} ${state}`}>
+      <div
+        className="file-transfer-progress-track"
+        role="progressbar"
+        aria-label={label || "文件传输进度"}
+        aria-valuemin={determinate ? 0 : undefined}
+        aria-valuemax={determinate ? 100 : undefined}
+        aria-valuenow={determinate ? value : undefined}
+      >
+        <span style={determinate ? { width: `${value}%` } : undefined} />
+      </div>
+      {determinate ? <small>{Math.round(value)}%</small> : null}
+    </div>
+  );
 }
 
 export function decodeBase64Utf8(base64) {
@@ -365,7 +418,9 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
   const [externalOpenState, setExternalOpenState] = useState({ state: "idle", message: "" });
   const deleteConfirmationTimerRef = useRef(null);
   const file = preview?.file;
-  const dataUrl = useMemo(() => fileDataUrl(file), [file]);
+  const objectUrl = useFileObjectUrl(file);
+  const dataUrl = useMemo(() => objectUrl || fileDataUrl(file), [file, objectUrl]);
+  const [mediaError, setMediaError] = useState("");
   const textContent = useMemo(() => {
     if (!file || !["csv", "html", "text", "code"].includes(file.kind)) return "";
     return decodeBase64Utf8(file.base64);
@@ -386,6 +441,7 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
   useEffect(() => {
     setConfirmingDelete(false);
     setExternalOpenState({ state: "idle", message: "" });
+    setMediaError("");
     if (deleteConfirmationTimerRef.current) window.clearTimeout(deleteConfirmationTimerRef.current);
     deleteConfirmationTimerRef.current = null;
   }, [path]);
@@ -450,6 +506,7 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
           <div className="file-preview-state">
             <strong>正在读取文件</strong>
             <span>从远端工作目录拉取内容。</span>
+            <TransferProgress state="loading" progress={preview.progress} label="文件预览读取进度" />
           </div>
         ) : null}
 
@@ -500,11 +557,33 @@ export function FilePreviewPanel({ preview, downloadState, onPreviewFile, onDown
                 </button>
               </div>
             </div>
-            {downloadMessage ? <p className={`file-download-status ${downloadState?.state || ""}`}>{downloadMessage}</p> : null}
+            {downloadMessage ? (
+              <div className={`file-download-status ${downloadState?.state || ""}`}>
+                <span>{downloadMessage}</span>
+                <TransferProgress
+                  state={downloadState?.state}
+                  progress={downloadState?.progress}
+                  label="文件下载进度"
+                />
+              </div>
+            ) : null}
             {externalOpenState.message ? (
               <p className={`file-download-status ${externalOpenState.state}`}>{externalOpenState.message}</p>
             ) : null}
-            <FilePreviewContent file={file} dataUrl={dataUrl} textContent={textContent} csvRows={csvRows} />
+            {mediaError ? (
+              <div className="file-preview-state error">
+                <strong>图片无法在 App 内渲染</strong>
+                <span>{mediaError}。可以点击“浏览器打开”交给系统查看，或直接下载。</span>
+              </div>
+            ) : (
+              <FilePreviewContent
+                file={file}
+                dataUrl={dataUrl}
+                textContent={textContent}
+                csvRows={csvRows}
+                onMediaError={() => setMediaError("当前图片格式或内容不受 WebView 支持")}
+              />
+            )}
           </>
         ) : null}
       </section>
@@ -583,7 +662,16 @@ export function RemoteDownloadDialog({ open, profile, downloadState, onDownloadF
 
         {workdir ? <p className="remote-download-workdir">当前工作目录：{workdir}</p> : null}
         {localError ? <p className="file-download-status error">{localError}</p> : null}
-        {visibleDownloadState ? <p className={`file-download-status ${downloadState?.state || ""}`}>{visibleDownloadState.message}</p> : null}
+        {visibleDownloadState ? (
+          <div className={`file-download-status ${downloadState?.state || ""}`}>
+            <span>{visibleDownloadState.message}</span>
+            <TransferProgress
+              state={visibleDownloadState.state}
+              progress={visibleDownloadState.progress}
+              label="远程文件下载进度"
+            />
+          </div>
+        ) : null}
 
         <div className="remote-download-actions">
           <button
@@ -722,9 +810,9 @@ export function RemoteDirectoryDialog({
   );
 }
 
-export function FilePreviewContent({ file, dataUrl, textContent, csvRows }) {
+export function FilePreviewContent({ file, dataUrl, textContent, csvRows, onMediaError }) {
   if (file.kind === "image") {
-    return <img className="file-preview-image" src={dataUrl} alt={file.name || "图片预览"} />;
+    return <img className="file-preview-image" src={dataUrl} alt={file.name || "图片预览"} onError={onMediaError} />;
   }
 
   if (file.kind === "pdf") {

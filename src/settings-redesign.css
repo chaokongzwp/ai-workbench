@@ -4211,7 +4211,10 @@
 /* Keep Mac sent-message bubbles compact; the text itself must not add a second inset. */
 .mac-shell .conversation .user-prompt .user-message-card,
 .app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card {
-  padding: 8px 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .mac-shell .conversation .user-prompt .user-message-card > p,

@@ -64,8 +64,12 @@ const windowsSha256 = createHash("sha256").update(windowsScript).digest("hex");
 if (windowsManifest.version !== version || windowsManifest.sha256 !== windowsSha256) {
   throw new Error("Generated Windows Agent manifest does not match the published script.");
 }
-for (const [runtime, path] of [[manifest.directRuntime, directRuntimePath], [manifest.updaterRuntime, updaterRuntimePath]]) {
-  const file = await readFile(path);
+const directRuntime = await readFile(directRuntimePath);
+const updaterRuntime = await readFile(updaterRuntimePath);
+for (const [runtime, file, path] of [
+  [manifest.directRuntime, directRuntime, directRuntimePath],
+  [manifest.updaterRuntime, updaterRuntime, updaterRuntimePath],
+]) {
   const runtimeSha256 = createHash("sha256").update(file).digest("hex");
   if (!runtime?.url || runtime.sha256 !== runtimeSha256) {
     throw new Error(`Generated Agent runtime manifest does not match ${path}.`);
@@ -141,7 +145,17 @@ const controlPublishResponse = await fetch(`${controlEndpoint}/publish`, {
     Authorization: `Bearer ${controlAdminToken}`,
     "Content-Type": "application/json",
   },
-  body: JSON.stringify({ version, manifestUrl, windowsManifestUrl }),
+  body: JSON.stringify({
+    version,
+    manifest,
+    windowsManifest,
+    artifacts: {
+      aiwbctl: script.toString("base64"),
+      "aiwb-agent.mjs": windowsScript.toString("base64"),
+      "aiwb-agent-http.mjs": directRuntime.toString("base64"),
+      "aiwb-agent-updater.mjs": updaterRuntime.toString("base64"),
+    },
+  }),
 });
 if (!controlPublishResponse.ok) {
   throw new Error(`配置中心发布通知失败：HTTP ${controlPublishResponse.status}`);
@@ -154,8 +168,22 @@ const controlLatest = await controlLatestResponse.json();
 if (String(controlLatest?.agent?.version || "") !== version) {
   throw new Error(`配置中心版本验证失败：目标版本不是 v${version}。`);
 }
+if (controlLatest?.agent?.source !== "config-center") {
+  throw new Error("配置中心版本验证失败：Agent 制品没有托管到配置中心。");
+}
+for (const [url, expectedSha256, label] of [
+  [controlLatest.manifestUrl, sha256, "Agent"],
+  [controlLatest.windowsManifestUrl, windowsSha256, "Windows Agent"],
+]) {
+  const hostedResponse = await fetch(url, { cache: "no-store" });
+  if (!hostedResponse.ok) throw new Error(`配置中心 ${label} 清单验证失败：HTTP ${hostedResponse.status}`);
+  const hostedManifest = await hostedResponse.json();
+  if (hostedManifest.version !== version || hostedManifest.sha256 !== expectedSha256 || hostedManifest.source !== "config-center") {
+    throw new Error(`配置中心 ${label} 清单验证失败：内容不一致。`);
+  }
+}
 
-console.log(`Published AI Workbench Agent v${version} to GitHub cloud.`);
-console.log(`Manifest: ${manifestUrl}`);
-console.log(`Windows manifest: ${windowsManifestUrl}`);
+console.log(`Published AI Workbench Agent v${version} to the configuration center.`);
+console.log(`Hosted manifest: ${controlLatest.manifestUrl}`);
+console.log(`Hosted Windows manifest: ${controlLatest.windowsManifestUrl}`);
 console.log(`Agent control target: v${version}`);

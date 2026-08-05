@@ -7,6 +7,7 @@ import Citadel
 import NIOCore
 @preconcurrency import NIOSSH
 import UIKit
+import WebKit
 
 private struct SSHConnectionConfig {
     let sessionId: String
@@ -1335,7 +1336,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "getAppInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "haptic", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportLogs", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "clearLogs", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "clearLogs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearAppCache", returnType: CAPPluginReturnPromise)
     ]
 
     private let keychainService = "com.beexofficial.aiworkbench.connection"
@@ -1731,9 +1733,11 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                     popover.permittedArrowDirections = []
                 }
 
-                viewController.present(activity, animated: true) {
-                    call.resolve(["ok": true, "path": fileURL.path])
-                }
+                viewController.present(activity, animated: true)
+                // The file is already written and handed to the system share
+                // sheet. Resolve immediately so a background transition cannot
+                // leave the web UI permanently stuck in “下载中”.
+                call.resolve(["ok": true, "path": fileURL.path])
             }
         } catch {
             call.reject("保存文件失败：\(safeErrorMessage(error))", "FILE_SAVE_FAILED", error)
@@ -2028,6 +2032,20 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                         error
                     )
                 }
+            }
+        }
+    }
+
+    @objc func clearAppCache(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let dataStore = WKWebsiteDataStore.default()
+            let cacheTypes: Set<String> = [
+                WKWebsiteDataTypeDiskCache,
+                WKWebsiteDataTypeMemoryCache,
+                WKWebsiteDataTypeOfflineWebApplicationCache
+            ]
+            dataStore.removeData(ofTypes: cacheTypes, modifiedSince: .distantPast) {
+                call.resolve(["ok": true])
             }
         }
     }

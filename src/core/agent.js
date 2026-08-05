@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "51";
+export const latestWorkbenchAgentVersion = "52";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -11,6 +11,7 @@ export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
 export const workbenchAgentManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${latestWorkbenchAgentVersion}/manifest.json`;
 export const workbenchAgentControlEndpoint = "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control";
+export const workbenchAgentControlLatestUrl = `${workbenchAgentControlEndpoint}/latest`;
 
 const {
   SSHWorkbench,
@@ -841,8 +842,111 @@ fi
 eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1 &
 AIWB_COMMAND_PID=$!
 aiwb_write_file "$AIWB_TASK_DIR/command_pid" "$AIWB_COMMAND_PID"
+
+aiwb_process_tree_pids() {
+  local root_pid="$1"
+  local child_pid
+  printf "%s\\n" "$root_pid"
+  if command -v pgrep >/dev/null 2>&1; then
+    for child_pid in $(pgrep -P "$root_pid" 2>/dev/null || printf ""); do
+      aiwb_process_tree_pids "$child_pid"
+    done
+  fi
+}
+
+aiwb_process_tree_cpu_fingerprint() {
+  local root_pid="$1"
+  local process_pid
+  for process_pid in $(aiwb_process_tree_pids "$root_pid"); do
+    printf "%s:" "$process_pid"
+    ps -p "$process_pid" -o time= 2>/dev/null | tr -d '[:space:]'
+    printf ";"
+  done
+  printf "\\n"
+}
+
+aiwb_process_tree_has_network() {
+  local root_pid="$1"
+  local process_pid
+  command -v lsof >/dev/null 2>&1 || return 0
+  for process_pid in $(aiwb_process_tree_pids "$root_pid"); do
+    if lsof -nP -a -p "$process_pid" -i 2>/dev/null | grep -q .; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+aiwb_kill_process_tree_now() {
+  local root_pid="$1"
+  local child_pid
+  if command -v pgrep >/dev/null 2>&1; then
+    for child_pid in $(pgrep -P "$root_pid" 2>/dev/null || printf ""); do
+      aiwb_kill_process_tree_now "$child_pid"
+    done
+  fi
+  kill -KILL "$root_pid" >/dev/null 2>&1 || true
+}
+
+aiwb_watch_claude_macos_startup() {
+  local command_pid="$1"
+  local grace_seconds="\${AIWB_CLAUDE_MAC_STARTUP_GRACE_SECONDS:-600}"
+  local sample_seconds="\${AIWB_CLAUDE_MAC_STARTUP_SAMPLE_SECONDS:-30}"
+  local required_stalls="\${AIWB_CLAUDE_MAC_STARTUP_STALL_SAMPLES:-3}"
+  local stalled_samples=0
+  local previous_cpu=""
+  local current_cpu=""
+  local platform=""
+
+  platform="$(uname -s 2>/dev/null || printf unknown)"
+  if [ "$platform" != "Darwin" ] && [ "\${AIWB_CLAUDE_MAC_STARTUP_WATCHDOG_FORCE:-0}" != "1" ]; then
+    return 0
+  fi
+  command -v lsof >/dev/null 2>&1 || return 0
+  case "$grace_seconds:$sample_seconds:$required_stalls" in
+    *[!0-9:]*) return 0 ;;
+  esac
+  [ "$grace_seconds" -ge 1 ] 2>/dev/null || grace_seconds=600
+  [ "$sample_seconds" -ge 1 ] 2>/dev/null || sample_seconds=30
+  [ "$required_stalls" -ge 2 ] 2>/dev/null || required_stalls=3
+
+  sleep "$grace_seconds"
+  previous_cpu="$(aiwb_process_tree_cpu_fingerprint "$command_pid")"
+  while kill -0 "$command_pid" 2>/dev/null && [ ! -s "$AIWB_TASK_DIR/output.log" ]; do
+    sleep "$sample_seconds"
+    kill -0 "$command_pid" 2>/dev/null || return 0
+    [ ! -s "$AIWB_TASK_DIR/output.log" ] || return 0
+    current_cpu="$(aiwb_process_tree_cpu_fingerprint "$command_pid")"
+    if [ "$current_cpu" = "$previous_cpu" ] && ! aiwb_process_tree_has_network "$command_pid"; then
+      stalled_samples="$((stalled_samples + 1))"
+    else
+      stalled_samples=0
+    fi
+    previous_cpu="$current_cpu"
+    if [ "$stalled_samples" -ge "$required_stalls" ] 2>/dev/null; then
+      {
+        printf "AI Workbench Agent: macOS Claude CLI 启动后长期无输出、无网络活动且 CPU 无变化，已判定为假死并自动结束。\\n"
+        printf "请重新发送任务；如果重复出现，请更新 Claude CLI 或重新登录 Claude。\\n"
+        printf "checked_at: %s\\n" "$(aiwb_now)"
+      } >> "$AIWB_TASK_DIR/bootstrap.log"
+      aiwb_write_file "$AIWB_TASK_DIR/startup_watchdog_triggered_at" "$(aiwb_now)"
+      aiwb_kill_process_tree_now "$command_pid"
+      return 0
+    fi
+  done
+}
+
+AIWB_CLAUDE_WATCHDOG_PID=""
+if [ "$AIWB_TASK_AGENT_ID" = "claude" ]; then
+  aiwb_watch_claude_macos_startup "$AIWB_COMMAND_PID" &
+  AIWB_CLAUDE_WATCHDOG_PID=$!
+fi
 wait "$AIWB_COMMAND_PID"
 AIWB_EXIT_CODE=$?
+if [ -n "$AIWB_CLAUDE_WATCHDOG_PID" ]; then
+  kill "$AIWB_CLAUDE_WATCHDOG_PID" >/dev/null 2>&1 || true
+  wait "$AIWB_CLAUDE_WATCHDOG_PID" 2>/dev/null || true
+fi
 aiwb_write_file "$AIWB_TASK_DIR/command_pid" ""
 aiwb_build_execution_summary "$AIWB_EXIT_CODE"
 AIWB_GIT_VERIFICATION_CODE=$?
@@ -1971,7 +2075,8 @@ export function buildInstallWorkbenchAgentCommand(profile) {
     return powershellStdinCommand(`
 $AIWB_HOME = Join-Path $env:USERPROFILE ".ai-workbench\\agent"
 $AIWB_SCRIPT = Join-Path $AIWB_HOME "aiwb-agent.mjs"
-$AIWB_MANIFEST_URL = ${psQuote(workbenchWindowsAgentManifestUrl)}
+$AIWB_CONTROL_URL = ${psQuote(workbenchAgentControlLatestUrl)}
+$AIWB_MANIFEST_URL = ""
 $AIWB_REQUIRED_VERSION = ${psQuote(latestWorkbenchAgentVersion)}
 $AIWB_NODE_COMMAND = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $AIWB_NODE_COMMAND) {
@@ -1981,6 +2086,7 @@ if (-not $AIWB_NODE_COMMAND) {
 }
 
 New-Item -ItemType Directory -Force -Path $AIWB_HOME | Out-Null
+$AIWB_CONTROL_TMP = Join-Path $AIWB_HOME ("control-latest.json." + $PID + ".tmp")
 $AIWB_MANIFEST_TMP = Join-Path $AIWB_HOME ("latest.json." + $PID + ".tmp")
 $AIWB_SCRIPT_TMP = Join-Path $AIWB_HOME ("aiwb-agent.mjs." + $PID + ".tmp")
 
@@ -2004,10 +2110,27 @@ function Convert-AiwbVersionNumber([object]$Value) {
   return [int]$match.Groups[1].Value
 }
 
+if (-not (Invoke-AiwbCloudDownload $AIWB_CONTROL_URL $AIWB_CONTROL_TMP)) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__无法连接配置中心读取最新 Windows Agent 版本。请检查服务器网络，或稍后重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP -Force -ErrorAction SilentlyContinue
+  exit 3
+}
+try {
+  $AIWB_CONTROL = Get-Content -LiteralPath $AIWB_CONTROL_TMP -Raw -Encoding UTF8 | ConvertFrom-Json
+  $AIWB_MANIFEST_URL = [string]$AIWB_CONTROL.windowsManifestUrl
+} catch {}
+if ([string]::IsNullOrWhiteSpace($AIWB_MANIFEST_URL)) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__配置中心没有提供 Windows Agent 下载清单。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP -Force -ErrorAction SilentlyContinue
+  exit 3
+}
+
 if (-not (Invoke-AiwbCloudDownload $AIWB_MANIFEST_URL $AIWB_MANIFEST_TMP)) {
   Write-Output "__AIWB_AGENT_STATUS__error"
-  Write-Output "__AIWB_AGENT_ERROR__无法读取云端 Windows Agent 清单。请检查服务器网络，或稍后重试。"
-  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  Write-Output "__AIWB_AGENT_ERROR__无法从配置中心读取 Windows Agent 清单。请检查服务器网络，或稍后重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
   exit 3
 }
 
@@ -2015,8 +2138,8 @@ try {
   $AIWB_MANIFEST = Get-Content -LiteralPath $AIWB_MANIFEST_TMP -Raw -Encoding UTF8 | ConvertFrom-Json
 } catch {
   Write-Output "__AIWB_AGENT_STATUS__error"
-  Write-Output "__AIWB_AGENT_ERROR__云端 Windows Agent 清单格式无效。"
-  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  Write-Output "__AIWB_AGENT_ERROR__配置中心 Windows Agent 清单格式无效。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
   exit 4
 }
 
@@ -2026,7 +2149,7 @@ $AIWB_REQUIRED_VERSION_NUM = Convert-AiwbVersionNumber $AIWB_REQUIRED_VERSION
 if ($AIWB_REMOTE_VERSION_NUM -lt $AIWB_REQUIRED_VERSION_NUM) {
   Write-Output "__AIWB_AGENT_STATUS__error"
   Write-Output ("__AIWB_AGENT_ERROR__云端 Windows Agent 版本过旧（当前 v{0}，需要 v{1}）。请先发布最新 Agent。" -f $AIWB_REMOTE_VERSION, $AIWB_REQUIRED_VERSION)
-  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
   exit 5
 }
 
@@ -2039,8 +2162,8 @@ if (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf) {
 }
 
 if ($AIWB_INSTALLED_VERSION_NUM -ge $AIWB_REMOTE_VERSION_NUM -and (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf)) {
-  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
-  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__cloud"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
   Write-Output "__AIWB_AGENT_INSTALL_RESULT__unchanged"
   & $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT status
   exit $LASTEXITCODE
@@ -2050,8 +2173,8 @@ $AIWB_SCRIPT_URL = [string]$AIWB_MANIFEST.scriptUrl
 $AIWB_EXPECTED_SHA = ([string]$AIWB_MANIFEST.sha256).ToLowerInvariant()
 if ([string]::IsNullOrWhiteSpace($AIWB_SCRIPT_URL) -or -not (Invoke-AiwbCloudDownload $AIWB_SCRIPT_URL $AIWB_SCRIPT_TMP)) {
   Write-Output "__AIWB_AGENT_STATUS__error"
-  Write-Output "__AIWB_AGENT_ERROR__云端 Windows Agent 脚本下载失败，未修改服务器上的现有 Agent。"
-  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP -Force -ErrorAction SilentlyContinue
+  Write-Output "__AIWB_AGENT_ERROR__配置中心 Windows Agent 下载失败，未修改服务器上的现有 Agent。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP -Force -ErrorAction SilentlyContinue
   exit 6
 }
 
@@ -2059,7 +2182,7 @@ $AIWB_ACTUAL_SHA = ([string](Get-FileHash -LiteralPath $AIWB_SCRIPT_TMP -Algorit
 if ([string]::IsNullOrWhiteSpace($AIWB_EXPECTED_SHA) -or $AIWB_ACTUAL_SHA -ne $AIWB_EXPECTED_SHA) {
   Write-Output "__AIWB_AGENT_STATUS__error"
   Write-Output "__AIWB_AGENT_ERROR__云端 Windows Agent 校验失败，未替换服务器上的现有 Agent。"
-  Remove-Item -LiteralPath $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP -Force -ErrorAction SilentlyContinue
   exit 7
 }
 
@@ -2095,8 +2218,8 @@ if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs") -Path
 $AIWB_CTL = Join-Path $AIWB_HOME "aiwbctl.cmd"
 $AIWB_CTL_CONTENT = '@echo off' + [Environment]::NewLine + 'node ' + [char]34 + '%~dp0aiwb-agent.mjs' + [char]34 + ' %*' + [Environment]::NewLine
 [System.IO.File]::WriteAllText($AIWB_CTL, $AIWB_CTL_CONTENT, [System.Text.UTF8Encoding]::new($false))
-Remove-Item -LiteralPath $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
-Write-Output "__AIWB_AGENT_INSTALL_SOURCE__cloud"
+Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
 Write-Output "__AIWB_AGENT_INSTALL_RESULT__updated"
 & $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service
 `);
@@ -2104,9 +2227,11 @@ Write-Output "__AIWB_AGENT_INSTALL_RESULT__updated"
   return remoteBashCommand(profile, `
 set -e
 AIWB_AGENT_HOME="$HOME/.ai-workbench/agent"
-AIWB_AGENT_MANIFEST_URL=${shQuote(workbenchAgentManifestUrl)}
+AIWB_AGENT_CONTROL_URL=${shQuote(workbenchAgentControlLatestUrl)}
+AIWB_AGENT_MANIFEST_URL=""
 AIWB_AGENT_REQUIRED_VERSION="${latestWorkbenchAgentVersion}"
-AIWB_AGENT_INSTALL_SOURCE="cloud"
+AIWB_AGENT_INSTALL_SOURCE="config-center"
+AIWB_AGENT_CONTROL_TMP="$AIWB_AGENT_HOME/control-latest.json.$$"
 AIWB_AGENT_MANIFEST_TMP="$AIWB_AGENT_HOME/latest.json.$$"
 AIWB_AGENT_DOWNLOAD_TMP="$AIWB_AGENT_HOME/aiwbctl.download.$$"
 mkdir -p "$AIWB_AGENT_HOME/tasks"
@@ -2160,10 +2285,23 @@ print(str(value))
 PY
 }
 
+if ! aiwb_download_url "$AIWB_AGENT_CONTROL_URL" "$AIWB_AGENT_CONTROL_TMP"; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__无法连接配置中心读取最新 Agent 版本。请检查服务器网络，或稍后重试。\\n'
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  exit 3
+fi
+AIWB_AGENT_MANIFEST_URL="$(aiwb_json_value "$AIWB_AGENT_CONTROL_TMP" manifestUrl 2>/dev/null || true)"
+if [ -z "$AIWB_AGENT_MANIFEST_URL" ]; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__配置中心没有提供 Agent 下载清单。\\n'
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  exit 3
+fi
 if ! aiwb_download_url "$AIWB_AGENT_MANIFEST_URL" "$AIWB_AGENT_MANIFEST_TMP"; then
   printf '__AIWB_AGENT_STATUS__error\\n'
-  printf '__AIWB_AGENT_ERROR__无法读取云端 Agent 清单。请检查服务器网络，或稍后重试。\\n'
-  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  printf '__AIWB_AGENT_ERROR__无法从配置中心读取 Agent 清单。请检查服务器网络，或稍后重试。\\n'
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
   exit 3
 fi
 
@@ -2177,7 +2315,7 @@ if [ -z "$AIWB_AGENT_REMOTE_VERSION_NUM" ] || [ -z "$AIWB_AGENT_REQUIRED_VERSION
    [ "$AIWB_AGENT_REMOTE_VERSION_NUM" -lt "$AIWB_AGENT_REQUIRED_VERSION_NUM" ] 2>/dev/null; then
   printf '__AIWB_AGENT_STATUS__error\\n'
   printf '__AIWB_AGENT_ERROR__云端 Agent 版本过旧（当前 v%s，需要 v%s）。请先发布最新 Agent。\\n' "\${AIWB_AGENT_REMOTE_VERSION:-未知}" "$AIWB_AGENT_REQUIRED_VERSION"
-  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
   exit 4
 fi
 
@@ -2191,8 +2329,8 @@ fi
 
 if [ -x "$AIWB_AGENT_HOME/aiwbctl" ] &&
    [ "$AIWB_AGENT_INSTALLED_VERSION_NUM" -ge "$AIWB_AGENT_REMOTE_VERSION_NUM" ] 2>/dev/null; then
-  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
-  printf "__AIWB_AGENT_INSTALL_SOURCE__cloud\\n"
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  printf "__AIWB_AGENT_INSTALL_SOURCE__config-center\\n"
   printf "__AIWB_AGENT_INSTALL_RESULT__unchanged\\n"
   "$AIWB_AGENT_HOME/aiwbctl" status
   exit $?
@@ -2200,8 +2338,8 @@ fi
 
 if [ -z "$AIWB_AGENT_SCRIPT_URL" ] || ! aiwb_download_url "$AIWB_AGENT_SCRIPT_URL" "$AIWB_AGENT_DOWNLOAD_TMP"; then
   printf '__AIWB_AGENT_STATUS__error\\n'
-  printf '__AIWB_AGENT_ERROR__云端 Agent 脚本下载失败，未修改服务器上的现有 Agent。\\n'
-  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  printf '__AIWB_AGENT_ERROR__配置中心 Agent 下载失败，未修改服务器上的现有 Agent。\\n'
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
   exit 5
 fi
 
@@ -2222,7 +2360,7 @@ fi
 
 cp "$AIWB_AGENT_DOWNLOAD_TMP" "$AIWB_AGENT_HOME/aiwbctl"
 chmod 700 "$AIWB_AGENT_HOME/aiwbctl"
-AIWB_AGENT_INSTALL_SOURCE="cloud"
+AIWB_AGENT_INSTALL_SOURCE="config-center"
 
 AIWB_DIRECT_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.url 2>/dev/null || true)"
 AIWB_DIRECT_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.sha256 2>/dev/null || true)"
@@ -2263,7 +2401,7 @@ if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-updater.
   fi
 fi
 
-rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
 printf "__AIWB_AGENT_INSTALL_SOURCE__%s\\n" "$AIWB_AGENT_INSTALL_SOURCE"
   "$AIWB_AGENT_HOME/aiwbctl" install-service 2>/dev/null || "$AIWB_AGENT_HOME/aiwbctl" status
 `);

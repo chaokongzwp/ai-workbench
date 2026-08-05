@@ -75,7 +75,9 @@ journalctl -u ai-workbench-config-sync -f
 ## Agent 更新控制面
 
 Agent 启动后调用 `POST /v1/agent-control/register` 登记自身可访问地址和升级专用凭证。发布脚本在发布后调用
-`POST /v1/agent-control/publish` 更新目标版本；中心服务异步调用版本落后的 Agent 的 `/v1/control/update`。
+`POST /v1/agent-control/publish` 上传清单和各平台运行文件，并更新目标版本；中心服务异步调用版本落后的 Agent 的 `/v1/control/update`。
+
+App 安装或修复 Agent 时只需访问配置中心：先读取 `GET /v1/agent-control/latest`，再使用返回的 `manifestUrl` 或 `windowsManifestUrl` 下载清单。清单内的所有文件 URL 也指向配置中心的版本目录，因此目标机器不需要访问 GitHub。`GET /v1/agent-control/download/{windows|linux|macos}` 可直接下载当前版本对应的入口文件。对外地址默认是 `https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control`，部署环境可通过 `AIWB_AGENT_CONTROL_PUBLIC_BASE_URL` 覆盖。
 
 服务端需要在 `apns.env` 或独立环境文件中配置 `AIWB_AGENT_CONTROL_ADMIN_TOKEN`。该令牌只用于发布端，不能放进 App 或 Agent。中心保存的是只能触发固定自更新操作的凭证，不是 Agent 的任务 API Token。
 

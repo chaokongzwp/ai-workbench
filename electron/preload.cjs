@@ -108,4 +108,7 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   clearLogs() {
     return ipcRenderer.invoke("aiwb:clear-logs");
   },
+  clearAppCache() {
+    return ipcRenderer.invoke("aiwb:clear-app-cache");
+  },
 });

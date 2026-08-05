@@ -319,6 +319,9 @@ export function detectAgentIssue(output, agent) {
   if (/401 Unauthorized/i.test(text)) {
     return `${agent.shortName} 登录已过期。请先生成设备码完成登录，然后重新发送任务。`;
   }
+  if (/Not logged in|Invalid API key|"loggedIn"\s*:\s*false/i.test(text)) {
+    return `${agent.shortName} 尚未登录。请进入当前会话设置，在“AI 工具登录”中完成授权后重新发送。`;
+  }
   if (/tmux session not running/i.test(text)) {
     return `${agent.shortName} 会话没有保持运行，这次任务没有完成。请先点“检查服务器”，再重新发送。`;
   }
@@ -516,6 +519,18 @@ export function classifyAgentFailure(raw, agent, status = {}) {
     /You've hit your session limit/i.test(text) ||
     /\b(?:rate|usage|session)\s+limit\b/i.test(text) ||
     /\bquota\b/i.test(text);
+
+  if (/Not logged in|Invalid API key|"loggedIn"\s*:\s*false/i.test(searchableText)) {
+    return {
+      kind: "agent_not_logged_in",
+      title: `${agent.shortName} 尚未登录`,
+      body: `这台机器上的 ${agent.shortName} CLI 没有可用的登录凭证，任务尚未发送到模型。`,
+      hint: "请进入当前会话设置，在“AI 工具登录”中完成授权后重新发送。",
+      detail,
+      canRetry: true,
+      canOpenSettings: true,
+    };
+  }
 
   if (usageLimited) {
     return {

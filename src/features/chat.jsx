@@ -994,7 +994,17 @@ export function FileReferenceList({
         })}
       </div>
       {visibleDownloadState ? (
-        <p className={`file-download-status ${visibleDownloadState.state || ""}`}>{visibleDownloadState.message}</p>
+        <div className={`file-download-status ${visibleDownloadState.state || ""}`}>
+          <span>{visibleDownloadState.message}</span>
+          {visibleDownloadState.state === "loading" ? (
+            <progress
+              className="file-download-progress"
+              max="100"
+              value={Number.isFinite(Number(visibleDownloadState.progress)) ? Number(visibleDownloadState.progress) : undefined}
+              aria-label="文件下载进度"
+            />
+          ) : null}
+        </div>
       ) : null}
     </>
   );

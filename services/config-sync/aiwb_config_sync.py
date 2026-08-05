@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_NAME = "AI Workbench Config Sync"
-SERVICE_VERSION = 5
+SERVICE_VERSION = 6
 MAX_BODY_BYTES = int(os.environ.get("AIWB_CONFIG_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
 DATA_DIR = Path(os.environ.get("AIWB_CONFIG_SYNC_DATA_DIR", "/opt/ai-workbench-config-sync/data"))
 HOST = os.environ.get("AIWB_CONFIG_SYNC_HOST", "0.0.0.0")
@@ -51,7 +51,19 @@ AGENT_CONTROL_DEFAULT_MANIFEST_URL = os.environ.get(
     "AIWB_AGENT_CONTROL_DEFAULT_MANIFEST_URL",
     "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/latest.json",
 ).strip()
+AGENT_CONTROL_PUBLIC_BASE_URL = os.environ.get(
+    "AIWB_AGENT_CONTROL_PUBLIC_BASE_URL",
+    "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control",
+).strip().rstrip("/")
 AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS = int(os.environ.get("AIWB_AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS", "12"))
+AGENT_CONTROL_ARTIFACT_NAMES = {
+    "aiwbctl": "application/octet-stream",
+    "aiwb-agent.mjs": "text/javascript; charset=utf-8",
+    "aiwb-agent-http.mjs": "text/javascript; charset=utf-8",
+    "aiwb-agent-updater.mjs": "text/javascript; charset=utf-8",
+    "manifest.json": "application/json; charset=utf-8",
+    "windows-manifest.json": "application/json; charset=utf-8",
+}
 
 
 STATE_LOCK = threading.RLock()
@@ -394,6 +406,17 @@ def atomic_write_json(path: Path, value: Any) -> None:
     tmp_path.replace(path)
 
 
+def atomic_write_bytes(path: Path, value: bytes, mode: int = 0o600) -> None:
+    safe_mkdir(path.parent)
+    tmp_path = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+    tmp_path.write_bytes(value)
+    try:
+        tmp_path.chmod(mode)
+    except OSError:
+        pass
+    tmp_path.replace(path)
+
+
 def read_json(path: Path, default: Any = None) -> Any:
     if not path.exists():
         return default
@@ -681,6 +704,111 @@ def agent_control_agents_path() -> Path:
     return DATA_DIR / "agent-control" / "agents.json"
 
 
+def agent_control_release_dir(version: Any) -> Path:
+    normalized = str(version or "").strip()
+    if not re.fullmatch(r"\d{1,12}", normalized):
+        raise ValueError("Agent 版本号无效。")
+    return DATA_DIR / "agent-control" / "releases" / f"v{normalized}"
+
+
+def agent_control_artifact_url(version: str, name: str) -> str:
+    return f"{AGENT_CONTROL_PUBLIC_BASE_URL}/releases/v{version}/{name}"
+
+
+def agent_control_artifact_path(version: str, name: str) -> Path:
+    if name not in AGENT_CONTROL_ARTIFACT_NAMES:
+        raise ValueError("Agent 制品名称无效。")
+    return agent_control_release_dir(version) / name
+
+
+def decode_agent_artifact(value: Any, name: str) -> bytes:
+    encoded = str(value or "").strip()
+    if not encoded:
+        raise ValueError(f"缺少 Agent 制品：{name}。")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except Exception as error:
+        raise ValueError(f"Agent 制品编码无效：{name}。") from error
+    if not decoded or len(decoded) > 1024 * 1024:
+        raise ValueError(f"Agent 制品大小无效：{name}。")
+    return decoded
+
+
+def verify_agent_artifact(value: bytes, expected: Any, name: str) -> None:
+    expected_hash = str(expected or "").strip().lower()
+    actual_hash = hashlib.sha256(value).hexdigest()
+    if not expected_hash or not hmac.compare_digest(actual_hash, expected_hash):
+        raise ValueError(f"Agent 制品校验失败：{name}。")
+
+
+def publish_agent_artifacts(version: str, body: dict[str, Any]) -> dict[str, Any]:
+    artifacts = body.get("artifacts")
+    manifest = body.get("manifest")
+    windows_manifest = body.get("windowsManifest")
+    if not isinstance(artifacts, dict) or not isinstance(manifest, dict) or not isinstance(windows_manifest, dict):
+        raise ValueError("发布请求缺少 Agent 清单或制品。")
+    if str(manifest.get("version") or "") != version or str(windows_manifest.get("version") or "") != version:
+        raise ValueError("Agent 清单版本与发布版本不一致。")
+
+    decoded = {
+        name: decode_agent_artifact(artifacts.get(name), name)
+        for name in ("aiwbctl", "aiwb-agent.mjs", "aiwb-agent-http.mjs", "aiwb-agent-updater.mjs")
+    }
+    verify_agent_artifact(decoded["aiwbctl"], manifest.get("sha256"), "aiwbctl")
+    verify_agent_artifact(decoded["aiwb-agent.mjs"], windows_manifest.get("sha256"), "aiwb-agent.mjs")
+    for candidate in (manifest, windows_manifest):
+        verify_agent_artifact(
+            decoded["aiwb-agent-http.mjs"],
+            (candidate.get("directRuntime") or {}).get("sha256"),
+            "aiwb-agent-http.mjs",
+        )
+        verify_agent_artifact(
+            decoded["aiwb-agent-updater.mjs"],
+            (candidate.get("updaterRuntime") or {}).get("sha256"),
+            "aiwb-agent-updater.mjs",
+        )
+
+    runtime_urls = {
+        "directRuntime": {
+            **(manifest.get("directRuntime") or {}),
+            "url": agent_control_artifact_url(version, "aiwb-agent-http.mjs"),
+        },
+        "updaterRuntime": {
+            **(manifest.get("updaterRuntime") or {}),
+            "url": agent_control_artifact_url(version, "aiwb-agent-updater.mjs"),
+        },
+    }
+    stored_manifest = {
+        **manifest,
+        "scriptUrl": agent_control_artifact_url(version, "aiwbctl"),
+        "source": "config-center",
+        **runtime_urls,
+    }
+    stored_windows_manifest = {
+        **windows_manifest,
+        "scriptUrl": agent_control_artifact_url(version, "aiwb-agent.mjs"),
+        "source": "config-center",
+        "directRuntime": {
+            **(windows_manifest.get("directRuntime") or {}),
+            "url": agent_control_artifact_url(version, "aiwb-agent-http.mjs"),
+        },
+        "updaterRuntime": {
+            **(windows_manifest.get("updaterRuntime") or {}),
+            "url": agent_control_artifact_url(version, "aiwb-agent-updater.mjs"),
+        },
+    }
+    release_dir = agent_control_release_dir(version)
+    with STATE_LOCK:
+        for name, value in decoded.items():
+            atomic_write_bytes(release_dir / name, value, 0o700 if name == "aiwbctl" else 0o600)
+        atomic_write_json(release_dir / "manifest.json", stored_manifest)
+        atomic_write_json(release_dir / "windows-manifest.json", stored_windows_manifest)
+    return {
+        "manifestUrl": agent_control_artifact_url(version, "manifest.json"),
+        "windowsManifestUrl": agent_control_artifact_url(version, "windows-manifest.json"),
+    }
+
+
 def agent_control_latest() -> dict[str, Any]:
     record = read_json(agent_control_record_path(), None)
     if isinstance(record, dict) and str(record.get("manifestUrl") or "").strip():
@@ -795,15 +923,26 @@ def dispatch_agent_updates(target: dict[str, Any], only_agent_ids: set[str] | No
 
 def publish_agent_control(headers: Any, body: dict[str, Any]) -> dict[str, Any]:
     require_agent_control_admin(headers)
-    manifest_url = str(body.get("manifestUrl") or "").strip()
-    if not manifest_url.startswith("https://"):
-        raise ValueError("Agent manifestUrl 必须是 HTTPS 地址。")
+    version = str(body.get("version") or "").strip()[:80] or "published"
+    if isinstance(body.get("artifacts"), dict):
+        hosted = publish_agent_artifacts(version, body)
+        manifest_url = hosted["manifestUrl"]
+        windows_manifest_url = hosted["windowsManifestUrl"]
+        source = "config-center"
+    else:
+        # Backward compatibility for an older release client. New releases
+        # always upload verified artifacts and never install from this branch.
+        manifest_url = str(body.get("manifestUrl") or "").strip()
+        if not manifest_url.startswith("https://"):
+            raise ValueError("Agent manifestUrl 必须是 HTTPS 地址。")
+        windows_manifest_url = str(body.get("windowsManifestUrl") or "").strip()[:1024]
+        source = "published-url"
     record = {
-        "version": str(body.get("version") or "").strip()[:80] or "published",
+        "version": version,
         "manifestUrl": manifest_url[:1024],
-        "windowsManifestUrl": str(body.get("windowsManifestUrl") or "").strip()[:1024],
+        "windowsManifestUrl": windows_manifest_url,
         "publishedAt": utc_now(),
-        "source": "published",
+        "source": source,
     }
     with STATE_LOCK:
         atomic_write_json(agent_control_record_path(), record)
@@ -829,6 +968,20 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
             if path == "/v1/agent-control/latest":
                 latest = agent_control_latest()
                 self.send_json({"ok": True, "agent": latest, "manifestUrl": latest.get("manifestUrl", ""), "windowsManifestUrl": latest.get("windowsManifestUrl", "")})
+                return
+            artifact_match = re.fullmatch(
+                r"/v1/agent-control/releases/v(\d{1,12})/(aiwbctl|aiwb-agent\.mjs|aiwb-agent-http\.mjs|aiwb-agent-updater\.mjs|manifest\.json|windows-manifest\.json)",
+                path,
+            )
+            if artifact_match:
+                version, name = artifact_match.groups()
+                self.send_agent_artifact(version, name)
+                return
+            if path in {"/v1/agent-control/download/linux", "/v1/agent-control/download/macos", "/v1/agent-control/download/windows"}:
+                latest = agent_control_latest()
+                version = str(latest.get("version") or "")
+                name = "aiwb-agent.mjs" if path.endswith("/windows") else "aiwbctl"
+                self.send_agent_artifact(version, name)
                 return
             if path == "/v1/agent-control/agents":
                 require_agent_control_admin(self.headers)
@@ -1066,12 +1219,27 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_agent_artifact(self, version: str, name: str) -> None:
+        path = agent_control_artifact_path(version, name)
+        if not path.exists() or not path.is_file():
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Agent 制品不存在。")
+            return
+        body = path.read_bytes()
+        self.send_response(int(HTTPStatus.OK))
+        self.send_header("Content-Type", AGENT_CONTROL_ARTIFACT_NAMES[name])
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
 
 def main() -> int:
     safe_mkdir(DATA_DIR)
     safe_mkdir(DATA_DIR / "accounts")
     safe_mkdir(DATA_DIR / "push" / "devices")
     safe_mkdir(DATA_DIR / "push" / "tickets")
+    safe_mkdir(DATA_DIR / "agent-control" / "releases")
 
     server = ThreadingHTTPServer((HOST, PORT), ConfigSyncHandler)
     server.timeout = 1

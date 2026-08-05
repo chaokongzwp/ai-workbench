@@ -7,3 +7,9 @@ Before making substantial visual changes, use the Product Design plugin's `get-c
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
 
 Current product decision: do not put an autonomous "main AI" router in the first usable version. The first version is human-controlled: the user chooses server, AI type, workspace, and whether to send/stop. Voice should first behave as a convenient input method, not as an autonomous decision maker. Treat a future main AI router as an optional later enhancement.
+
+Current chat design decision: messages in the conversation transcript use a flat, background-free layout. Do not reintroduce rounded chat bubbles around user or assistant text.
+
+Current Claude login decision: remote Claude CLI OAuth is a manual URL-and-code handoff. The App must show the complete unwrapped authorization URL with open and copy actions, then provide an authorization-code field and submit that code back to the waiting remote Claude CLI. Do not treat browser authorization alone as completion, and do not truncate long OAuth query parameters.
+
+Current Agent distribution decision: every Agent install or repair must resolve the latest release through the configuration center and download manifests and binaries hosted by that center. GitHub may remain the source-code and release backup, but target machines must not depend on GitHub access during installation.

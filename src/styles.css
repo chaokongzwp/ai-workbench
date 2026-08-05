@@ -7224,10 +7224,67 @@ body {
 }
 
 .file-download-status {
+  display: grid;
+  gap: 7px;
   margin: 8px 0 0 34px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.file-transfer-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(100%, 360px);
+  gap: 8px;
+  color: var(--muted);
+}
+
+.file-download-status .file-transfer-progress {
+  justify-content: flex-start;
+}
+
+.file-transfer-progress-track {
+  position: relative;
+  width: min(100%, 320px);
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+
+.file-transfer-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+
+.file-transfer-progress.indeterminate .file-transfer-progress-track span {
+  width: 38%;
+  animation: file-transfer-progress-slide 1.1s ease-in-out infinite;
+}
+
+.file-transfer-progress.done .file-transfer-progress-track span {
+  background: #16824d;
+}
+
+.file-transfer-progress.error .file-transfer-progress-track span {
+  background: var(--red);
+}
+
+.file-transfer-progress small {
+  min-width: 34px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@keyframes file-transfer-progress-slide {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(290%); }
 }
 
 .file-download-status.done {
@@ -14413,11 +14470,11 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .user-prompt .user-message-card {
   width: fit-content;
   max-width: min(560px, 78%);
-  padding: 13px 18px;
-  border: 1px solid rgba(60, 60, 67, 0.1);
-  border-radius: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: #111827;
-  background: #f2f2f4;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -14450,8 +14507,8 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 
 .iphone-shell .user-prompt .user-message-card {
   max-width: min(82%, 560px);
-  padding: 12px 17px;
-  border-radius: 24px;
+  padding: 0;
+  border-radius: 0;
 }
 
 .iphone-shell .user-prompt .user-message-card > p {
@@ -14546,9 +14603,15 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card,
 .native-app-shell[data-theme="dark"] .native-conversation .user-prompt .user-message-card,
 .iphone-shell[data-theme="dark"] .user-prompt .user-message-card {
-  border-color: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
   color: #f5f5f7;
-  background: #2c2c2e;
+  background: transparent;
+}
+
+.file-download-progress {
+  width: min(320px, 100%);
+  height: 5px;
+  accent-color: var(--accent, #2563eb);
 }
 
 .app-shell[data-theme="dark"] .user-prompt .user-message-meta,

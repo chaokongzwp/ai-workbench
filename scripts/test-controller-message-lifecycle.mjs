@@ -156,6 +156,8 @@ assert.match(controllerSource, /allowCachedReady = false/);
 assert.match(controllerSource, /agent\.startup\.cached/);
 assert.match(controllerSource, /allowCachedReady: true/);
 assert.match(controllerSource, /refreshAgentHealthForServer\(target\.id, "background-connect"\)/);
+assert.match(controllerSource, /title: "正在刷新最后一条结果"/);
+assert.match(controllerSource, /agentDirectRequest\(directProfile, "\/v1\/cache\/clear"/);
 const agentRouteSource = controllerSource.slice(
   controllerSource.indexOf("const probedAgent = parseWorkbenchAgentOutput(probeOutput);"),
   controllerSource.indexOf("const runtimeProfile = agentRuntimeProfile(directProfile);"),
@@ -167,5 +169,14 @@ assert.doesNotMatch(controllerSource, /SSH 直连中|改用 SSH 直连|Agent 自
 const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
 assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);
 assert.match(chatSource, />\s*重试\s*</);
+assert.match(chatSource, /aria-label="文件下载进度"/);
+
+const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const sentMessageStyle = stylesSource.slice(
+  stylesSource.indexOf(".user-prompt .user-message-card {"),
+  stylesSource.indexOf("}", stylesSource.indexOf(".user-prompt .user-message-card {")) + 1,
+);
+assert.match(sentMessageStyle, /border:\s*0/);
+assert.match(sentMessageStyle, /background:\s*transparent/);
 
 console.log("controller message lifecycle regression: ok");

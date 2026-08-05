@@ -1275,17 +1275,65 @@ if [ -s ${shQuote(sessionFile)} ]; then
   AIWB_SESSION=$(cat ${shQuote(sessionFile)} 2>/dev/null | tr -d '[:space:]' || true)
 fi
 
-AIWB_ARGS=(-p "$AIWB_PROMPT" --output-format json ${permissionArgs})
+AIWB_BASE_ARGS=(-p "$AIWB_PROMPT" --output-format json ${permissionArgs})
 if [ -n "$AIWB_MODEL" ]; then
-  AIWB_ARGS+=(--model "$AIWB_MODEL")
+  AIWB_BASE_ARGS+=(--model "$AIWB_MODEL")
 fi
+AIWB_ARGS=("\${AIWB_BASE_ARGS[@]}")
 if [ -n "$AIWB_SESSION" ]; then
   AIWB_ARGS+=(--resume "$AIWB_SESSION")
 fi
 
 set +e
-"$AIWB_COMMAND" "\${AIWB_ARGS[@]}" >"$AIWB_OUTPUT" 2>"$AIWB_LOG"
-AIWB_STATUS=$?
+AIWB_RETRY_FRESH=0
+aiwb_run_claude_with_startup_watchdog() {
+  AIWB_STARTUP_STALLED=0
+  "$AIWB_COMMAND" "$@" >"$AIWB_OUTPUT" 2>"$AIWB_LOG" &
+  AIWB_CLAUDE_PID=$!
+  AIWB_LAST_CPU=""
+  AIWB_STALLED_SAMPLES=0
+  for AIWB_STARTUP_SAMPLE in 1 2 3 4 5 6; do
+    sleep 5
+    if ! kill -0 "$AIWB_CLAUDE_PID" 2>/dev/null; then
+      break
+    fi
+    AIWB_CPU=$(ps -o time= -p "$AIWB_CLAUDE_PID" 2>/dev/null | tr -d '[:space:]')
+    if [ ! -s "$AIWB_OUTPUT" ] && [ ! -s "$AIWB_LOG" ] &&
+       ! lsof -nP -a -p "$AIWB_CLAUDE_PID" -iTCP -iUDP 2>/dev/null | grep -q . &&
+       [ -n "$AIWB_LAST_CPU" ] && [ "$AIWB_CPU" = "$AIWB_LAST_CPU" ]; then
+      AIWB_STALLED_SAMPLES=$((AIWB_STALLED_SAMPLES + 1))
+    else
+      AIWB_STALLED_SAMPLES=0
+    fi
+    AIWB_LAST_CPU="$AIWB_CPU"
+    if [ "$AIWB_STALLED_SAMPLES" -ge 4 ]; then
+      kill "$AIWB_CLAUDE_PID" 2>/dev/null || true
+      wait "$AIWB_CLAUDE_PID" 2>/dev/null || true
+      AIWB_STARTUP_STALLED=1
+      return 124
+    fi
+  done
+  wait "$AIWB_CLAUDE_PID"
+}
+
+if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && command -v lsof >/dev/null 2>&1; then
+  aiwb_run_claude_with_startup_watchdog "\${AIWB_ARGS[@]}"
+  AIWB_STATUS=$?
+  if [ "$AIWB_STARTUP_STALLED" -eq 1 ]; then
+    AIWB_RETRY_FRESH=1
+    rm -f ${shQuote(sessionFile)}
+    : >"$AIWB_OUTPUT"
+    : >"$AIWB_LOG"
+    aiwb_run_claude_with_startup_watchdog "\${AIWB_BASE_ARGS[@]}"
+    AIWB_STATUS=$?
+    if [ "$AIWB_STARTUP_STALLED" -eq 1 ]; then
+      printf 'Claude CLI 在 macOS 上连续两次启动后均无 CPU、网络或输出活动，已自动终止。请重试；如果持续发生，请更新 Claude CLI。\n' >"$AIWB_LOG"
+    fi
+  fi
+else
+  "$AIWB_COMMAND" "\${AIWB_ARGS[@]}" >"$AIWB_OUTPUT" 2>"$AIWB_LOG"
+  AIWB_STATUS=$?
+fi
 set -e
 
 if [ "$AIWB_STATUS" -ne 0 ]; then
@@ -1430,21 +1478,81 @@ export function buildToolLoginStartCommand(profile, agent) {
 set +e
 AIWB_LOGIN_SESSION=${shQuote(targetSession)}
 if ! tmux has-session -t "$AIWB_LOGIN_SESSION" 2>/dev/null; then
-  tmux new-session -d -s "$AIWB_LOGIN_SESSION" -c ${shQuote(profile.workdir || ".")} ${shQuote(loginCommand)}
+  # Claude renders its OAuth URL to the current terminal width. A normal
+  # 80-column detached pane can therefore discard most query parameters.
+  tmux new-session -d -x 2000 -y 50 -s "$AIWB_LOGIN_SESSION" -c ${shQuote(profile.workdir || ".")} ${shQuote(loginCommand)}
 fi
+tmux resize-window -t "$AIWB_LOGIN_SESSION" -x 2000 -y 50 2>/dev/null || true
 ${agent.id === "claude" ? claudeSetupAutomationSnippet(targetSession) : ""}
 AIWB_LOGIN_CAPTURE=""
 # Codex can take several seconds to initialize on a remote Mac. Poll the
 # dedicated login tmux pane until its browser link or device code appears.
 for AIWB_LOGIN_ATTEMPT in {1..12}; do
-  AIWB_LOGIN_CAPTURE="$(tmux capture-pane -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true)"
+  # -J joins terminal soft-wrapped lines. Claude's OAuth URL is longer than a
+  # normal terminal row; without this flag the URL is split and the App opens
+  # a truncated request that is missing redirect_uri and later parameters.
+  AIWB_LOGIN_CAPTURE="$(tmux capture-pane -J -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true)"
   if printf '%s\\n' "$AIWB_LOGIN_CAPTURE" | grep -Eiq 'https://|[A-Z0-9]{4}-[A-Z0-9]{5}'; then
+    # Let the TUI finish painting the rest of a long URL, then capture again.
+    sleep 0.8
+    AIWB_LOGIN_CAPTURE="$(tmux capture-pane -J -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true)"
     break
   fi
   tmux has-session -t "$AIWB_LOGIN_SESSION" 2>/dev/null || break
   sleep 1
 done
 printf '%s\\n' "$AIWB_LOGIN_CAPTURE"
+`);
+}
+
+export function buildToolLoginSubmitCommand(profile, agent, authorizationCode) {
+  if (agent.id !== "claude") {
+    return buildWindowsNoTmuxCommand("当前工具不需要回填 Claude 授权密钥。");
+  }
+  if (isWindowsProfile(profile)) {
+    return buildWindowsNoTmuxCommand("Claude 网页授权密钥回填暂不支持 Windows PowerShell。请改用 Windows + WSL。");
+  }
+
+  const targetSession = toolLoginSessionName(profile, agent);
+  const encodedCode = toBase64Utf8(String(authorizationCode || "").trim());
+  const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
+  const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.claude-session`;
+
+  return remoteBashCommand(profile, `
+set +e
+AIWB_LOGIN_SESSION=${shQuote(targetSession)}
+AIWB_AUTH_CODE=$(printf '%s' ${shQuote(encodedCode)} | base64 -d)
+if [ -z "$AIWB_AUTH_CODE" ]; then
+  printf 'Claude 授权密钥不能为空。\n'
+  exit 2
+fi
+if ! tmux has-session -t "$AIWB_LOGIN_SESSION" 2>/dev/null; then
+  printf 'Claude 登录流程已结束，请重新开始登录。\n'
+  exit 3
+fi
+tmux resize-window -t "$AIWB_LOGIN_SESSION" -x 2000 -y 50 2>/dev/null || true
+
+# Use tmux's literal mode so characters such as #, + and / in the returned
+# OAuth code cannot be interpreted as key names.
+tmux send-keys -t "$AIWB_LOGIN_SESSION" -l -- "$AIWB_AUTH_CODE"
+tmux send-keys -t "$AIWB_LOGIN_SESSION" C-m
+unset AIWB_AUTH_CODE
+sleep 1.2
+${claudeSetupAutomationSnippet(targetSession)}
+
+AIWB_LOGIN_CAPTURE="$(tmux capture-pane -J -t "$AIWB_LOGIN_SESSION" -p -S -220 2>/dev/null || true)"
+printf '%s\n' "$AIWB_LOGIN_CAPTURE"
+printf '\n__AIWB_AUTH_STATUS__\n'
+AIWB_AUTH_STATUS_OUTPUT=$(${agentCommand(profile, agent)} auth status 2>&1)
+AIWB_AUTH_STATUS_CODE=$?
+printf '%s\n' "$AIWB_AUTH_STATUS_OUTPUT"
+if [ "$AIWB_AUTH_STATUS_CODE" -eq 0 ] &&
+   printf '%s\n' "$AIWB_AUTH_STATUS_OUTPUT" | grep -Eiq '"loggedIn"[[:space:]]*:[[:space:]]*true|logged in'; then
+  # A Claude session belongs to the identity that created it. Reusing an old
+  # session after OAuth account changes can hang the macOS CLI before it opens
+  # a network connection, so start the next Workbench turn with a clean ID.
+  rm -f ${shQuote(sessionFile)}
+fi
 `);
 }
 

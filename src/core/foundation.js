@@ -160,6 +160,15 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       clearBrowserDiagnosticLogs();
       return { ok: true };
     },
+    async clearAppCache() {
+      const bridge = desktopBridge();
+      if (bridge?.clearAppCache) return bridge.clearAppCache();
+      if (typeof caches !== "undefined") {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      }
+      return { ok: true };
+    },
   }),
 });
 

@@ -68,6 +68,7 @@ const {
   buildCodexLoginDeviceCommand,
   buildDiscoveryCommand,
   buildToolLoginStartCommand,
+  buildToolLoginSubmitCommand,
   buildToolLoginStatusCommand,
   buildGitDownloadCommand,
   buildGitSshKeyCommand,
@@ -2514,18 +2515,52 @@ export function useWorkbenchController() {
     };
   }
 
-  async function clearWorkspaceCache({ logs = false, messages = false } = {}) {
+  async function clearWorkspaceCache({ logs = false, messages = false, app = false, agent = false } = {}) {
     const clearLogs = logs === true;
     const clearMessages = messages === true;
-    if (!clearLogs && !clearMessages) return { ok: true, message: "没有选择要清理的内容。" };
+    const clearApp = app === true;
+    const clearAgent = agent === true;
+    if (!clearLogs && !clearMessages && !clearApp && !clearAgent) {
+      return { ok: true, message: "没有选择要清理的内容。" };
+    }
 
     const snapshot = serversRef.current.length ? serversRef.current : servers;
-    if (clearMessages && snapshot.some((server) => serverTaskRunning(server))) {
-      throw new Error("还有任务正在运行。请等待任务完成或取消任务后，再清空消息列表。");
+    if ((clearMessages || clearAgent) && snapshot.some((server) => serverTaskRunning(server))) {
+      throw new Error("还有任务正在运行。请等待任务完成或取消任务后，再清理消息或 Agent 缓存。");
+    }
+    const directProfiles = new Map();
+    if (clearAgent) {
+      snapshot.forEach((server) => {
+        const directProfile = normalizeProfile(server.profile);
+        if (!agentDirectConfig(directProfile).enabled) return;
+        directProfiles.set(profileConnectionKey(directProfile), directProfile);
+      });
+      if (!directProfiles.size) {
+        throw new Error("没有可清理的 Agent HTTPS 连接。请先连接至少一台 Agent 机器。");
+      }
     }
 
     setBusy(true);
     try {
+      let clearedAgentCount = 0;
+      if (clearAgent) {
+        const failures = [];
+        for (const directProfile of directProfiles.values()) {
+          try {
+            await agentDirectRequest(directProfile, "/v1/cache/clear", {
+              method: "POST",
+              body: {},
+            });
+            clearedAgentCount += 1;
+          } catch (error) {
+            failures.push(shortError(error));
+          }
+        }
+        if (failures.length) {
+          throw new Error(`Agent 缓存清理失败：${failures.join("；")}`);
+        }
+      }
+
       let clearedMessageCount = 0;
       if (clearMessages) {
         if (typeof window !== "undefined" && workspaceSaveTimerRef.current) {
@@ -2562,10 +2597,21 @@ export function useWorkbenchController() {
         clearBrowserDiagnosticLogs();
       }
 
+      if (clearApp) {
+        await SSHWorkbench.clearAppCache();
+      }
+
       const parts = [];
       if (clearMessages) parts.push(`已清空 ${clearedMessageCount} 条本地消息`);
       if (clearLogs) parts.push("已清空诊断日志");
-      return { ok: true, clearedMessageCount, message: `${parts.join("，")}。会话和服务器配置已保留。` };
+      if (clearApp) parts.push("已清理 App 缓存");
+      if (clearAgent) parts.push(`已清理 ${clearedAgentCount} 台机器的 Agent 缓存`);
+      return {
+        ok: true,
+        clearedMessageCount,
+        clearedAgentCount,
+        message: `${parts.join("，")}。会话和服务器配置已保留。`,
+      };
     } finally {
       setBusy(false);
     }
@@ -2872,6 +2918,14 @@ export function useWorkbenchController() {
       if (!active || !message || message.backend !== "agent") return;
 
       const taskId = String(message.remoteTaskId || "").trim();
+      updateAssistantMessageInServer(active.id, message.id, {
+        title: "正在刷新最后一条结果",
+        body: "App 已回到前台，正在向 Agent 查询任务的最新状态。",
+        taskState: taskStateSyncing,
+        remoteTaskStatus: "syncing",
+        remoteTaskCheckedAt: Date.now(),
+        forceUpdate: true,
+      });
       void appLog("info", "agent.foreground_recovery.begin", {
         serverId: active.id,
         messageId: message.id,
@@ -3403,8 +3457,8 @@ export function useWorkbenchController() {
     const recoveringMessage = lastIncompleteAgentResponse(target);
     if (recoveringMessage?.backend === "agent") {
       updateAssistantMessageInServer(target.id, recoveringMessage.id, {
-        title: "同步中",
-        body: "正在连接服务器并同步上一次任务状态。",
+        title: "正在刷新最后一条结果",
+        body: "App 正在连接 Agent，并查询上一次任务的最新状态。",
         taskState: taskStateSyncing,
         remoteTaskStatus: "syncing",
         remoteTaskCheckedAt: Date.now(),
@@ -3573,6 +3627,7 @@ export function useWorkbenchController() {
     setSettingsInitialPage("root");
     settingsOpenRef.current = true;
     setSettingsOpen(true);
+    void refreshSettingsHealth(targetProfile, target.id);
   }
 
   function openGlobalSettings(targetServerId = "") {
@@ -3719,7 +3774,7 @@ export function useWorkbenchController() {
     }
   }
 
-  async function openRemoteAgentLogin(agentId = "codex", mode = "start", profileOverride = draftProfileRef.current) {
+  async function openRemoteAgentLogin(agentId = "codex", mode = "start", authorizationCode = "", profileOverride = draftProfileRef.current) {
     const currentProfile = normalizeProfile(profileOverride);
     if (!String(currentProfile.host || "").trim() || !String(currentProfile.username || "").trim()) {
       window.alert("请先填写服务器地址和用户名。");
@@ -3732,14 +3787,26 @@ export function useWorkbenchController() {
         currentProfile,
         mode === "status"
           ? buildToolLoginStatusCommand(currentProfile, agent)
-          : buildToolLoginStartCommand(currentProfile, agent),
+          : mode === "submit"
+            ? buildToolLoginSubmitCommand(currentProfile, agent, authorizationCode)
+            : buildToolLoginStartCommand(currentProfile, agent),
         1_048_576,
         45,
       );
       setConnection({
         state: "testing",
-        label: mode === "status" ? `已检查 ${agent.shortName} 登录` : `等待 ${agent.shortName} 登录`,
-        detail: mode === "status" ? "已读取远端 CLI 登录状态" : "请在 App 内完成浏览器授权",
+        label:
+          mode === "status"
+            ? `已检查 ${agent.shortName} 登录`
+            : mode === "submit"
+              ? `已提交 ${agent.shortName} 授权密钥`
+              : `等待 ${agent.shortName} 登录`,
+        detail:
+          mode === "status"
+            ? "已读取远端 CLI 登录状态"
+            : mode === "submit"
+              ? "远端 CLI 已接收授权密钥"
+              : "请在 App 内完成浏览器授权",
         mode: "ssh",
       });
       return String(output || "").trim();
@@ -4412,6 +4479,36 @@ export function useWorkbenchController() {
       });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function refreshSettingsHealth(profileOverride, serverId) {
+    const nextProfile = withKnownPassword(profileOverride);
+    if (profileIssue(nextProfile)) return;
+    try {
+      const healthOutput = await runRemoteCommandForProfile(nextProfile, buildHealthCommand(nextProfile), 512_000, 60);
+      const parsed = parseHealth(healthOutput);
+      setSettingsDiscovery((current) => ({
+        ...(current || {
+          state: "ready",
+          directories: [],
+          tools: [],
+          activeSessions: [],
+          recentSessions: [],
+          conversations: [],
+          history: {},
+        }),
+        health: { ...(current?.health || {}), ...parsed },
+      }));
+      updateServer(serverId, (server) => ({
+        diagnostics: { ...(server.diagnostics || {}), ...parsed },
+        rawOutput: healthOutput.trim() || server.rawOutput,
+      }));
+    } catch (error) {
+      void appLog("warn", "settings.health.refresh.failed", {
+        host: nextProfile.host,
+        error: shortError(error),
+      });
     }
   }
 
@@ -6217,6 +6314,12 @@ export function useWorkbenchController() {
     if (startupAgentSyncNoticeRef.current.has(noticeKey)) return undefined;
     startupAgentSyncNoticeRef.current.add(noticeKey);
 
+    updateAssistantMessageInServer(server.id, message.id, {
+      title: "正在刷新最后一条结果",
+      body: "App 正在向 Agent 查询上一次任务的最新状态。",
+      taskState: "syncing",
+    });
+
     if (!taskId) {
       const timer = window.setTimeout(() => {
         recoverUnsubmittedAgentMessage(server, message, "startup").catch((error) => {
@@ -6359,6 +6462,7 @@ export function useWorkbenchController() {
       state: "loading",
       action: "download",
       path,
+      progress: 6,
       message: `正在下载 ${fileRef?.name || loadedFile?.name || remoteBasename(path)}`,
     });
 
@@ -6374,18 +6478,38 @@ export function useWorkbenchController() {
         file = parseRemoteFilePayload(output);
       }
 
+      setFileDownload((current) =>
+        current?.path === path
+          ? { ...current, state: "loading", progress: 86, message: "文件已读取，正在准备保存…" }
+          : current,
+      );
+
       const savedFile = {
         ...file,
         name: file.name || fileRef?.name || remoteBasename(path),
         path: file.path || path,
       };
-      const result = await saveFileToDevice(savedFile);
+      setFileDownload((current) =>
+        current?.path === path ? { ...current, state: "loading", progress: 94, message: "正在交给系统保存…" } : current,
+      );
+      const saveOperation = saveFileToDevice(savedFile);
+      const result = Capacitor.isNativePlatform()
+        ? await Promise.race([
+            saveOperation,
+            sleep(15_000).then(() => ({ ok: true, handedOff: true })),
+          ])
+        : await saveOperation;
       const canceled = Boolean(result?.canceled);
       setFileDownload({
         state: canceled ? "idle" : "done",
         action: "download",
         path,
-        message: canceled ? "已取消保存。" : result?.path ? `已保存：${result.path}` : "文件已交给系统保存。",
+        progress: canceled ? 0 : 100,
+        message: canceled
+          ? "已取消保存。"
+          : result?.path
+            ? `已保存：${result.path}`
+            : "文件已交给系统保存。",
       });
       return { ok: true, canceled, path: result?.path || "" };
     } catch (error) {
@@ -6394,6 +6518,7 @@ export function useWorkbenchController() {
         state: "error",
         action: "download",
         path,
+        progress: 0,
         message,
       });
       return { ok: false, error: message };
@@ -7875,7 +8000,9 @@ export function useWorkbenchController() {
     onOpenTerminal:
       editingServerId && editingServerId !== "global" && canOpenInteractiveTerminal ? () => openSshTerminal() : undefined,
     onLoginRemoteAgent:
-      editingServerId && editingServerId !== "global" ? (agentId, mode) => openRemoteAgentLogin(agentId, mode) : undefined,
+      editingServerId && editingServerId !== "global"
+        ? (agentId, mode, authorizationCode) => openRemoteAgentLogin(agentId, mode, authorizationCode)
+        : undefined,
     agentManagementTargetId,
     onInstallAgent: installWorkbenchAgentForServer,
     onInstallCli: installCliForServer,

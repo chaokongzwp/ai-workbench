@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, session, shell } from "electron";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
@@ -3004,6 +3004,13 @@ ipcMain.handle("aiwb:clear-logs", async () => {
   const dir = diagnosticLogDir();
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
+  return { ok: true };
+});
+
+ipcMain.handle("aiwb:clear-app-cache", async () => {
+  await session.defaultSession.clearCache();
+  await session.defaultSession.clearStorageData({ storages: ["serviceworkers", "cachestorage"] });
+  await rm(join(app.getPath("temp"), "AI Workbench", "previews"), { recursive: true, force: true });
   return { ok: true };
 });
 

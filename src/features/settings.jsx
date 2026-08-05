@@ -548,12 +548,14 @@ function normalizeAppInfo(info = {}) {
   };
 }
 
-function parseToolLoginResult(agentId, output) {
+export function parseToolLoginResult(agentId, output) {
   const raw = String(output || "")
     .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "")
     .replace(/\r/g, "")
     .trim();
-  const url = raw.match(/https:\/\/[^\s)>]+/i)?.[0] || "";
+  const urls = raw.match(/https:\/\/[^\s<>"']+/gi) || [];
+  const url = urls.find((item) => /oauth|authorize|login/i.test(item)) || urls[0] || "";
   const code = agentId === "codex" ? raw.match(/\b[A-Z0-9]{4}-[A-Z0-9]{5}\b/)?.[0] || "" : "";
 
   if (agentId === "codex" && /Logged in using ChatGPT|Logged in as/i.test(raw)) {
@@ -583,7 +585,10 @@ function parseToolLoginResult(agentId, output) {
   if (url || code) {
     return {
       tone: "pending",
-      message: "请在浏览器完成授权。完成后回到这里点“检查登录状态”。",
+      message:
+        agentId === "claude"
+          ? "打开或复制完整登录链接，在浏览器授权；然后把网页返回的授权密钥粘贴到下方并提交。"
+          : "请在浏览器完成授权。完成后回到这里点“检查登录状态”。",
       url,
       code,
     };
@@ -670,6 +675,7 @@ export function SettingsPanel({
   const [sessionActionStatus, setSessionActionStatus] = useState(null);
   const [cliInstallStatus, setCliInstallStatus] = useState(null);
   const [toolLoginStatus, setToolLoginStatus] = useState(null);
+  const [claudeAuthorizationCode, setClaudeAuthorizationCode] = useState("");
   const [settingsPage, setSettingsPage] = useState(() => initialPage || "root");
   const [appInfo, setAppInfo] = useState(() => normalizeAppInfo());
   const [publishedAgentVersion, setPublishedAgentVersion] = useState(() => latestWorkbenchAgentVersion || "");
@@ -919,7 +925,16 @@ export function SettingsPanel({
     if (!onClearCache || cacheBusy) return;
     const clearLogs = options?.logs === true;
     const clearMessages = options?.messages === true;
-    const confirmation = clearLogs && clearMessages
+    const clearApp = options?.app === true;
+    const clearAgent = options?.agent === true;
+    const clearEverything = clearLogs && clearMessages && clearApp && clearAgent;
+    const confirmation = clearEverything
+      ? "清空 App、Agent、诊断日志和聊天消息的全部缓存？\n\nAgent 上已完成的任务历史也会删除；服务器、密码、工作目录和会话配置会保留。此操作不可恢复。"
+      : clearAgent
+        ? "清空所有已连接机器上的 Agent 缓存？\n\n将删除 Agent 已完成任务历史、会话索引和日志，不会删除工作目录或连接配置。此操作不可恢复。"
+      : clearApp
+        ? "清理当前设备上的 App 缓存？\n\n聊天消息、服务器和会话配置会保留。"
+      : clearLogs && clearMessages
       ? "清空当前设备上的全部诊断日志和聊天消息？\n\n服务器、密码、工作目录和会话配置会保留。此操作不可恢复。"
       : clearMessages
         ? "清空当前设备上的全部聊天消息？\n\n服务器、密码、工作目录和会话配置会保留。此操作不可恢复。"
@@ -929,7 +944,12 @@ export function SettingsPanel({
     setCacheBusy(true);
     setCacheStatus({ tone: "loading", message: "正在清理当前设备的缓存..." });
     try {
-      const result = await onClearCache({ logs: clearLogs, messages: clearMessages });
+      const result = await onClearCache({
+        logs: clearLogs,
+        messages: clearMessages,
+        app: clearApp,
+        agent: clearAgent,
+      });
       setCacheStatus({ tone: "done", message: result?.message || "缓存已清理。" });
     } catch (error) {
       setCacheStatus({ tone: "error", message: shortError(error) });
@@ -1374,16 +1394,33 @@ export function SettingsPanel({
       });
       return;
     }
+    if (agent.id === "claude" && mode === "submit" && !claudeAuthorizationCode.trim()) {
+      setToolLoginStatus((current) => ({
+        ...(current || {}),
+        agentId: agent.id,
+        tone: "warning",
+        message: "请先粘贴浏览器授权成功后返回的 Claude 授权密钥。",
+      }));
+      return;
+    }
     setSettingsPage("session-login");
     setToolLoginStatus({
       agentId: agent.id,
       tone: "loading",
-      message: mode === "status" ? `正在检查 ${agent.shortName} 登录状态…` : `正在准备 ${agent.shortName} 授权…`,
+      message:
+        mode === "status"
+          ? `正在检查 ${agent.shortName} 登录状态…`
+          : mode === "submit"
+            ? "正在把授权密钥提交给远端 Claude CLI…"
+            : `正在准备 ${agent.shortName} 授权…`,
       output: "",
     });
     try {
-      const output = await onLoginRemoteAgent(agent.id, mode);
+      const output = await onLoginRemoteAgent(agent.id, mode, mode === "submit" ? claudeAuthorizationCode.trim() : "");
       const result = parseToolLoginResult(agent.id, output);
+      if (agent.id === "claude" && mode === "submit" && result.tone === "done") {
+        setClaudeAuthorizationCode("");
+      }
       setToolLoginStatus({
         agentId: agent.id,
         ...result,
@@ -1540,7 +1577,7 @@ export function SettingsPanel({
               <SettingsMenuRow
                 icon={HardDrives}
                 title="存储与缓存"
-                detail="导出或清理当前设备的日志和聊天消息"
+                detail="清理 App、Agent、日志和聊天消息"
                 value={`${totalMessageCount} 条消息`}
                 onClick={() => {
                   setCacheStatus(null);
@@ -2112,7 +2149,7 @@ export function SettingsPanel({
               footer={
                 runningTaskCount > 0
                   ? `当前有 ${runningTaskCount} 个任务正在运行。为避免丢失任务映射，任务结束前不能清空消息。`
-                  : "清理操作只影响当前设备，不会删除服务器文件、远端 AI 会话或云端配置。"
+                  : "App 缓存只影响当前设备；Agent 缓存会清除已完成任务历史，但不会删除工作目录、连接配置或云端配置。"
               }
             >
               <SettingsStatusRow
@@ -2147,6 +2184,24 @@ export function SettingsPanel({
                 disabled={busy || cacheBusy || !onClearCache}
               />
             </SettingsSection>
+            <SettingsSection title="运行缓存">
+              <SettingsActionRow
+                icon={Trash}
+                title="清理 App 缓存"
+                detail="清理页面、图片预览和临时文件缓存，保留消息与配置"
+                destructive
+                onClick={() => handleClearCache({ app: true })}
+                disabled={busy || cacheBusy || !onClearCache}
+              />
+              <SettingsActionRow
+                icon={Trash}
+                title="清理 Agent 缓存"
+                detail="删除已连接机器上的已完成任务历史、会话索引和日志"
+                destructive
+                onClick={() => handleClearCache({ agent: true })}
+                disabled={busy || cacheBusy || runningTaskCount > 0 || !onClearCache}
+              />
+            </SettingsSection>
             <SettingsSection title="聊天记录">
               <SettingsActionRow
                 icon={Trash}
@@ -2159,9 +2214,9 @@ export function SettingsPanel({
               <SettingsActionRow
                 icon={Trash}
                 title="清空全部缓存"
-                detail="同时删除诊断日志和本地聊天消息"
+                detail="同时清理 App、Agent、诊断日志和本地聊天消息"
                 destructive
-                onClick={() => handleClearCache({ logs: true, messages: true })}
+                onClick={() => handleClearCache({ logs: true, messages: true, app: true, agent: true })}
                 disabled={busy || cacheBusy || runningTaskCount > 0 || !onClearCache}
               />
             </SettingsSection>
@@ -2460,6 +2515,22 @@ export function SettingsPanel({
                   actions={<ConfigCopyButton value={toolLoginStatus.code} />}
                 />
               ) : null}
+              {toolLoginStatus?.url ? (
+                <ConfigField
+                  label={toolLoginStatus?.agentId === "claude" ? "Claude 登录链接" : "授权链接"}
+                  value={toolLoginStatus.url}
+                  readOnly
+                />
+              ) : null}
+              {toolLoginStatus?.agentId === "claude" && toolLoginStatus?.tone === "pending" ? (
+                <ConfigField
+                  label="授权密钥"
+                  value={claudeAuthorizationCode}
+                  autoComplete="off"
+                  placeholder="粘贴网页返回的授权密钥"
+                  onChange={setClaudeAuthorizationCode}
+                />
+              ) : null}
               <SettingsButtonRow>
                 {toolLoginStatus?.url ? (
                   <button
@@ -2473,15 +2544,27 @@ export function SettingsPanel({
                 ) : null}
                 {toolLoginStatus?.tone === "pending" ? (
                   <>
-                    <button
-                      type="button"
-                      className="settings-inline-button primary"
-                      onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "status")}
-                      disabled={busy || toolLoginStatus?.tone === "loading"}
-                    >
-                      <Check size={17} weight="bold" aria-hidden="true" />
-                      我已完成授权
-                    </button>
+                    {toolLoginStatus?.agentId === "claude" ? (
+                      <button
+                        type="button"
+                        className="settings-inline-button primary"
+                        onClick={() => void handleToolLogin("claude", "submit")}
+                        disabled={busy || toolLoginStatus?.tone === "loading" || !claudeAuthorizationCode.trim()}
+                      >
+                        <Key size={17} weight="bold" aria-hidden="true" />
+                        提交授权密钥
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="settings-inline-button primary"
+                        onClick={() => void handleToolLogin(toolLoginStatus?.agentId || draftProfile.agentId, "status")}
+                        disabled={busy || toolLoginStatus?.tone === "loading"}
+                      >
+                        <Check size={17} weight="bold" aria-hidden="true" />
+                        我已完成授权
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="settings-inline-button"
