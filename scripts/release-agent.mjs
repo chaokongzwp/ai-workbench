@@ -22,6 +22,7 @@ const remote = String(process.env.AIWB_AGENT_GIT_REMOTE || "origin").trim();
 const branch = String(process.env.AIWB_AGENT_GIT_BRANCH || "main").trim();
 const controlEndpoint = String(process.env.AIWB_AGENT_CONTROL_ENDPOINT || workbenchAgentControlEndpoint).replace(/\/+$/, "");
 const agentControlKeychainService = "com.beexofficial.aiworkbench.agent-control-admin";
+const minimumControlServiceVersion = 6;
 
 function git(args, options = {}) {
   const output = execFileSync("git", args, {
@@ -46,6 +47,21 @@ function agentControlAdminToken() {
     return "";
   }
 }
+
+async function verifyControlCenterCanHostArtifacts() {
+  const response = await fetch(`${controlEndpoint.replace(/\/v1\/agent-control$/, "")}/v1/version`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`配置中心发布前检查失败：HTTP ${response.status}`);
+  const status = await response.json();
+  const serviceVersion = Number(status?.version || 0);
+  if (!Number.isFinite(serviceVersion) || serviceVersion < minimumControlServiceVersion) {
+    throw new Error(
+      `配置中心版本过旧（当前 v${serviceVersion || "未知"}，至少需要 v${minimumControlServiceVersion}），` +
+      "请先部署支持 Agent 制品托管的配置中心服务。",
+    );
+  }
+}
+
+await verifyControlCenterCanHostArtifacts();
 
 execFileSync(process.execPath, ["scripts/export-agent-github.mjs"], {
   cwd: repoRoot,
