@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "44";
+export const latestWorkbenchAgentVersion = "45";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -1653,6 +1653,12 @@ aiwb_install_service() {
 AIWB_LAUNCH_AGENT
     chmod 600 "$AIWB_LAUNCH_AGENT_PLIST"
     launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if ! launchctl print "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.2
+    done
     if launchctl bootstrap "gui/$(id -u)" "$AIWB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
       launchctl kickstart -k "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
       printf "__AIWB_AGENT_SERVICE__launchd\\n"
