@@ -6,7 +6,7 @@
   "sha256": "b2eb2faf81d18245512d0ee306da8d4508ce3050f45ce56a9f44474ff528a7ab",
   "runtime": "linux-shell",
   "source": "github",
-  "publishedAt": "2026-08-05T10:26:05.990Z",
+  "publishedAt": "2026-08-05T11:14:27.784Z",
   "directRuntime": {
     "url": "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/v52/aiwb-agent-http.mjs",
     "sha256": "05bb001d8705c63368c79358853e8fc31f549a678e3d0bf69df4868915574b45"
