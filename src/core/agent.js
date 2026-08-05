@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "46";
+export const latestWorkbenchAgentVersion = "47";
 export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
 export const workbenchAgentGithubBranch = "main";
 export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
@@ -2077,11 +2077,12 @@ function Install-AiwbRuntime([object]$Runtime, [string]$Target) {
 }
 Install-AiwbRuntime $AIWB_DIRECT_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-http.mjs")
 Install-AiwbRuntime $AIWB_UPDATER_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs")
-@{ manifestUrl = $AIWB_MANIFEST_URL; controlEndpoint = ${psQuote(workbenchAgentControlEndpoint)}; advertisedEndpoint = ${psQuote(agentAdvertisedEndpoint)} } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $AIWB_HOME "updater.json") -Encoding UTF8
+$AIWB_UPDATER_CONFIG = @{ manifestUrl = $AIWB_MANIFEST_URL; controlEndpoint = ${psQuote(workbenchAgentControlEndpoint)}; advertisedEndpoint = ${psQuote(agentAdvertisedEndpoint)} } | ConvertTo-Json
+[System.IO.File]::WriteAllText((Join-Path $AIWB_HOME "updater.json"), $AIWB_UPDATER_CONFIG, [System.Text.UTF8Encoding]::new($false))
 if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-http.mjs") -PathType Leaf) {
   $direct = Join-Path $AIWB_HOME "aiwb-agent-http.mjs"
   $directConfig = Join-Path $AIWB_HOME "http.json"
-  if (-not (Test-Path -LiteralPath $directConfig -PathType Leaf)) { '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}' | Set-Content -LiteralPath $directConfig -Encoding UTF8 }
+  if (-not (Test-Path -LiteralPath $directConfig -PathType Leaf)) { [System.IO.File]::WriteAllText($directConfig, '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}', [System.Text.UTF8Encoding]::new($false)) }
   $directRunning = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$direct*" } | Select-Object -First 1
   if ($directRunning) { Stop-Process -Id $directRunning.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Process -FilePath $AIWB_NODE_COMMAND.Source -ArgumentList @($direct) -WindowStyle Hidden
