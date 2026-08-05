@@ -72,7 +72,16 @@ for (const [runtime, path] of [[manifest.directRuntime, directRuntimePath], [man
   }
 }
 
-git(["add", "agent/latest.json", "agent/windows-latest.json", `agent/v${version}`]);
+const releaseSourcePaths = [
+  "agent/README.md",
+  "agent/runtime/aiwb-agent-http.mjs",
+  "agent/runtime/aiwb-agent-updater.mjs",
+  "scripts/export-agent-github.mjs",
+  "scripts/release-agent.mjs",
+  "src/core/agent.js",
+  "src/core/windowsAgent.js",
+];
+git(["add", "agent/latest.json", "agent/windows-latest.json", `agent/v${version}`, ...releaseSourcePaths]);
 const allowedStagedPaths = new Set([
   "agent/latest.json",
   "agent/windows-latest.json",
@@ -82,6 +91,7 @@ const allowedStagedPaths = new Set([
   `agent/v${version}/aiwb-agent-updater.mjs`,
   `agent/v${version}/manifest.json`,
   `agent/v${version}/windows-manifest.json`,
+  ...releaseSourcePaths,
 ]);
 const unexpectedStagedPaths = git(["diff", "--cached", "--name-only"])
   .split(/\r?\n/)

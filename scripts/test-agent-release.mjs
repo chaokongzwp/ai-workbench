@@ -11,6 +11,8 @@ assert.match(source, /com\.beexofficial\.aiworkbench\.agent-control-admin/);
 assert.match(source, /fetch\(`\$\{controlEndpoint\}\/publish`/);
 assert.match(source, /fetch\(`\$\{controlEndpoint\}\/latest`/);
 assert.match(source, /String\(controlLatest\?\.agent\?\.version \|\| ""\) !== version/);
+assert.match(source, /const releaseSourcePaths = \[/);
+assert.match(source, /"src\/core\/windowsAgent\.js"/);
 assert.match(updaterSource, /if \(!singleRun && result\?\.updated\)/);
 assert.match(updaterSource, /await restartInstalledRuntime\(\)/);
 assert.match(updaterSource, /join\(home, "http\.pid"\)/);

@@ -877,6 +877,25 @@ function uninstallService() {
   console.log("__AIWB_AGENT_SERVICE_STATUS__removed");
 }
 
+function clearCache() {
+  const active = taskIds().filter((id) => ["queued", "preparing", "running", "busy"].includes(taskStatus(id)));
+  if (active.length) {
+    console.log("__AIWB_AGENT_STATUS__error");
+    console.log("__AIWB_AGENT_ERROR__还有任务正在运行，不能清理 Agent 缓存。");
+    process.exitCode = 3;
+    return;
+  }
+  const taskCount = taskIds().length;
+  const conversationCount = conversationIds().length;
+  for (const id of taskIds()) fs.rmSync(taskDir(id), { recursive: true, force: true });
+  for (const id of conversationIds()) fs.rmSync(conversationDir(id), { recursive: true, force: true });
+  write(LOG_FILE, "");
+  console.log("__AIWB_AGENT_STATUS__ready");
+  console.log("__AIWB_AGENT_CACHE_CLEARED__1");
+  console.log("__AIWB_AGENT_CACHE_TASKS__" + taskCount);
+  console.log("__AIWB_AGENT_CACHE_CONVERSATIONS__" + conversationCount);
+}
+
 function createTask(id) {
   const directory = taskDir(id);
   const conversationId = readTrim(path.join(directory, "conversation_id"));
@@ -1020,6 +1039,7 @@ async function main() {
   }
   if (command === "install-service") return installService();
   if (command === "uninstall-service") return uninstallService();
+  if (command === "clear-cache") return clearCache();
   if (command === "status") return args[0] ? emitTask(args[0]) : (ensureDaemon(), emitHealth());
   if (command === "create") return createTask(args[0]);
   if (command === "cancel") return cancelTask(args[0]);
