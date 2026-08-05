@@ -891,7 +891,7 @@ printf '__AIWB_FILE_PATH__%s\\n' "$AIWB_PATH"
 printf '__AIWB_FILE_MIME__%s\\n' "$AIWB_MIME"
 printf '__AIWB_FILE_SIZE__%s\\n' "$AIWB_SIZE"
 printf '__AIWB_FILE_DATA__\\n'
-base64 "$AIWB_PATH" | tr -d '\\n'
+base64 < "$AIWB_PATH" | tr -d '\\n'
 printf '\\n__AIWB_FILE_END__\\n'
 `);
 }
@@ -903,16 +903,27 @@ export function parseRemoteFilePayload(output) {
   }
 
   const readMarker = (marker) => text.match(new RegExp(`__AIWB_FILE_${marker}__(.*)`))?.[1]?.trim() || "";
-  const data = text.match(/__AIWB_FILE_DATA__\s*([\s\S]*?)\s*__AIWB_FILE_END__/)?.[1]?.replace(/\s+/g, "") || "";
+  const rawData = text.match(/__AIWB_FILE_DATA__\s*([\s\S]*?)\s*__AIWB_FILE_END__/)?.[1] || "";
+  let data = "";
+  try {
+    data = Foundation.normalizeBase64Payload(rawData, "文件内容");
+  } catch {
+    throw new Error("文件内容传输不完整，无法预览或下载，请重新尝试。");
+  }
   if (!data) throw new Error("文件内容为空或读取失败。");
 
   const path = readMarker("PATH");
+  const size = Number(readMarker("SIZE") || 0) || 0;
+  const expectedBase64Length = size > 0 ? Math.ceil(size / 3) * 4 : 0;
+  if (expectedBase64Length && data.length !== expectedBase64Length) {
+    throw new Error("文件内容传输不完整，无法预览或下载，请重新尝试。");
+  }
   const extension = remoteFileExtension(path || readMarker("NAME"));
   return {
     name: readMarker("NAME") || remoteBasename(path),
     path,
     mime: readMarker("MIME") || previewMimeFromExtension(extension),
-    size: Number(readMarker("SIZE") || 0) || 0,
+    size,
     base64: data,
     extension,
     kind: previewKindFromExtension(extension),

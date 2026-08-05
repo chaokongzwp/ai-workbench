@@ -503,6 +503,27 @@ export function looksLikeTerminalNoise(line, prompt = "") {
   return false;
 }
 
+export function unwrapWholeMarkdownFence(text) {
+  const source = trimVisibleText(text);
+  const match = source.match(/^```([^\n`]*)\n([\s\S]*?)\n```$/);
+  if (!match) return source;
+
+  const language = String(match[1] || "").trim().toLocaleLowerCase();
+  if (language && language !== "md" && language !== "markdown") return source;
+
+  const inner = trimVisibleText(match[2]);
+  if (language) return inner;
+
+  const markdownSignals = [
+    /^#{1,6}\s+\S/m,
+    /^(?:[-*+]\s+|\d+\.\s+)\S/m,
+    /^>\s+\S/m,
+    /^\|.*\|\s*\n\|?\s*:?-{3,}/m,
+    /\*\*[^*\n]{2,}\*\*/,
+  ].filter((pattern) => pattern.test(inner)).length;
+  return markdownSignals >= 2 ? inner : source;
+}
+
 export function fallbackFinalOutput(text, prompt = "") {
   const lines = stripTerminalControl(text)
     .replace(/^AI Workbench: 正在启动 .*\n?/gm, "")
@@ -527,7 +548,7 @@ export function fallbackFinalOutput(text, prompt = "") {
     }
   }
 
-  return trimVisibleText(filtered.slice(startIndex).slice(-80).join("\n"));
+  return unwrapWholeMarkdownFence(filtered.slice(startIndex).slice(-80).join("\n"));
 }
 
 export function extractAgentFinalOutput(output, prompt = "") {
@@ -535,8 +556,8 @@ export function extractAgentFinalOutput(output, prompt = "") {
   const workbenchResponse = extractWorkbenchResponse(normalized);
   const answerSource = workbenchResponse || normalized;
   const marked = extractMarkedFinalOutput(answerSource);
-  if (marked) return { text: marked, final: true };
-  if (workbenchResponse) return { text: workbenchResponse, final: true };
+  if (marked) return { text: unwrapWholeMarkdownFence(marked), final: true };
+  if (workbenchResponse) return { text: unwrapWholeMarkdownFence(workbenchResponse), final: true };
 
   return {
     text: fallbackFinalOutput(answerSource, prompt),

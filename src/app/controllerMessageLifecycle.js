@@ -8,6 +8,7 @@ import {
   sortConversationMessages,
   taskStateForMessage,
   taskStateFailed,
+  taskStateIsActive,
   taskStateIsTerminal,
   taskStateSucceeded,
   taskStateSyncing,
@@ -55,6 +56,22 @@ function mergeRemoteUserMessages(existing, incoming) {
 export function isMessageListDiagnostic(message) {
   const title = String(message?.title || "").trim();
   return title === "消息列表已拉取" || /输出已刷新$/.test(title);
+}
+
+export function lastRecoverableAgentResponse(messages = []) {
+  const candidates = (Array.isArray(messages) ? messages : []).filter(
+    (message) => !isMessageListDiagnostic(message),
+  );
+  const pending = lastPendingAgentResponse(candidates);
+  if (pending) return pending;
+  return [...candidates]
+    .reverse()
+    .find(
+      (message) =>
+        message?.role === "assistant" &&
+        message?.backend === "agent" &&
+        taskStateIsActive(taskStateForMessage(message)),
+    ) || null;
 }
 
 function normalizeDeferredWaitingMessage(message) {

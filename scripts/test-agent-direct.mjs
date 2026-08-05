@@ -14,6 +14,9 @@ import {
   taskStateRunning,
   taskStateSucceeded,
 } from "../src/core/messageLifecycle.js";
+import { buildWorkbenchAgentDirectConfigCommand } from "../src/core/agent.js";
+import { profileWithDetectedTools } from "../src/core/remoteCommands.js";
+import { agentInstallationKey, serverPlatformLabel, sshEndpointKey } from "../src/core/foundation.js";
 
 assert.equal(normalizeAgentDirectEndpoint("https://agent.example.com/"), "https://agent.example.com");
 assert.equal(normalizeAgentDirectEndpoint("http://agent.example.com"), "");
@@ -53,5 +56,28 @@ const result = await agentDirectRequest(profile, "/v1/tasks", {
 assert.equal(result.taskId, "task-1");
 assert.equal(captured.url, "https://agent.example.com/v1/tasks");
 assert.equal(captured.init.headers.Authorization, "Bearer secret");
+
+const macBootstrap = buildWorkbenchAgentDirectConfigCommand({ platform: "macos" });
+assert.match(macBootstrap, /base64 < "\$AIWB_CONFIG"/);
+assert.doesNotMatch(macBootstrap, /base64 "\$AIWB_CONFIG"/);
+assert.match(macBootstrap, /__AIWB_AGENT_DIRECT_STATUS__error/);
+
+const detectedMac = profileWithDetectedTools(
+  { platform: "linux", codexCommand: "codex", claudeCommand: "claude" },
+  { platform: "macos", codex: "/Applications/Codex.app/Contents/Resources/codex", claude: "/opt/homebrew/bin/claude" },
+);
+assert.equal(detectedMac.platform, "macos");
+assert.equal(detectedMac.claudeCommand, "/opt/homebrew/bin/claude");
+assert.equal(profileWithDetectedTools({ platform: "wsl" }, { platform: "linux" }).platform, "wsl");
+const linuxMachine = { platform: "linux", host: "macmini", port: 22, username: "a0" };
+const macosMachine = { ...linuxMachine, platform: "macos" };
+assert.equal(agentInstallationKey(linuxMachine), agentInstallationKey(macosMachine));
+assert.equal(sshEndpointKey(linuxMachine), sshEndpointKey({ ...linuxMachine, platform: "windows" }));
+assert.notEqual(agentInstallationKey(linuxMachine), agentInstallationKey({ ...linuxMachine, platform: "windows" }));
+assert.notEqual(
+  agentInstallationKey({ ...linuxMachine, platform: "wsl", wslDistro: "Ubuntu" }),
+  agentInstallationKey({ ...linuxMachine, platform: "wsl", wslDistro: "Debian" }),
+);
+assert.equal(serverPlatformLabel("macos"), "macOS");
 
 console.log("agent direct protocol regression: ok");

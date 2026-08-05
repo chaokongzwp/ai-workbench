@@ -69,15 +69,8 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       const bridge = desktopBridge();
       if (bridge?.saveFile) return bridge.saveFile(payload);
 
-      const rawBase64 = String(payload.base64 || "");
-      const base64 = rawBase64.includes(",") ? rawBase64.split(",").pop() : rawBase64;
-      if (!base64) throw new Error("Missing required field: base64");
-
-      const binary = window.atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
+      const bytes = base64ToBytes(payload.base64, "文件内容");
+      if (!bytes.length) throw new Error("文件内容为空，无法保存。");
       const blob = new Blob([bytes], { type: payload.mime || "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -367,6 +360,11 @@ export const VoiceWorkbench = registerPlugin("VoiceWorkbench", {
 });
 
 export const serverPlatformDefaults = {
+  macos: {
+    workdir: "",
+    codexCommand: "/Applications/ChatGPT.app/Contents/Resources/codex",
+    claudeCommand: "/opt/homebrew/bin/claude",
+  },
   linux: {
     workdir: "",
     codexCommand: "/usr/local/bin/codex",
@@ -385,12 +383,14 @@ export const serverPlatformDefaults = {
 };
 
 export const legacyDefaultWorkdirs = {
+  macos: "",
   linux: "/opt/limpet-workspace",
   wsl: "/home/ai-workbench",
   windows: "C:\\AIWorkbench",
 };
 
 export const serverPlatforms = [
+  { id: "macos", label: "macOS" },
   { id: "linux", label: "Linux" },
   { id: "wsl", label: "Windows + WSL" },
   { id: "windows", label: "Windows PowerShell" },
@@ -417,6 +417,7 @@ export const defaultProfile = {
   gitBranch: "",
   agentId: "codex",
   aiModel: "",
+  environmentVariables: "",
   tmuxSession: "ai-dev",
   codexCommand: serverPlatformDefaults.linux.codexCommand,
   claudeCommand: serverPlatformDefaults.linux.claudeCommand,
@@ -1347,6 +1348,7 @@ export function normalizeProfile(profile) {
     openAIAPIKey: String(profile?.openAIAPIKey || ""),
     agentId: normalizedAgentId,
     aiModel: normalizeAgentModel(normalizedAgentId, profile?.aiModel),
+    environmentVariables: String(profile?.environmentVariables || "").replace(/\r\n?/g, "\n"),
     wakeWordPhrases:
       String(profile?.wakeWordPhrases || defaultProfile.wakeWordPhrases).trim() === legacyDefaultWakeWordPhrases
         ? defaultProfile.wakeWordPhrases
@@ -1403,6 +1405,55 @@ export function normalizeHostAlternates(value, primaryHost = "") {
       seen.add(key);
       return true;
     });
+}
+
+export function parseSessionEnvironmentVariables(value) {
+  const entriesByName = new Map();
+  const errors = [];
+  String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .forEach((sourceLine, index) => {
+      const line = sourceLine.trim();
+      if (!line || line.startsWith("#")) return;
+      const assignment = line.replace(/^export\s+/, "");
+      const separator = assignment.indexOf("=");
+      if (separator < 1) {
+        errors.push(`第 ${index + 1} 行缺少 KEY=value 格式。`);
+        return;
+      }
+      const name = assignment.slice(0, separator).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        errors.push(`第 ${index + 1} 行的变量名无效。`);
+        return;
+      }
+      if (/^AIWB_/i.test(name)) {
+        errors.push(`第 ${index + 1} 行不能覆盖 AIWB_ 内部变量。`);
+        return;
+      }
+      let entryValue = assignment.slice(separator + 1).trim();
+      const quote = entryValue[0];
+      if ((quote === '"' || quote === "'") && entryValue.endsWith(quote) && entryValue.length >= 2) {
+        entryValue = entryValue.slice(1, -1);
+        if (quote === '"') {
+          entryValue = entryValue.replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+        }
+      }
+      entriesByName.set(name, { name, value: entryValue, line: index + 1 });
+    });
+  return { entries: [...entriesByName.values()], errors };
+}
+
+export function sessionEnvironmentBashScript(value) {
+  return parseSessionEnvironmentVariables(value).entries
+    .map((entry) => `export ${entry.name}=${shQuote(entry.value)}`)
+    .join("\n");
+}
+
+export function sessionEnvironmentPowerShellScript(value) {
+  return parseSessionEnvironmentVariables(value).entries
+    .map((entry) => `$env:${entry.name} = ${psQuote(entry.value)}`)
+    .join("\n");
 }
 
 export function profileHostCandidates(profile) {
@@ -2419,12 +2470,7 @@ function cloudSyncCrypto() {
 }
 
 function fromBase64Bytes(base64) {
-  const binary = atob(String(base64 || ""));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
+  return base64ToBytes(base64, "云端同步数据");
 }
 
 async function deriveCloudSyncKey(password, saltBytes, iterations = cloudSyncKdfIterations) {
@@ -2599,6 +2645,27 @@ export function profileConnectionKey(profile) {
   ].join("|");
 }
 
+export function sshEndpointKey(profile) {
+  const normalized = normalizeProfile(profile);
+  return [
+    String(normalized.host || "").trim().toLocaleLowerCase(),
+    Number(normalized.port || 22) || 22,
+    String(normalized.username || "").trim(),
+  ].join("|");
+}
+
+export function agentInstallationKey(profile) {
+  const normalized = normalizeProfile(profile);
+  const platform = normalizeServerPlatform(normalized.platform);
+  const runtime =
+    platform === "wsl"
+      ? `wsl:${String(normalized.wslDistro || "").trim().toLocaleLowerCase()}`
+      : platform === "windows"
+        ? "windows"
+        : "posix";
+  return [runtime, sshEndpointKey(normalized)].join("|");
+}
+
 export function shQuote(value) {
   return `'${String(value ?? "").replace(/'/g, "'\\''")}'`;
 }
@@ -2637,6 +2704,45 @@ export function toBase64Bytes(bytes) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
   }
   return btoa(binary);
+}
+
+export function normalizeBase64Payload(value, label = "数据") {
+  let base64 = String(value || "").trim();
+  if (/^data:/i.test(base64)) {
+    const separator = base64.indexOf(",");
+    base64 = separator >= 0 ? base64.slice(separator + 1) : "";
+  }
+  base64 = base64.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  if (!base64) return "";
+
+  const firstPadding = base64.indexOf("=");
+  if (
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)
+    || (firstPadding >= 0 && firstPadding < base64.length - 2)
+  ) {
+    throw new Error(`${label}不是有效的 Base64 数据。`);
+  }
+
+  const unpadded = base64.replace(/=+$/g, "");
+  if (unpadded.length % 4 === 1) {
+    throw new Error(`${label}不是有效的 Base64 数据，内容可能未传输完整。`);
+  }
+  return `${unpadded}${"=".repeat((4 - (unpadded.length % 4)) % 4)}`;
+}
+
+export function base64ToBytes(value, label = "数据") {
+  const base64 = normalizeBase64Payload(value, label);
+  if (!base64) return new Uint8Array();
+  try {
+    const binary = globalThis.atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  } catch {
+    throw new Error(`${label}不是有效的 Base64 数据，内容可能未传输完整。`);
+  }
 }
 
 export function sleep(ms) {
@@ -2758,6 +2864,7 @@ export function agentCommand(profile, agent) {
 }
 
 export function normalizeServerPlatform(value) {
+  if (value === "macos" || value === "darwin" || value === "mac") return "macos";
   if (value === "windows" || value === "wsl") return value;
   return "linux";
 }
@@ -2771,7 +2878,7 @@ export function discoverySeedWorkdir(profile) {
 }
 
 export function serverPlatformLabel(profile) {
-  const platform = normalizeServerPlatform(profile?.platform);
+  const platform = normalizeServerPlatform(typeof profile === "string" ? profile : profile?.platform);
   return serverPlatforms.find((item) => item.id === platform)?.label || serverPlatforms[0].label;
 }
 
@@ -2873,6 +2980,10 @@ export function parsePlaybackCommandIndex(text) {
 
 export function isWindowsProfile(profile) {
   return normalizeServerPlatform(profile?.platform) === "windows";
+}
+
+export function isMacProfile(profile) {
+  return normalizeServerPlatform(profile?.platform) === "macos";
 }
 
 export function isWslProfile(profile) {

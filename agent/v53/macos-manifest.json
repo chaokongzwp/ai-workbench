@@ -1,0 +1,19 @@
+{
+  "kind": "ai-workbench-agent",
+  "platform": "macos",
+  "version": "53",
+  "scriptUrl": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v53/macos/aiwbctl",
+  "scriptKey": "agent/v53/macos/aiwbctl",
+  "sha256": "8b356db058f76ce4eeb9628658f092805900b1512db515e7a917e65e2b925d11",
+  "runtime": "macos-shell",
+  "source": "config-center",
+  "publishedAt": "2026-08-05T14:25:19.070Z",
+  "directRuntime": {
+    "url": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v53/common/aiwb-agent-http.mjs",
+    "sha256": "77bec9496ce0fbed13ab0c03523aac3ed5ce3f60013310ca31448e0fb0532a56"
+  },
+  "updaterRuntime": {
+    "url": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v53/common/aiwb-agent-updater.mjs",
+    "sha256": "a858a4495cd32d65ca90e2cf692a94f18664d62093aceb6fe82cd88f78d1a15c"
+  }
+}

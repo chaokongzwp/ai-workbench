@@ -9,6 +9,11 @@ const port = Number(process.env.AIWB_PORT || 4187);
 const sessions = new Map();
 
 const platformDefaults = {
+  macos: {
+    workdir: "",
+    codexCommand: "/Applications/ChatGPT.app/Contents/Resources/codex",
+    claudeCommand: "/opt/homebrew/bin/claude",
+  },
   linux: {
     workdir: "/opt/limpet-workspace",
     codexCommand: "/usr/local/bin/codex",
@@ -54,6 +59,7 @@ function bashCommand(script) {
 }
 
 function normalizeServerPlatform(value) {
+  if (value === "macos" || value === "darwin" || value === "mac") return "macos";
   if (value === "windows" || value === "wsl") return value;
   return "linux";
 }

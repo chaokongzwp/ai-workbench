@@ -13,17 +13,19 @@ async function readManifest(name) {
   return JSON.parse(await readFile(join(agentRoot, name), "utf8"));
 }
 
-const [linuxManifest, windowsManifest, entries] = await Promise.all([
+const [linuxManifest, macosManifest, windowsManifest, entries] = await Promise.all([
   readManifest("latest.json"),
+  readManifest("macos-latest.json"),
   readManifest("windows-latest.json"),
   readdir(agentRoot, { withFileTypes: true }),
 ]);
 
 const linuxVersion = String(linuxManifest.version || "").trim();
+const macosVersion = String(macosManifest.version || "").trim();
 const windowsVersion = String(windowsManifest.version || "").trim();
-if (!linuxVersion || linuxVersion !== windowsVersion) {
+if (!linuxVersion || linuxVersion !== macosVersion || linuxVersion !== windowsVersion) {
   throw new Error(
-    `Agent manifest versions do not match: Linux=${linuxVersion || "missing"}, Windows=${windowsVersion || "missing"}.`,
+    `Agent manifest versions do not match: Linux=${linuxVersion || "missing"}, macOS=${macosVersion || "missing"}, Windows=${windowsVersion || "missing"}.`,
   );
 }
 

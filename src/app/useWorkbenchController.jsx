@@ -7,6 +7,7 @@ import {
   dedupeRemoteTaskMessages,
   dedupeServerRemoteTaskMessages,
   isMessageListDiagnostic,
+  lastRecoverableAgentResponse,
   messageTextKey,
   reconcileServerMessageLifecycle,
 } from "./controllerMessageLifecycle.js";
@@ -22,6 +23,18 @@ import { assertSessionDispatch } from "../core/session.js";
 import { patchSession, patchSessionsMatchingConnection, sessionById } from "../core/sessionStore.js";
 import { patchMessage } from "../core/messageStore.js";
 import { canonicalConnectionState } from "../core/connectionState.js";
+import {
+  agentCanContinueAfterUpgradeFailure,
+  agentTaskSubmissionReady,
+  agentTaskSubmissionTransport,
+  agentTaskMatchesInterruptedSubmission,
+  trustedAgentPlatform,
+} from "../core/agentStartup.js";
+import {
+  mergePendingWorkspaceMutations,
+  rebaseWorkspaceProfile,
+  workspaceProfileEffectiveRevision,
+} from "../core/workspaceProfileMerge.js";
 
 function nativeDeviceClassForRuntime(platform = Capacitor.getPlatform()) {
   if (typeof window === "undefined") return "phone";
@@ -199,7 +212,6 @@ const {
   loadLocalMessageHistory,
   loadManualWorkdirHistory,
   loadWorkspaceMirror,
-  lastPendingAgentResponse,
   localMessageHistoryFromServers,
   localMessageHistoryStorageKey,
   looksLikeDeferredWaitingAnswer,
@@ -265,6 +277,7 @@ const {
   previewLabelFromKind,
   previewMimeFromExtension,
   profileConnectionKey,
+  agentInstallationKey,
   profileHostCandidates,
   profileIssue,
   profileReady,
@@ -306,6 +319,7 @@ const {
   sessionShareFromServer,
   sessionSelectionKey,
   shQuote,
+  sshEndpointKey,
   shortError,
   sleep,
   speakAssistantText,
@@ -350,6 +364,7 @@ const {
   workbenchAgentAvailableFromOutput,
   workbenchAgentScript,
   workbenchAgentVersionNumber,
+  workbenchAgentTaskCreateMode,
   workdirDisplayName,
   workspaceDiagnosticSummary,
   workspaceMirrorStorageKey,
@@ -628,6 +643,10 @@ export function useWorkbenchController() {
   const profileReadyRef = useRef(isProfileReady);
   const workspaceLoadedRef = useRef(workspaceLoaded);
   const workspaceSaveTimerRef = useRef(null);
+  const workspacePendingSaveRef = useRef(null);
+  const workspaceRevisionRef = useRef(0);
+  const workspaceAppliedServersRef = useRef([]);
+  const workspaceAuthoritativeProfileRef = useRef(null);
 
   // Composer drafts deliberately stay in memory only: they belong to one open session, not its saved configuration.
   function setComposer(nextValue) {
@@ -676,6 +695,15 @@ export function useWorkbenchController() {
     setDraftProfile(resolved);
   }
 
+  function followActiveSessionInSettings(server) {
+    if (settingsOpenRef.current) return false;
+    const nextServerId = server?.id || "";
+    setEditingServerId(nextServerId);
+    editingServerIdRef.current = nextServerId;
+    updateDraftProfile(server?.profile || defaultProfile);
+    return true;
+  }
+
   // Connection probes complete asynchronously. While a settings form is open,
   // its local draft wins over a late probe so typed fields are never replaced
   // with the server's previously saved profile.
@@ -686,7 +714,7 @@ export function useWorkbenchController() {
   }
 
   async function runCommandWithHostFallback(currentProfile, sessionId, commandPayload, maxResponseSize, commandTimeoutSeconds) {
-    const connectionKey = profileConnectionKey(currentProfile);
+    const connectionKey = sshEndpointKey(currentProfile);
     const preferredHost = preferredHostByConnectionRef.current.get(connectionKey);
     const hosts = orderedHostCandidates(currentProfile, preferredHost);
     let lastError = null;
@@ -1167,7 +1195,7 @@ export function useWorkbenchController() {
   // Runtime updates must patch the latest session snapshot. Workspace load/import
   // are the only flows allowed to intentionally replace the full list.
   function commitServerPatch(patch, { persistDelay = 250, persist = true } = {}) {
-    const currentItems = serversRef.current.length ? serversRef.current : servers;
+    const currentItems = serversRef.current;
     const nextItems = typeof patch === "function" ? patch(currentItems) : patch;
     if (!Array.isArray(nextItems) || nextItems === currentItems) return currentItems;
 
@@ -1181,18 +1209,54 @@ export function useWorkbenchController() {
   }
 
   function patchServersByConnection(targetProfile, updater, options = {}) {
-    const connectionKey = profileConnectionKey(normalizeProfile(targetProfile));
+    const connectionKey = agentInstallationKey(normalizeProfile(targetProfile));
     return commitServerPatch(
       (items) =>
         patchSessionsMatchingConnection(
           items,
           connectionKey,
-          (profile) => profileConnectionKey(normalizeProfile(profile)),
+          (profile) => agentInstallationKey(normalizeProfile(profile)),
           (server) => updater(server, normalizeProfile(server.profile)),
           reconcileServerMessageLifecycle,
         ),
       options,
     );
+  }
+
+  function patchServersBySshEndpoint(targetProfile, updater, options = {}) {
+    const endpointKey = sshEndpointKey(normalizeProfile(targetProfile));
+    return commitServerPatch(
+      (items) =>
+        patchSessionsMatchingConnection(
+          items,
+          endpointKey,
+          (profile) => sshEndpointKey(normalizeProfile(profile)),
+          (server) => updater(server, normalizeProfile(server.profile)),
+          reconcileServerMessageLifecycle,
+        ),
+      options,
+    );
+  }
+
+  function propagateDetectedMachineProfile(previousProfile, detectedProfile, options = {}) {
+    const machineProfileUpdatedAt = Date.now();
+    const detected = { ...detectedProfile, machineProfileUpdatedAt };
+    patchServersByConnection(
+      previousProfile,
+      (server) => ({
+        ...server,
+        profile: normalizeProfile({
+          ...(server.profile || {}),
+          platform: detected.platform,
+          wslDistro: detected.wslDistro,
+          codexCommand: detected.codexCommand,
+          claudeCommand: detected.claudeCommand,
+          machineProfileUpdatedAt,
+        }),
+      }),
+      { persistDelay: 0, ...options },
+    );
+    return detected;
   }
 
   function updateServer(serverId, updater) {
@@ -1568,9 +1632,7 @@ export function useWorkbenchController() {
   }
 
   function lastIncompleteAgentResponse(server) {
-    return lastPendingAgentResponse(
-      (server?.messages || []).filter((message) => !isMessageListDiagnostic(message)),
-    );
+    return lastRecoverableAgentResponse(server?.messages || []);
   }
 
   function runningMessageForServer(server) {
@@ -1954,6 +2016,142 @@ export function useWorkbenchController() {
     return nextServers;
   }
 
+  function normalizedWorkspaceRevision(value) {
+    const revision = Number(value || 0);
+    return Number.isFinite(revision) && revision > 0 ? Math.floor(revision) : 0;
+  }
+
+  async function persistWorkspaceProfile(payload) {
+    const bridge = desktopBridge();
+    if (bridge?.saveProfile) return bridge.saveProfile(payload);
+    return SSHWorkbench.saveProfile(payload);
+  }
+
+  function mergeSafeLocalMessageHistory(profileStore, serverList) {
+    const resetServerIds = new Set(
+      Object.entries(profileStore?.messageResetRevisions || {})
+        .filter(([, revision]) => normalizedWorkspaceRevision(revision) > 0)
+        .map(([serverId]) => String(serverId || "").trim())
+        .filter(Boolean),
+    );
+    const mergedServers = mergeLocalMessageHistory(serverList);
+    if (!resetServerIds.size) return mergedServers;
+    const authoritativeById = new Map(serverList.map((server) => [server.id, server]));
+    return mergedServers.map((server) =>
+      resetServerIds.has(server.id) ? authoritativeById.get(server.id) || server : server,
+    );
+  }
+
+  function canonicalWorkspaceProfile(profileStore, normalizedStore) {
+    return {
+      ...(profileStore || {}),
+      ...serializeWorkspaceStore(normalizedStore.servers, normalizedStore.activeServerId || ""),
+      workspaceRevision: workspaceProfileEffectiveRevision(profileStore || {}),
+      serverTombstones: profileStore?.serverTombstones || {},
+      messageResetRevisions: profileStore?.messageResetRevisions || {},
+    };
+  }
+
+  function applyAuthoritativeWorkspaceProfile(authoritativeProfile, options = {}) {
+    if (!workspaceStoreHasServers(authoritativeProfile)) return false;
+    const revision = workspaceProfileEffectiveRevision(authoritativeProfile);
+    if (revision < workspaceRevisionRef.current) return false;
+    const previousRevision = workspaceRevisionRef.current;
+    const currentServers = serversRef.current;
+    const queuedPending = workspacePendingSaveRef.current;
+    const expectedSnapshotChanged = options.expectedServers && currentServers !== options.expectedServers;
+    const localStateIsDirty = currentServers !== workspaceAppliedServersRef.current;
+    const authoritativeLoaded = normalizeWorkspaceStore(authoritativeProfile);
+    authoritativeLoaded.servers = dedupeServerRemoteTaskMessages(authoritativeLoaded.servers);
+    const canonicalAuthoritativeProfile = canonicalWorkspaceProfile(authoritativeProfile, authoritativeLoaded);
+    const pendingMutation =
+      options.pendingMutation ||
+      queuedPending ||
+      ((expectedSnapshotChanged || (!options.expectedServers && localStateIsDirty))
+        ? {
+            servers: currentServers,
+            activeServerId: activeServerIdRef.current,
+            baseRevision: previousRevision,
+            baseProfile: workspaceAuthoritativeProfileRef.current,
+            deletedServerIds: [],
+            replaceMessages: false,
+            replaceMessageServerIds: [],
+          }
+        : null);
+    const pendingProfile = pendingMutation
+      ? {
+          ...serializeWorkspaceStore(pendingMutation.servers, pendingMutation.activeServerId),
+          workspaceRevision: pendingMutation.baseRevision,
+        }
+      : null;
+    const effectiveProfile = pendingProfile
+      ? rebaseWorkspaceProfile(canonicalAuthoritativeProfile, pendingProfile, {
+          baseRevision: pendingMutation.baseRevision,
+          baseProfile: pendingMutation.baseProfile,
+          deletedServerIds: pendingMutation.deletedServerIds,
+          replaceMessages: pendingMutation.replaceMessages,
+          replaceMessageServerIds: pendingMutation.replaceMessageServerIds,
+        })
+      : canonicalAuthoritativeProfile;
+    const newerMessageReset = Object.values(authoritativeProfile.messageResetRevisions || {}).some(
+      (resetRevision) => normalizedWorkspaceRevision(resetRevision) > previousRevision,
+    );
+    const loaded = normalizeWorkspaceStore(effectiveProfile);
+    loaded.servers = dedupeServerRemoteTaskMessages(
+      options.replaceMessages || newerMessageReset
+        ? loaded.servers
+        : mergeSafeLocalMessageHistory(authoritativeProfile, loaded.servers),
+    );
+    loaded.servers = preserveVolatileLocalServers(loaded.servers);
+    const active =
+      loaded.servers.find((server) => server.id === desktopWindowContext.serverId) ||
+      loaded.servers.find((server) => server.id === activeServerIdRef.current) ||
+      loaded.servers.find((server) => server.id === loaded.activeServerId) ||
+      loaded.servers[0] ||
+      null;
+
+    workspaceRevisionRef.current = revision;
+    workspaceAuthoritativeProfileRef.current = canonicalAuthoritativeProfile;
+    applyingExternalProfileRef.current = true;
+    primaryActiveServerIdRef.current = loaded.activeServerId || active?.id || "";
+    const mirrorProfile = {
+      ...effectiveProfile,
+      ...serializeWorkspaceStore(loaded.servers, loaded.activeServerId || active?.id || ""),
+      workspaceRevision: revision,
+      serverTombstones: authoritativeProfile.serverTombstones || {},
+      messageResetRevisions: authoritativeProfile.messageResetRevisions || {},
+    };
+    saveWorkspaceMirror(mirrorProfile);
+    saveLocalMessageHistory(loaded.servers);
+    setServers(loaded.servers);
+    serversRef.current = loaded.servers;
+    setActiveServerId(active?.id || "");
+    activeServerIdRef.current = active?.id || "";
+    followActiveSessionInSettings(active);
+    profileRef.current = active?.profile || defaultProfile;
+    setActiveAgentId(normalizeProfile(active?.profile || defaultProfile).agentId);
+
+    if (pendingMutation) {
+      const rebasedPending = {
+        ...pendingMutation,
+        servers: loaded.servers,
+        activeServerId: active?.id || "",
+        baseRevision: revision,
+        baseProfile: canonicalAuthoritativeProfile,
+      };
+      workspaceAppliedServersRef.current = authoritativeLoaded.servers;
+      if (options.retainPending !== false) {
+        schedulePendingWorkspaceSave(rebasedPending, options.pendingDelayMs ?? 40);
+      } else {
+        workspacePendingSaveRef.current = null;
+      }
+    } else {
+      workspacePendingSaveRef.current = null;
+      workspaceAppliedServersRef.current = loaded.servers;
+    }
+    return true;
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1967,6 +2165,16 @@ export function useWorkbenchController() {
         const mirrorProfile = loadWorkspaceMirror();
         const profileStore = workspaceStoreHasServers(nativeProfile) ? nativeProfile : mirrorProfile;
         const source = workspaceStoreHasServers(nativeProfile) ? "native" : mirrorProfile ? "local-mirror" : "empty";
+        const loadedRevision = workspaceProfileEffectiveRevision(profileStore || {});
+        if (loadedRevision < workspaceRevisionRef.current) {
+          setWorkspaceLoaded(true);
+          void appLog("info", "profile.load.ignored_stale_result", {
+            loadedRevision,
+            appliedRevision: workspaceRevisionRef.current,
+          });
+          return;
+        }
+        workspaceRevisionRef.current = loadedRevision;
         if (workspaceStoreHasServers(nativeProfile)) saveWorkspaceMirror(nativeProfile);
         if (source === "local-mirror") {
           void appLog("warn", "profile.load.fallback_mirror", {
@@ -1975,8 +2183,17 @@ export function useWorkbenchController() {
           });
         }
 
-        const loaded = normalizeWorkspaceStore(profileStore || nativeProfile);
-        loaded.servers = dedupeServerRemoteTaskMessages(mergeLocalMessageHistory(loaded.servers));
+        const normalizedLoaded = normalizeWorkspaceStore(profileStore || nativeProfile);
+        const authoritativeLoaded = {
+          ...normalizedLoaded,
+          servers: dedupeServerRemoteTaskMessages(normalizedLoaded.servers),
+        };
+        const loaded = {
+          ...authoritativeLoaded,
+          servers: dedupeServerRemoteTaskMessages(
+            mergeSafeLocalMessageHistory(profileStore || nativeProfile, authoritativeLoaded.servers),
+          ),
+        };
         loaded.servers = preserveVolatileLocalServers(loaded.servers);
         const active =
           loaded.servers.find((server) => server.id === desktopWindowContext.serverId) ||
@@ -1985,20 +2202,33 @@ export function useWorkbenchController() {
           null;
         setServers(loaded.servers);
         serversRef.current = loaded.servers;
+        workspaceAppliedServersRef.current = authoritativeLoaded.servers;
+        workspaceAuthoritativeProfileRef.current = canonicalWorkspaceProfile(
+          profileStore || nativeProfile || {},
+          authoritativeLoaded,
+        );
         primaryActiveServerIdRef.current = loaded.activeServerId || active?.id || "";
         setActiveServerId(active?.id || "");
         activeServerIdRef.current = active?.id || "";
-        setEditingServerId(active?.id || "");
-        updateDraftProfile(active?.profile || defaultProfile);
+        followActiveSessionInSettings(active);
         setActiveAgentId(normalizeProfile(active?.profile || defaultProfile).agentId);
         setWorkspaceLoaded(true);
         const loadedStore = profileStore || nativeProfile;
         if (Number(loadedStore?.version) !== workspaceStoreVersion) {
-          const cleanStore = serializeWorkspaceStore(loaded.servers, active?.id || "");
+          const cleanStore = {
+            ...serializeWorkspaceStore(loaded.servers, active?.id || ""),
+            workspaceRevision: workspaceRevisionRef.current,
+          };
           saveWorkspaceMirror(cleanStore);
-          SSHWorkbench.saveProfile({ profile: cleanStore, replaceMessages: true }).catch((migrationError) => {
-            void appLog("error", "profile.clean_migration.failed", { error: shortError(migrationError) });
-          });
+          saveWorkspace(loaded.servers, active?.id || "", {
+            baseRevision: workspaceRevisionRef.current,
+            baseProfile: workspaceAuthoritativeProfileRef.current,
+            replaceMessages: true,
+            replaceMessageServerIds: loaded.servers.map((server) => server.id),
+          })
+            .catch((migrationError) => {
+              void appLog("error", "profile.clean_migration.failed", { error: shortError(migrationError) });
+            });
           void appLog("info", "profile.clean_migration.completed", {
             fromVersion: Number(loadedStore?.version || 0),
             toVersion: workspaceStoreVersion,
@@ -2011,10 +2241,33 @@ export function useWorkbenchController() {
         });
       } catch (error) {
         if (cancelled) return;
+        if (workspaceAuthoritativeProfileRef.current && workspaceRevisionRef.current > 0) {
+          setWorkspaceLoaded(true);
+          void appLog("warn", "profile.load.failed_after_authoritative_update", {
+            error: shortError(error),
+            workspaceRevision: workspaceRevisionRef.current,
+          });
+          return;
+        }
         const mirrorProfile = loadWorkspaceMirror();
         if (mirrorProfile) {
-          const loaded = normalizeWorkspaceStore(mirrorProfile);
-          loaded.servers = dedupeServerRemoteTaskMessages(mergeLocalMessageHistory(loaded.servers));
+          const mirrorRevision = workspaceProfileEffectiveRevision(mirrorProfile);
+          if (mirrorRevision < workspaceRevisionRef.current) {
+            setWorkspaceLoaded(true);
+            return;
+          }
+          workspaceRevisionRef.current = mirrorRevision;
+          const normalizedLoaded = normalizeWorkspaceStore(mirrorProfile);
+          const authoritativeLoaded = {
+            ...normalizedLoaded,
+            servers: dedupeServerRemoteTaskMessages(normalizedLoaded.servers),
+          };
+          const loaded = {
+            ...authoritativeLoaded,
+            servers: dedupeServerRemoteTaskMessages(
+              mergeSafeLocalMessageHistory(mirrorProfile, authoritativeLoaded.servers),
+            ),
+          };
           loaded.servers = preserveVolatileLocalServers(loaded.servers);
           const active =
             loaded.servers.find((server) => server.id === desktopWindowContext.serverId) ||
@@ -2023,11 +2276,12 @@ export function useWorkbenchController() {
             null;
           setServers(loaded.servers);
           serversRef.current = loaded.servers;
+          workspaceAppliedServersRef.current = authoritativeLoaded.servers;
+          workspaceAuthoritativeProfileRef.current = canonicalWorkspaceProfile(mirrorProfile, authoritativeLoaded);
           primaryActiveServerIdRef.current = loaded.activeServerId || active?.id || "";
           setActiveServerId(active?.id || "");
           activeServerIdRef.current = active?.id || "";
-          setEditingServerId(active?.id || "");
-          updateDraftProfile(active?.profile || defaultProfile);
+          followActiveSessionInSettings(active);
           setActiveAgentId(normalizeProfile(active?.profile || defaultProfile).agentId);
           setWorkspaceLoaded(true);
           void appLog("warn", "profile.load.recovered_from_mirror", {
@@ -2038,6 +2292,9 @@ export function useWorkbenchController() {
         }
         setServers([]);
         serversRef.current = [];
+        workspaceAppliedServersRef.current = [];
+        workspaceAuthoritativeProfileRef.current = null;
+        workspaceRevisionRef.current = 0;
         primaryActiveServerIdRef.current = "";
         setActiveServerId("");
         activeServerIdRef.current = "";
@@ -2060,32 +2317,9 @@ export function useWorkbenchController() {
     if (!bridge?.onProfileUpdated) return undefined;
     return bridge.onProfileUpdated((payload) => {
       if (!workspaceStoreHasServers(payload?.profile)) return;
-      if (payload?.replaceMessages && typeof window !== "undefined" && workspaceSaveTimerRef.current) {
-        window.clearTimeout(workspaceSaveTimerRef.current);
-        workspaceSaveTimerRef.current = null;
-      }
-      const loaded = normalizeWorkspaceStore(payload.profile);
-      loaded.servers = dedupeServerRemoteTaskMessages(
-        payload?.replaceMessages ? loaded.servers : mergeLocalMessageHistory(loaded.servers),
-      );
-      loaded.servers = preserveVolatileLocalServers(loaded.servers);
-      const active =
-        loaded.servers.find((server) => server.id === desktopWindowContext.serverId) ||
-        loaded.servers.find((server) => server.id === activeServerIdRef.current) ||
-        loaded.servers.find((server) => server.id === loaded.activeServerId) ||
-        loaded.servers[0] ||
-        null;
-      applyingExternalProfileRef.current = true;
-      primaryActiveServerIdRef.current = loaded.activeServerId || primaryActiveServerIdRef.current || active?.id || "";
-      saveWorkspaceMirror(payload.profile);
-      saveLocalMessageHistory(loaded.servers);
-      setServers(loaded.servers);
-      serversRef.current = loaded.servers;
-      setActiveServerId(active?.id || "");
-      activeServerIdRef.current = active?.id || "";
-      updateDraftProfile(active?.profile || defaultProfile);
-      profileRef.current = active?.profile || defaultProfile;
-      setActiveAgentId(normalizeProfile(active?.profile || defaultProfile).agentId);
+      applyAuthoritativeWorkspaceProfile(payload.profile, {
+        replaceMessages: payload?.replaceMessages === true,
+      });
     });
   }, [desktopWindowContext.serverId]);
 
@@ -2155,11 +2389,11 @@ export function useWorkbenchController() {
         serversRef.current.find(
           (server) =>
             server.id === activeServerIdRef.current &&
-            profileConnectionKey(server.profile) === profileConnectionKey(current),
+            sshEndpointKey(server.profile) === sshEndpointKey(current),
         ) ||
         serversRef.current.find(
           (server) =>
-            profileConnectionKey(server.profile) === profileConnectionKey(current) &&
+            sshEndpointKey(server.profile) === sshEndpointKey(current) &&
             String(server.profile?.workdir || "") === String(current.workdir || "") &&
             String(server.profile?.agentId || "") === String(current.agentId || ""),
         );
@@ -2237,15 +2471,18 @@ export function useWorkbenchController() {
     };
 
     const cachedServer = serverId
-      ? (serversRef.current.length ? serversRef.current : servers).find((server) => server.id === serverId)
+      ? serversRef.current.find((server) => server.id === serverId)
       : null;
     const cachedDiagnostics = cachedServer?.diagnostics || {};
     const cachedAgentVersionNumber = workbenchAgentVersionNumber(cachedDiagnostics.agent_version);
     const requiredAgentVersionNumber = workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
+    const cachedGenerationReady =
+      requiredAgentVersionNumber < 54 || cachedDiagnostics.agent_generation_ready === "1";
     const cachedReady =
       allowCachedReady &&
-      profileConnectionKey(cachedServer?.profile || {}) === profileConnectionKey(currentProfile) &&
+      agentInstallationKey(cachedServer?.profile || {}) === agentInstallationKey(currentProfile) &&
       (cachedDiagnostics.agent === "available" || Boolean(cachedDiagnostics.agent_version)) &&
+      cachedGenerationReady &&
       // An old cached snapshot must never skip the live Agent probe. Otherwise
       // the UI can say "connected" while the remote Agent still needs an update.
       (requiredAgentVersionNumber === 0 || cachedAgentVersionNumber >= requiredAgentVersionNumber);
@@ -2267,7 +2504,16 @@ export function useWorkbenchController() {
         host: currentProfile.host,
         version: agentHealth.agent_version,
       });
-      return { available: true, cached: true, skipped: false, installed: false, output: "", parsed: null, agentHealth };
+      return {
+        available: true,
+        taskSubmissionReady: true,
+        cached: true,
+        skipped: false,
+        installed: false,
+        output: "",
+        parsed: null,
+        agentHealth,
+      };
     }
 
     let probeOutput = "";
@@ -2300,13 +2546,21 @@ export function useWorkbenchController() {
 
     if (!needsInstall) {
       const agentHealth = healthFromWorkbenchAgentStatus(probe);
-      agentRouteProbeByConnectionRef.current.set(profileConnectionKey(currentProfile), {
+      agentRouteProbeByConnectionRef.current.set(agentInstallationKey(currentProfile), {
         checkedAt: Date.now(),
         output: probeOutput,
       });
       applyAgentHealthToConnection(currentProfile, agentHealth, probeOutput, serverId);
       publish("connected", "已连接", "Agent 已就绪", "agent");
-      return { available: true, skipped: false, installed: false, output: probeOutput, parsed: probe, agentHealth };
+      return {
+        available: true,
+        taskSubmissionReady: true,
+        skipped: false,
+        installed: false,
+        output: probeOutput,
+        parsed: probe,
+        agentHealth,
+      };
     }
 
     publish(
@@ -2326,17 +2580,31 @@ export function useWorkbenchController() {
         300,
       );
       const installed = parseWorkbenchAgentOutput(installOutput);
-      if (!workbenchAgentAvailableFromOutput(installOutput) && installed.status !== "ready") {
+      const installedTaskReady = agentTaskSubmissionReady({
+        available: workbenchAgentAvailableFromOutput(installOutput),
+        installedVersion: workbenchAgentVersionNumber(installed.version),
+        requiredVersion: latestVersionNumber,
+        generationReady: installed.generationReady === "1",
+      });
+      if (!installedTaskReady) {
         throw new Error(installed.error || trimVisibleText(installOutput) || "Agent 安装失败。");
       }
       const agentHealth = healthFromWorkbenchAgentStatus(installed);
-      agentRouteProbeByConnectionRef.current.set(profileConnectionKey(currentProfile), {
+      agentRouteProbeByConnectionRef.current.set(agentInstallationKey(currentProfile), {
         checkedAt: Date.now(),
         output: installOutput,
       });
       applyAgentHealthToConnection(currentProfile, agentHealth, installOutput, serverId);
       publish("connected", "已连接", "Agent 已就绪", "agent");
-      return { available: true, skipped: false, installed: true, output: installOutput, parsed: installed, agentHealth };
+      return {
+        available: true,
+        taskSubmissionReady: true,
+        skipped: false,
+        installed: true,
+        output: installOutput,
+        parsed: installed,
+        agentHealth,
+      };
     } catch (error) {
       const detail = shortError(error);
       void appLog("warn", "agent.startup.install.failed", {
@@ -2346,8 +2614,45 @@ export function useWorkbenchController() {
         probeError: probeError ? shortError(probeError) : "",
         error: detail,
       });
+      if (agentCanContinueAfterUpgradeFailure({ alreadyReady, installedVersion: installedVersionNumber })) {
+        const agentHealth = healthFromWorkbenchAgentStatus(probe);
+        agentRouteProbeByConnectionRef.current.set(agentInstallationKey(currentProfile), {
+          checkedAt: Date.now(),
+          output: probeOutput,
+        });
+        applyAgentHealthToConnection(currentProfile, agentHealth, probeOutput, serverId);
+        publish("connected", "已连接", `Agent v${installedVersionNumber} 可用，升级将在后台重试`, "agent");
+        void appLog("warn", "agent.startup.upgrade_deferred", {
+          serverId,
+          reason,
+          host: currentProfile.host,
+          installedVersion: installedVersionNumber,
+          requiredVersion: latestVersionNumber,
+          error: detail,
+        });
+        return {
+          available: true,
+          taskSubmissionReady: false,
+          degraded: true,
+          skipped: false,
+          installed: false,
+          output: probeOutput,
+          parsed: probe,
+          agentHealth,
+          upgradeError: error,
+        };
+      }
       publish("error", "Agent 不可用", "请安装或修复 Agent 后重试", "agent");
-      return { available: false, skipped: false, installed: false, output: probeOutput, parsed: probe, agentHealth: {}, error };
+      return {
+        available: false,
+        taskSubmissionReady: false,
+        skipped: false,
+        installed: false,
+        output: probeOutput,
+        parsed: probe,
+        agentHealth: {},
+        error,
+      };
     }
   }
 
@@ -2381,39 +2686,178 @@ export function useWorkbenchController() {
     return parseMainAIRoute(result?.body || result?.json || result);
   }
 
-  const saveWorkspace = useCallback(async (nextServers, nextActiveServerId) => {
+  const saveWorkspace = useCallback(async (nextServers, nextActiveServerId, options = {}) => {
+    const queuedBeforeSave = workspacePendingSaveRef.current;
+    if (queuedBeforeSave) cancelPendingWorkspaceSave();
     const persistedActiveServerId = desktopWindowContext.detachedChat
       ? primaryActiveServerIdRef.current || nextActiveServerId
       : nextActiveServerId;
     if (!desktopWindowContext.detachedChat) primaryActiveServerIdRef.current = persistedActiveServerId;
-    const profileStore = serializeWorkspaceStore(nextServers, persistedActiveServerId);
-    saveLocalMessageHistory(nextServers);
-    saveWorkspaceMirror(profileStore);
-    void appLog("info", "profile.save.start", workspaceDiagnosticSummary(nextServers, nextActiveServerId));
+    let baseRevision = normalizedWorkspaceRevision(
+      options.baseRevision ?? queuedBeforeSave?.baseRevision ?? workspaceRevisionRef.current,
+    );
+    let baseProfile = options.baseProfile || queuedBeforeSave?.baseProfile || workspaceAuthoritativeProfileRef.current;
+    const deletedServerIds = [...new Set(
+      [
+        ...(Array.isArray(queuedBeforeSave?.deletedServerIds) ? queuedBeforeSave.deletedServerIds : []),
+        ...(Array.isArray(options.deletedServerIds) ? options.deletedServerIds : []),
+      ]
+        .map((serverId) => String(serverId || "").trim())
+        .filter(Boolean),
+    )];
+    const replaceMessages = options.replaceMessages === true || queuedBeforeSave?.replaceMessages === true;
+    const requestedReplaceMessageServerIds = options.replaceMessages === true
+      ? (Array.isArray(options.replaceMessageServerIds)
+          ? options.replaceMessageServerIds
+          : nextServers.map((server) => server.id))
+      : [];
+    const replaceMessageServerIds = [...new Set(
+      [
+        ...(Array.isArray(queuedBeforeSave?.replaceMessageServerIds)
+          ? queuedBeforeSave.replaceMessageServerIds
+          : []),
+        ...requestedReplaceMessageServerIds,
+      ]
+        .map((serverId) => String(serverId || "").trim())
+        .filter(Boolean),
+    )];
+    let submittedServers = queuedBeforeSave ? serversRef.current : nextServers;
+    let submittedActiveServerId = queuedBeforeSave
+      ? desktopWindowContext.detachedChat
+        ? persistedActiveServerId
+        : queuedBeforeSave.activeServerId ?? activeServerIdRef.current
+      : persistedActiveServerId;
+    const maxAttempts = 4;
     try {
-      await SSHWorkbench.saveProfile({
-        profile: profileStore,
-      });
-      void appLog("info", "profile.save.success", workspaceDiagnosticSummary(nextServers, nextActiveServerId));
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const authoritativeMetadata = workspaceAuthoritativeProfileRef.current || {};
+        const profileStore = {
+          ...serializeWorkspaceStore(submittedServers, submittedActiveServerId),
+          workspaceRevision: baseRevision,
+          serverTombstones: authoritativeMetadata.serverTombstones || {},
+          messageResetRevisions: authoritativeMetadata.messageResetRevisions || {},
+        };
+        saveLocalMessageHistory(submittedServers);
+        saveWorkspaceMirror(profileStore);
+        void appLog("info", "profile.save.start", {
+          ...workspaceDiagnosticSummary(submittedServers, submittedActiveServerId),
+          baseRevision,
+          deletedServerCount: deletedServerIds.length,
+          replaceMessages,
+          replaceMessageServerCount: replaceMessageServerIds.length,
+          attempt,
+        });
+        const result = await persistWorkspaceProfile({
+          profile: profileStore,
+          baseRevision,
+          deletedServerIds,
+          replaceMessages,
+          replaceMessageServerIds,
+        });
+        const saveRejected = result?.operations?.saveApplied === false || result?.conflict === true;
+        if (saveRejected && result?.profile) {
+          applyAuthoritativeWorkspaceProfile(result.profile, {
+            pendingMutation: {
+              servers: submittedServers,
+              activeServerId: submittedActiveServerId,
+              baseRevision,
+              baseProfile,
+              deletedServerIds,
+              replaceMessages,
+              replaceMessageServerIds,
+            },
+            retainPending: false,
+          });
+          submittedServers = serversRef.current;
+          submittedActiveServerId = desktopWindowContext.detachedChat
+            ? primaryActiveServerIdRef.current
+            : activeServerIdRef.current;
+          baseRevision = workspaceRevisionRef.current;
+          baseProfile = workspaceAuthoritativeProfileRef.current;
+          if (attempt < maxAttempts) continue;
+        }
+        if (saveRejected) {
+          schedulePendingWorkspaceSave({
+            servers: submittedServers,
+            activeServerId: submittedActiveServerId,
+            baseRevision,
+            baseProfile,
+            deletedServerIds,
+            replaceMessages,
+            replaceMessageServerIds,
+          }, 120);
+          throw new Error("会话配置正在被其他窗口更新，本次修改已排队重试。");
+        }
+        const authoritativeApplied = result?.profile
+          ? applyAuthoritativeWorkspaceProfile(result.profile, {
+              expectedServers: submittedServers,
+              replaceMessages,
+            })
+          : false;
+        void appLog("info", "profile.save.success", {
+          ...workspaceDiagnosticSummary(submittedServers, submittedActiveServerId),
+          authoritativeApplied,
+          workspaceRevision: workspaceRevisionRef.current,
+          attempt,
+        });
+        return result;
+      }
+      throw new Error("会话配置保存未完成。");
     } catch (error) {
       void appLog("error", "profile.save.failed", {
         error: shortError(error),
-        ...workspaceDiagnosticSummary(nextServers, nextActiveServerId),
+        ...workspaceDiagnosticSummary(submittedServers, submittedActiveServerId),
       });
       throw error;
     }
   }, [desktopWindowContext.detachedChat]);
 
-  function queueWorkspaceSave(nextServers, nextActiveServerId = activeServerIdRef.current, delayMs = 250) {
+  function cancelPendingWorkspaceSave() {
+    if (typeof window !== "undefined" && workspaceSaveTimerRef.current) {
+      window.clearTimeout(workspaceSaveTimerRef.current);
+    }
+    workspaceSaveTimerRef.current = null;
+    workspacePendingSaveRef.current = null;
+  }
+
+  function schedulePendingWorkspaceSave(entry, delayMs = 250) {
     if (!workspaceLoadedRef.current || typeof window === "undefined") return;
+    const existingEntry = workspacePendingSaveRef.current;
     if (workspaceSaveTimerRef.current) window.clearTimeout(workspaceSaveTimerRef.current);
-    const snapshot = Array.isArray(nextServers) ? nextServers : serversRef.current;
-    const activeId = nextActiveServerId || activeServerIdRef.current;
+    const scheduledEntry = mergePendingWorkspaceMutations(existingEntry, {
+      servers: Array.isArray(entry?.servers) ? entry.servers : serversRef.current,
+      activeServerId: entry?.activeServerId ?? existingEntry?.activeServerId ?? activeServerIdRef.current,
+      baseRevision: normalizedWorkspaceRevision(
+        entry?.baseRevision ?? existingEntry?.baseRevision ?? workspaceRevisionRef.current,
+      ),
+      baseProfile: entry?.baseProfile || existingEntry?.baseProfile || workspaceAuthoritativeProfileRef.current,
+      deletedServerIds: entry?.deletedServerIds,
+      replaceMessages: entry?.replaceMessages === true,
+      replaceMessageServerIds: entry?.replaceMessageServerIds,
+    });
+    workspacePendingSaveRef.current = scheduledEntry;
     workspaceSaveTimerRef.current = window.setTimeout(() => {
+      if (workspacePendingSaveRef.current !== scheduledEntry) return;
       workspaceSaveTimerRef.current = null;
-      saveWorkspace(snapshot, activeId).catch((error) => {
+      workspacePendingSaveRef.current = null;
+      saveWorkspace(scheduledEntry.servers, scheduledEntry.activeServerId, {
+        baseRevision: scheduledEntry.baseRevision,
+        baseProfile: scheduledEntry.baseProfile,
+        deletedServerIds: scheduledEntry.deletedServerIds,
+        replaceMessages: scheduledEntry.replaceMessages,
+        replaceMessageServerIds: scheduledEntry.replaceMessageServerIds,
+      }).catch((error) => {
         console.warn("[aiwb:queued-save:error]", shortError(error));
       });
+    }, delayMs);
+  }
+
+  function queueWorkspaceSave(nextServers, nextActiveServerId = activeServerIdRef.current, delayMs = 250) {
+    schedulePendingWorkspaceSave({
+      servers: Array.isArray(nextServers) ? nextServers : serversRef.current,
+      activeServerId: nextActiveServerId ?? activeServerIdRef.current,
+      baseRevision: workspaceRevisionRef.current,
+      baseProfile: workspaceAuthoritativeProfileRef.current,
     }, delayMs);
   }
 
@@ -2429,19 +2873,28 @@ export function useWorkbenchController() {
 
   function flushWorkspaceSave() {
     if (!workspaceLoadedRef.current) return;
+    const pending = workspacePendingSaveRef.current;
     if (typeof window !== "undefined" && workspaceSaveTimerRef.current) {
       window.clearTimeout(workspaceSaveTimerRef.current);
-      workspaceSaveTimerRef.current = null;
     }
-    const snapshot = serversRef.current.length ? serversRef.current : servers;
+    workspaceSaveTimerRef.current = null;
+    workspacePendingSaveRef.current = null;
+    const snapshot = serversRef.current;
+    const nextActiveServerId = pending?.activeServerId ?? activeServerIdRef.current;
     saveLocalMessageHistory(snapshot);
-    saveWorkspace(snapshot, activeServerIdRef.current || activeServerId).catch((error) => {
+    saveWorkspace(snapshot, nextActiveServerId, {
+      baseRevision: pending?.baseRevision ?? workspaceRevisionRef.current,
+      baseProfile: pending?.baseProfile || workspaceAuthoritativeProfileRef.current,
+      deletedServerIds: pending?.deletedServerIds || [],
+      replaceMessages: pending?.replaceMessages === true,
+      replaceMessageServerIds: pending?.replaceMessageServerIds || [],
+    }).catch((error) => {
       console.warn("[aiwb:flush-save:error]", shortError(error));
     });
   }
 
   async function exportWorkspaceConfig() {
-    const snapshot = serversRef.current.length ? serversRef.current : servers;
+    const snapshot = serversRef.current;
     const activeId = activeServerIdRef.current || activeServerId;
     const payload = buildWorkspaceMigrationPayload(snapshot, activeId);
     await SSHWorkbench.saveFile({
@@ -2456,7 +2909,7 @@ export function useWorkbenchController() {
   }
 
   async function exportDiagnosticsLogs() {
-    const snapshot = serversRef.current.length ? serversRef.current : servers;
+    const snapshot = serversRef.current;
     const activeId = activeServerIdRef.current || activeServerId;
     const currentActive = snapshot.find((server) => server.id === activeId) || activeServer;
     const viewport = typeof window !== "undefined" ? window.visualViewport : null;
@@ -2524,7 +2977,7 @@ export function useWorkbenchController() {
       return { ok: true, message: "没有选择要清理的内容。" };
     }
 
-    const snapshot = serversRef.current.length ? serversRef.current : servers;
+    const snapshot = serversRef.current;
     if ((clearMessages || clearAgent) && snapshot.some((server) => serverTaskRunning(server))) {
       throw new Error("还有任务正在运行。请等待任务完成或取消任务后，再清理消息或 Agent 缓存。");
     }
@@ -2533,7 +2986,7 @@ export function useWorkbenchController() {
       snapshot.forEach((server) => {
         const directProfile = normalizeProfile(server.profile);
         if (!agentDirectConfig(directProfile).enabled) return;
-        directProfiles.set(profileConnectionKey(directProfile), directProfile);
+        directProfiles.set(agentInstallationKey(directProfile), directProfile);
       });
       if (!directProfiles.size) {
         throw new Error("没有可清理的 Agent HTTPS 连接。请先连接至少一台 Agent 机器。");
@@ -2578,18 +3031,12 @@ export function useWorkbenchController() {
           };
         });
         const activeId = activeServerIdRef.current || activeServerId;
-        const persistedActiveId = desktopWindowContext.detachedChat
-          ? primaryActiveServerIdRef.current || activeId
-          : activeId;
-        const profileStore = serializeWorkspaceStore(nextServers, persistedActiveId);
 
         setServers(nextServers);
         serversRef.current = nextServers;
         setRawOutput("");
         setTaskNotice(null);
-        saveLocalMessageHistory(nextServers);
-        saveWorkspaceMirror(profileStore);
-        await SSHWorkbench.saveProfile({ profile: profileStore, replaceMessages: true });
+        await saveWorkspace(nextServers, activeId, { replaceMessages: true });
       }
 
       if (clearLogs) {
@@ -2619,7 +3066,7 @@ export function useWorkbenchController() {
 
   async function importWorkspaceConfig(fileText) {
     const imported = parseWorkspaceMigrationText(fileText);
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const nextServers = mergeImportedServers(currentServers, imported.store.servers);
     const importedActiveId = imported.store.activeServerId;
     const firstImportedId = imported.store.servers[0]?.id;
@@ -2696,7 +3143,7 @@ export function useWorkbenchController() {
         password,
         device: cloudSyncDeviceInfo(),
       });
-      const currentServers = serversRef.current.length ? serversRef.current : servers;
+      const currentServers = serversRef.current;
       let incomingShares = [];
       try {
         const shareResult = await fetchCloudSessionShares({ endpoint, token: login.token });
@@ -2796,7 +3243,7 @@ export function useWorkbenchController() {
     password,
     recipientAccount,
   } = {}) {
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const target = currentServers.find((server) => server.id === serverId);
     if (!target) throw new Error("没有找到要分享的会话。");
     const share = sessionShareFromServer(target);
@@ -2820,7 +3267,7 @@ export function useWorkbenchController() {
   async function pushCloudWorkspaceConfig({ endpoint = cloudSyncDefaultEndpoint, account, password } = {}) {
     setBusy(true);
     try {
-      const localServers = serversRef.current.length ? serversRef.current : servers;
+      const localServers = serversRef.current;
       const localActiveId = activeServerIdRef.current || activeServerId;
       const localPayload = buildCloudSyncPlainPayload(localServers, localActiveId);
       const localCount = localPayload.workspace.servers.length;
@@ -2896,15 +3343,8 @@ export function useWorkbenchController() {
       return undefined;
     }
 
-    const timer = window.setTimeout(() => {
-      const nextServers = serversRef.current.length ? serversRef.current : servers;
-      const nextActiveServerId = activeServerIdRef.current || activeServerId;
-      saveWorkspace(nextServers, nextActiveServerId).catch((error) => {
-        console.warn("[aiwb:autosave:error]", shortError(error));
-      });
-    }, 700);
-
-    return () => window.clearTimeout(timer);
+    queueWorkspaceSave(serversRef.current, activeServerIdRef.current, 700);
+    return undefined;
   }, [activeServerId, saveWorkspace, servers, workspaceLoaded]);
 
   useEffect(() => {
@@ -3003,20 +3443,20 @@ export function useWorkbenchController() {
     };
   }, [activeServerId, saveWorkspace, servers]);
 
-  function withKnownPassword(profileValue, serverList = serversRef.current.length ? serversRef.current : servers) {
+  function withKnownPassword(profileValue, serverList = serversRef.current) {
     const normalized = normalizeProfile(profileValue);
     if (String(normalized.password || "").trim()) return normalized;
 
-    const connectionKey = profileConnectionKey(normalized);
+    const connectionKey = sshEndpointKey(normalized);
     const matched = (serverList || [])
       .map((server) => normalizeProfile(server.profile))
-      .find((item) => profileConnectionKey(item) === connectionKey && String(item.password || "").trim());
+      .find((item) => sshEndpointKey(item) === connectionKey && String(item.password || "").trim());
 
     return matched?.password ? { ...normalized, password: matched.password } : normalized;
   }
 
   const saveCurrentProfile = useCallback(async (nextProfile = draftProfileRef.current) => {
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const existing = currentServers.find((server) => server.id === editingServerId);
     const existingProfile = existing ? normalizeProfile(existing.profile) : null;
     const candidateProfile = withKnownPassword(
@@ -3195,14 +3635,14 @@ export function useWorkbenchController() {
 
   const refreshAgentHealthForServer = useCallback(
     async (serverId, reason = "auto") => {
-      const currentServers = serversRef.current.length ? serversRef.current : [];
+      const currentServers = serversRef.current;
       const target = currentServers.find((server) => server.id === serverId);
       if (!target) return;
 
       const targetProfile = withKnownPassword(target.profile, currentServers);
       if (profileIssue(targetProfile)) return;
 
-      const connectionKey = profileConnectionKey(targetProfile);
+      const connectionKey = agentInstallationKey(targetProfile);
       const key = `${connectionKey}:${reason}`;
       if (agentHealthRefreshKeysRef.current.has(key) || agentHealthInFlightConnectionsRef.current.has(connectionKey)) return;
       agentHealthRefreshKeysRef.current.add(key);
@@ -3216,7 +3656,10 @@ export function useWorkbenchController() {
         // A cached ready flag makes session switching immediate. Version checks
         // remain asynchronous, but an older installed Agent is upgraded on the
         // first successful App connection instead of waiting for manual repair.
-        if (workbenchAgentVersionNumber(parsed.version) < workbenchAgentVersionNumber(latestWorkbenchAgentVersion)) {
+        if (
+          workbenchAgentVersionNumber(parsed.version) < workbenchAgentVersionNumber(latestWorkbenchAgentVersion) ||
+          !workbenchAgentAvailableFromOutput(stdout)
+        ) {
           await ensureWorkbenchAgentForProfile(targetProfile, {
             serverId,
             reason: "background-connect-upgrade",
@@ -3276,7 +3719,7 @@ export function useWorkbenchController() {
   }
 
   async function connectExistingSessionOnce(serverId) {
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const target = currentServers.find((server) => server.id === serverId) || activeServer;
     if (!target) return false;
 
@@ -3286,7 +3729,10 @@ export function useWorkbenchController() {
     setActiveServerId(target.id);
     activeServerIdRef.current = target.id;
     profileRef.current = targetProfile;
-    if (!settingsOpenRef.current || editingServerIdRef.current !== target.id) {
+    // A background reconnect may update the active session, but it must never
+    // replace the settings target while the user is editing any settings page
+    // (especially the global settings page).
+    if (!settingsOpenRef.current) {
       setEditingServerId(target.id);
       editingServerIdRef.current = target.id;
       updateDraftProfile(targetProfile);
@@ -3349,7 +3795,10 @@ export function useWorkbenchController() {
         },
       );
       const parsed = parseHealth(stdout);
-      const detectedProfile = profileWithDetectedTools(targetProfile, parsed);
+      const detectedProfile = propagateDetectedMachineProfile(
+        targetProfile,
+        profileWithDetectedTools(targetProfile, parsed),
+      );
       profileRef.current = detectedProfile;
       updateDraftProfileFromSession(target.id, detectedProfile);
       setActiveAgentId(detectedProfile.agentId);
@@ -3405,8 +3854,24 @@ export function useWorkbenchController() {
         );
         if (approved) {
           sshHostKeyApprovalRequiredSessionIdsRef.current.delete(target.id);
-          const trustedProfile = { ...targetProfile, sshHostKeyFingerprint: hostKeyMatch[1] };
-          const nextServers = updateServer(target.id, (server) => ({ ...server, profile: { ...server.profile, ...trustedProfile } }));
+          const sshIdentityUpdatedAt = Date.now();
+          const trustedProfile = {
+            ...targetProfile,
+            sshHostKeyFingerprint: hostKeyMatch[1],
+            sshIdentityUpdatedAt,
+          };
+          const nextServers = patchServersBySshEndpoint(
+            targetProfile,
+            (server) => ({
+              ...server,
+              profile: {
+                ...(server.profile || {}),
+                sshHostKeyFingerprint: hostKeyMatch[1],
+                sshIdentityUpdatedAt,
+              },
+            }),
+            { persistDelay: 0 },
+          );
           await saveWorkspace(nextServers, target.id);
           return connectExistingSessionOnce(target.id);
         }
@@ -3591,7 +4056,7 @@ export function useWorkbenchController() {
 
   async function disconnectSession(serverId = activeServerIdRef.current) {
     if (busy) return;
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const target = currentServers.find((server) => server.id === serverId) || activeServer;
     if (!target || serverTaskRunning(target)) return;
 
@@ -3614,7 +4079,7 @@ export function useWorkbenchController() {
   }
 
   function openServerSettings(serverId = activeServerIdRef.current) {
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const target = currentServers.find((server) => server.id === serverId) || activeServer;
     const targetProfile = withKnownPassword(target.profile, currentServers);
     setEditingServerId(target.id);
@@ -3633,6 +4098,7 @@ export function useWorkbenchController() {
   function openGlobalSettings(targetServerId = "") {
     const nextAgentTargetId = typeof targetServerId === "string" ? targetServerId : "";
     setEditingServerId("global");
+    editingServerIdRef.current = "global";
     updateDraftProfile({
       ...defaultProfile,
       ...globalSettingsFromProfile(profileRef.current),
@@ -3642,11 +4108,13 @@ export function useWorkbenchController() {
     setSettingsAgentTab(activeAgentId);
     setAgentManagementTargetId(nextAgentTargetId);
     setSettingsInitialPage("root");
+    settingsOpenRef.current = true;
     setSettingsOpen(true);
   }
 
   function openCloudSyncSettings() {
     setEditingServerId("global");
+    editingServerIdRef.current = "global";
     updateDraftProfile({
       ...defaultProfile,
       ...globalSettingsFromProfile(profileRef.current),
@@ -3656,11 +4124,13 @@ export function useWorkbenchController() {
     setSettingsAgentTab(activeAgentId);
     setAgentManagementTargetId("");
     setSettingsInitialPage("global-cloud-sync");
+    settingsOpenRef.current = true;
     setSettingsOpen(true);
   }
 
   function openGlobalVoiceSettings() {
     setEditingServerId("global");
+    editingServerIdRef.current = "global";
     updateDraftProfile({
       ...defaultProfile,
       ...globalSettingsFromProfile(profileRef.current),
@@ -3670,6 +4140,7 @@ export function useWorkbenchController() {
     setSettingsAgentTab(activeAgentId);
     setAgentManagementTargetId("");
     setSettingsInitialPage("global-voice");
+    settingsOpenRef.current = true;
     setSettingsOpen(true);
   }
 
@@ -3684,12 +4155,14 @@ export function useWorkbenchController() {
       name: "",
     };
     setEditingServerId("");
+    editingServerIdRef.current = "";
     updateDraftProfile(nextProfile);
     setSettingsDiscovery(null);
     setSettingsSelectedSessions([]);
     setSettingsAgentTab("codex");
     setAgentManagementTargetId("");
     setSettingsInitialPage("root");
+    settingsOpenRef.current = true;
     setSettingsOpen(true);
   }
 
@@ -3710,7 +4183,7 @@ export function useWorkbenchController() {
 
   async function saveGlobalSettings(nextProfile = draftProfileRef.current) {
     const globalSettings = globalSettingsFromProfile(nextProfile);
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const nextServers = currentServers.map((server, index) =>
       createServerSession(
         {
@@ -3824,7 +4297,7 @@ export function useWorkbenchController() {
 
   async function installWorkbenchAgentForServer(serverId = activeServerIdRef.current) {
     if (busy) return;
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const targetServer = currentServers.find((server) => server.id === serverId) || serverById(activeServerIdRef.current);
     if (!targetServer) {
       window.alert("没有找到要管理的远端机器。");
@@ -3874,7 +4347,7 @@ export function useWorkbenchController() {
     if (busy) return;
     const normalizedCliId = String(cliId || "codex").toLowerCase() === "claude" ? "claude" : "codex";
     const cliName = normalizedCliId === "claude" ? "Claude" : "Codex";
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const targetServer = currentServers.find((server) => server.id === serverId) || serverById(activeServerIdRef.current);
     if (!targetServer) {
       window.alert("没有找到要管理的远端机器。");
@@ -3900,10 +4373,18 @@ export function useWorkbenchController() {
       }
       const cliHealth = healthFromWorkbenchAgentStatus(parsed);
       const cliPath = String(parsed.cliPath || "").trim();
+      const machineProfileUpdatedAt = Date.now();
       const readableResult = `${cliName} CLI 已安装并验证可执行。${cliPath ? `\n路径：${cliPath}` : ""}`;
       const nextServers = patchServersByConnection(nextProfile, (server) => {
         return {
           ...server,
+          profile: cliPath
+            ? {
+                ...(server.profile || {}),
+                [normalizedCliId === "claude" ? "claudeCommand" : "codexCommand"]: cliPath,
+                machineProfileUpdatedAt,
+              }
+            : server.profile,
           diagnostics: {
             ...(server.diagnostics || {}),
             ...cliHealth,
@@ -3927,7 +4408,7 @@ export function useWorkbenchController() {
 
   async function uninstallWorkbenchAgentForServer(serverId = activeServerIdRef.current) {
     if (busy) return;
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const targetServer = currentServers.find((server) => server.id === serverId) || serverById(activeServerIdRef.current);
     if (!targetServer) {
       window.alert("没有找到要管理的远端机器。");
@@ -4213,7 +4694,7 @@ export function useWorkbenchController() {
 
   async function duplicateServer(serverId = activeServerIdRef.current) {
     if (busy) return;
-    const currentServers = serversRef.current.length ? serversRef.current : servers;
+    const currentServers = serversRef.current;
     const sourceIndex = currentServers.findIndex((server) => server.id === serverId);
     const source = sourceIndex >= 0 ? currentServers[sourceIndex] : activeServer;
     if (!source) return;
@@ -4404,7 +4885,10 @@ export function useWorkbenchController() {
     try {
       let healthOutput = await runRemoteCommandForProfile(nextProfile, buildHealthCommand(nextProfile), 512_000, 60);
       let parsed = parseHealth(healthOutput);
-      let detectedProfile = profileWithDetectedTools(nextProfile, parsed);
+      let detectedProfile = propagateDetectedMachineProfile(
+        nextProfile,
+        profileWithDetectedTools(nextProfile, parsed),
+      );
       if (
         detectedProfile.platform !== nextProfile.platform ||
         detectedProfile.wslDistro !== nextProfile.wslDistro ||
@@ -4660,7 +5144,10 @@ export function useWorkbenchController() {
         },
       );
       const parsed = parseHealth(stdout);
-      const detectedProfile = profileWithDetectedTools(nextProfile, parsed);
+      const detectedProfile = propagateDetectedMachineProfile(
+        nextProfile,
+        profileWithDetectedTools(nextProfile, parsed),
+      );
       profileRef.current = detectedProfile;
       updateDraftProfile(detectedProfile);
       setActiveAgentId(detectedProfile.agentId);
@@ -4910,25 +5397,58 @@ export function useWorkbenchController() {
         effective: true,
       });
 
-      const connectionKey = profileConnectionKey(currentProfile);
+      const connectionKey = agentInstallationKey(currentProfile);
       const cachedProbe = agentRouteProbeByConnectionRef.current.get(connectionKey);
       let directRouteReady = false;
       let directHealthOutput = "";
+      let trustedDirectPlatform = "";
+      const taskSubmissionReadyFromOutput = (output) => {
+        const parsed = parseWorkbenchAgentOutput(output);
+        return agentTaskSubmissionReady({
+          available: workbenchAgentAvailableFromOutput(output),
+          installedVersion: workbenchAgentVersionNumber(parsed.version),
+          requiredVersion: workbenchAgentVersionNumber(latestWorkbenchAgentVersion),
+          generationReady: parsed.generationReady === "1",
+        });
+      };
       if (agentDirectConfig(currentProfile).enabled) {
         try {
           const directHealth = await agentDirectRequest(currentProfile, "/v1/health", { timeoutMs: 10_000 });
           const directVersion = String(directHealth?.version || "").trim();
+          trustedDirectPlatform = trustedAgentPlatform(directHealth?.platform);
           const protocolVersion = Number(directHealth?.protocolVersion || 0);
           const versionReady =
             workbenchAgentVersionNumber(directVersion) >= workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
-          directRouteReady = protocolVersion === 1 && versionReady && directHealth?.transport === "https";
+          const generationReady =
+            workbenchAgentVersionNumber(directVersion) < 54 || directHealth?.generationReady === true;
+          const componentsReady =
+            directHealth?.daemonStatus === "running" &&
+            directHealth?.httpStatus === "running" &&
+            directHealth?.updaterStatus === "running";
+          directRouteReady =
+            protocolVersion === 1 &&
+            versionReady &&
+            generationReady &&
+            componentsReady &&
+            directHealth?.transport === "https" &&
+            Boolean(trustedDirectPlatform);
           if (directRouteReady) {
-            directHealthOutput = `__AIWB_AGENT_STATUS__ready\n__AIWB_AGENT_VERSION__${directVersion}`;
+            directHealthOutput = [
+              "__AIWB_AGENT_STATUS__ready",
+              `__AIWB_AGENT_VERSION__${directVersion}`,
+              `__AIWB_AGENT_GENERATION_READY__${directHealth?.generationReady === true ? "1" : "0"}`,
+              `__AIWB_AGENT_SERVICE_STATUS__${directHealth?.serviceStatus || ""}`,
+              `__AIWB_AGENT_SERVICE_PROCESS_STATUS__${directHealth?.serviceProcessStatus || ""}`,
+              `__AIWB_AGENT_DAEMON_STATUS__${directHealth?.daemonStatus || ""}`,
+              `__AIWB_AGENT_HTTP_STATUS__${directHealth?.httpStatus || ""}`,
+              `__AIWB_AGENT_UPDATER_STATUS__${directHealth?.updaterStatus || ""}`,
+            ].join("\n");
           } else {
             void appLog("warn", "agent.direct.version_mismatch", {
               serverId,
               agentId: agent.id,
               version: directVersion,
+              platform: trustedDirectPlatform,
               protocolVersion,
               requiredVersion: latestWorkbenchAgentVersion,
             });
@@ -4941,11 +5461,31 @@ export function useWorkbenchController() {
           });
         }
       }
+      let healthResolvedProfile = trustedDirectPlatform
+        ? { ...currentProfile, platform: trustedDirectPlatform }
+        : currentProfile;
+      if (trustedDirectPlatform && normalizeServerPlatform(currentProfile.platform) !== trustedDirectPlatform) {
+        const machineProfileUpdatedAt = Date.now();
+        healthResolvedProfile = { ...healthResolvedProfile, machineProfileUpdatedAt };
+        patchServersByConnection(
+          currentProfile,
+          (server) => ({
+            ...server,
+            profile: {
+              ...server.profile,
+              platform: trustedDirectPlatform,
+              machineProfileUpdatedAt,
+            },
+          }),
+          { persistDelay: 0 },
+        );
+        if (activeServerIdRef.current === serverId) profileRef.current = healthResolvedProfile;
+      }
       const probeIsFresh =
         directRouteReady ||
         (cachedProbe &&
           Date.now() - Number(cachedProbe.checkedAt || 0) < 15_000 &&
-          workbenchAgentAvailableFromOutput(cachedProbe.output));
+          taskSubmissionReadyFromOutput(cachedProbe.output));
       let probeOutput = directRouteReady
         ? directHealthOutput
         : probeIsFresh
@@ -4953,7 +5493,12 @@ export function useWorkbenchController() {
           : "";
       if (!probeIsFresh) {
         try {
-          probeOutput = await runRemoteCommandForProfile(currentProfile, buildWorkbenchAgentStatusCommand(currentProfile), 64_000, 20);
+          probeOutput = await runRemoteCommandForProfile(
+            healthResolvedProfile,
+            buildWorkbenchAgentStatusCommand(healthResolvedProfile),
+            64_000,
+            20,
+          );
         } catch (error) {
           void appLog("warn", "agent.probe.failed", {
             serverId,
@@ -4963,31 +5508,35 @@ export function useWorkbenchController() {
         }
       }
 
-      if (!workbenchAgentAvailableFromOutput(probeOutput)) {
+      if (!taskSubmissionReadyFromOutput(probeOutput)) {
         void appLog("info", "agent.route.ensure", {
           serverId,
           agentId: agent.id,
           reason: "send",
           host: currentProfile.host,
         });
-        const setup = await ensureWorkbenchAgentForProfile(currentProfile, {
+        const setup = await ensureWorkbenchAgentForProfile(healthResolvedProfile, {
           serverId,
           reason: "send",
         });
-        if (!setup.available) {
+        if (!setup.available || setup.taskSubmissionReady === false) {
           void appLog("warn", "agent.route.fallback", {
             serverId,
             agentId: agent.id,
             error: setup.error ? shortError(setup.error) : "Agent status unavailable",
           });
-          throw new Error(setup.error ? shortError(setup.error) : "Agent 不可用，请先完成安装或升级。");
+          throw new Error(
+            setup.error
+              ? shortError(setup.error)
+              : `Agent 只能同步旧任务，必须先升级到 v${latestWorkbenchAgentVersion} 后才能发送新任务。`,
+          );
         }
         probeOutput = setup.output || "";
-        if (!workbenchAgentAvailableFromOutput(probeOutput)) {
+        if (!taskSubmissionReadyFromOutput(probeOutput)) {
           try {
             probeOutput = await runRemoteCommandForProfile(
-              currentProfile,
-              buildWorkbenchAgentStatusCommand(currentProfile),
+              healthResolvedProfile,
+              buildWorkbenchAgentStatusCommand(healthResolvedProfile),
               64_000,
               20,
             );
@@ -4999,8 +5548,8 @@ export function useWorkbenchController() {
             });
           }
         }
-        if (!workbenchAgentAvailableFromOutput(probeOutput)) {
-          throw new Error("Agent 安装后仍不可用，请检查 Agent 服务状态。");
+        if (!taskSubmissionReadyFromOutput(probeOutput)) {
+          throw new Error(`Agent 尚未完成 v${latestWorkbenchAgentVersion} 代际升级，暂时不能发送新任务。`);
         }
       }
       agentRouteProbeByConnectionRef.current.set(connectionKey, {
@@ -5036,45 +5585,107 @@ export function useWorkbenchController() {
           { persistDelay: 100 },
         );
       }
-      // The SSH probe above is only used to bootstrap/repair the Agent. Once its
-      // local direct endpoint is known, task submission no longer waits on SSH.
-      let directProfile = currentProfile;
-      if (!agentDirectConfig(directProfile).enabled) {
+      // HTTPS owns health/status on every platform. Linux/Windows may also
+      // submit through it; macOS deliberately keeps task creation in the SSH
+      // user audit session so Codex/Claude inherit the required privacy context.
+      let directProfile = healthResolvedProfile;
+      if (!directRouteReady) {
         try {
           const directConfigOutput = await runRemoteCommandForProfile(
-            currentProfile,
-            buildWorkbenchAgentDirectConfigCommand(currentProfile),
+            healthResolvedProfile,
+            buildWorkbenchAgentDirectConfigCommand(healthResolvedProfile),
             30_000,
             10,
           );
           const encoded = String(directConfigOutput || "").match(/__AIWB_AGENT_DIRECT_CONFIG_B64__([^\r\n]+)/)?.[1]?.trim();
-          if (encoded && typeof atob === "function") {
-            const directConfig = JSON.parse(atob(encoded));
-            const port = Number(directConfig?.port) || 8787;
-            const transport = directConfig?.tls ? "https" : "http";
-            const endpoint = `${transport}://${currentProfile.host}:${port}`;
-            const accessToken = String(directConfig?.accessToken || "").trim();
-            const tlsFingerprint = String(directConfig?.tls?.fingerprint || "").trim();
-            if (accessToken && transport === "https" && tlsFingerprint) {
-              directProfile = {
-                ...currentProfile,
+          if (!encoded || typeof atob !== "function") {
+            throw new Error("Agent 直连引导未返回配置数据。");
+          }
+          const directConfig = JSON.parse(atob(encoded));
+          const port = Number(directConfig?.port) || 8787;
+          const transport = directConfig?.tls ? "https" : "http";
+          const connectedHost =
+            preferredHostByConnectionRef.current.get(sshEndpointKey(currentProfile)) || currentProfile.host;
+          const endpoint = `${transport}://${connectedHost}:${port}`;
+          const accessToken = String(directConfig?.accessToken || "").trim();
+          const tlsFingerprint = String(directConfig?.tls?.fingerprint || "").trim();
+          if (!accessToken || transport !== "https" || !tlsFingerprint) {
+            throw new Error("Agent 直连引导配置不完整或未启用 TLS。");
+          }
+          const machineProfileUpdatedAt = Date.now();
+          directProfile = {
+            ...healthResolvedProfile,
+            agentDirectEndpoint: endpoint,
+            agentDirectAccessToken: accessToken,
+            agentDirectTlsFingerprint: tlsFingerprint,
+            machineProfileUpdatedAt,
+          };
+          const verifiedHealth = await agentDirectRequest(directProfile, "/v1/health", { timeoutMs: 10_000 });
+          const verifiedVersion = String(verifiedHealth?.version || "").trim();
+          const verifiedPlatform = trustedAgentPlatform(verifiedHealth?.platform);
+          if (
+            Number(verifiedHealth?.protocolVersion || 0) !== 1 ||
+            verifiedHealth?.transport !== "https" ||
+            verifiedHealth?.daemonStatus !== "running" ||
+            verifiedHealth?.httpStatus !== "running" ||
+            verifiedHealth?.updaterStatus !== "running" ||
+            !verifiedPlatform ||
+            (workbenchAgentVersionNumber(verifiedVersion) >= 54 && verifiedHealth?.generationReady !== true) ||
+            workbenchAgentVersionNumber(verifiedVersion) < workbenchAgentVersionNumber(latestWorkbenchAgentVersion)
+          ) {
+            throw new Error(`Agent 直连健康校验未通过（v${verifiedVersion || "?"}）。`);
+          }
+          trustedDirectPlatform = verifiedPlatform;
+          directProfile = { ...directProfile, platform: verifiedPlatform };
+          directRouteReady = true;
+          directHealthOutput = [
+            "__AIWB_AGENT_STATUS__ready",
+            `__AIWB_AGENT_VERSION__${verifiedVersion}`,
+            `__AIWB_AGENT_GENERATION_READY__${verifiedHealth?.generationReady === true ? "1" : "0"}`,
+            `__AIWB_AGENT_SERVICE_STATUS__${verifiedHealth?.serviceStatus || ""}`,
+            `__AIWB_AGENT_SERVICE_PROCESS_STATUS__${verifiedHealth?.serviceProcessStatus || ""}`,
+            `__AIWB_AGENT_DAEMON_STATUS__${verifiedHealth?.daemonStatus || ""}`,
+            `__AIWB_AGENT_HTTP_STATUS__${verifiedHealth?.httpStatus || ""}`,
+            `__AIWB_AGENT_UPDATER_STATUS__${verifiedHealth?.updaterStatus || ""}`,
+          ].join("\n");
+          patchServersByConnection(
+            currentProfile,
+            (server) => ({
+              ...server,
+              profile: {
+                ...server.profile,
                 agentDirectEndpoint: endpoint,
                 agentDirectAccessToken: accessToken,
                 agentDirectTlsFingerprint: tlsFingerprint,
-              };
-              updateServer(serverId, (server) => ({ ...server, profile: { ...server.profile, ...directProfile } }));
-              void appLog("info", "agent.direct.configured", { serverId, endpoint, transport });
-            }
-          }
+                platform: verifiedPlatform,
+                machineProfileUpdatedAt,
+              },
+              connection: {
+                ...(server.connection || {}),
+                mode: "agent",
+              },
+            }),
+            { persistDelay: 0 },
+          );
+          if (activeServerIdRef.current === serverId) profileRef.current = directProfile;
+          void appLog("info", "agent.direct.configured", {
+            serverId,
+            endpoint,
+            connectedHost,
+            transport,
+            version: verifiedVersion,
+            platform: verifiedPlatform,
+            sharedByConnection: true,
+          });
         } catch (error) {
           void appLog("warn", "agent.direct.config_read_failed", { serverId, error: shortError(error) });
         }
       }
 
-      const runtimeProfile = agentRuntimeProfile(directProfile);
+      const conversationId = ensureServerConversationId(serverId, currentProfile, agent.id);
+      const runtimeProfile = agentRuntimeProfile({ ...directProfile, conversationId });
       const command = buildAgentTaskCommand(runtimeProfile, agent, text);
       const maxAgentStartupAttempts = 2;
-      const conversationId = ensureServerConversationId(serverId, currentProfile, agent.id);
       assertSessionDispatch(serverById(serverId), {
         sessionId: serverId,
         agentId: agent.id,
@@ -5141,7 +5752,15 @@ export function useWorkbenchController() {
         });
         let createOutput = "";
         let created = null;
-        if (agentDirectConfig(directProfile).enabled) {
+        let createTransport = "";
+        const plannedCreateTransport = agentTaskSubmissionTransport({
+          platform: directProfile.platform,
+          directRouteReady,
+          directConfigured: agentDirectConfig(directProfile).enabled,
+        });
+        const createThroughSshContext = plannedCreateTransport === "ssh-create-now";
+        const taskCreateMode = createThroughSshContext ? "create-now" : workbenchAgentTaskCreateMode(directProfile);
+        if (plannedCreateTransport === "direct") {
           try {
             const response = await agentDirectRequest(directProfile, "/v1/tasks", {
               method: "POST",
@@ -5171,6 +5790,7 @@ export function useWorkbenchController() {
               exitCode: task.exitCode || "",
               eventFingerprint: "",
             };
+            createTransport = "direct";
             void appLog("info", "agent.direct.task_created", { serverId, remoteTaskId });
           } catch (error) {
             void appLog("warn", "agent.direct.task_create_failed", {
@@ -5182,8 +5802,8 @@ export function useWorkbenchController() {
         }
         if (!created) {
           createOutput = await runRemoteCommandForProfile(
-            currentProfile,
-            buildWorkbenchAgentCreateCommand(currentProfile, remoteTaskId, command, {
+            directProfile,
+            buildWorkbenchAgentCreateCommand(directProfile, remoteTaskId, command, {
               conversationId,
               name: conversationName,
               workdir: currentProfile.workdir,
@@ -5195,11 +5815,30 @@ export function useWorkbenchController() {
               responseMessageId: assistantMessageId,
               pushNotifyUrl: pushTicket?.notifyUrl || "",
               pushNotifyToken: pushTicket?.notifyToken || "",
-            }),
+            }, { createMode: taskCreateMode }),
             128_000,
             30,
           );
           created = parseWorkbenchAgentOutput(createOutput);
+          createTransport = createThroughSshContext ? "ssh-create-now" : "ssh-create";
+        }
+        const generationChanged =
+          created.errorCode === "generation_changed" ||
+          /__AIWB_AGENT_ERROR_CODE__generation_changed(?:\r?\n|$)/.test(createOutput);
+        if (generationChanged && attempt < maxAgentStartupAttempts) {
+          updateAssistantMessageInServer(serverId, assistantMessageId, {
+            title: "Agent 刚完成升级",
+            body: "运行代际已经切换，正在用新版本安全重试。",
+            taskState: taskStateSubmitting,
+            remoteTaskStatus: "generation-changed",
+            remoteTaskCheckedAt: Date.now(),
+            technicalDetail: undefined,
+          });
+          await sleep(250);
+          continue;
+        }
+        if (generationChanged) {
+          throw new Error("Agent 运行代际刚刚切换，任务没有启动；请重新发送。");
         }
         if (created.taskStatus === "busy") {
           const blockingTaskId = String(created.blockedByTaskId || created.taskId || "").trim();
@@ -5320,18 +5959,17 @@ export function useWorkbenchController() {
           mode: "agent",
         });
 
-        // Native apps can be suspended while an SSH long poll is active. Once
-        // the Agent has accepted the task, persist the task id and let the
-        // shared recovery loop own status polling across background/resume.
-        if (Capacitor.isNativePlatform()) {
-          void appLog("info", "agent.native_sync.handoff", {
-            serverId,
-            agentId: agent.id,
-            remoteTaskId,
-            taskStatus: created.taskStatus || "queued",
-          });
-          return { used: true, ok: false, pending: true };
-        }
+        // Task acceptance is the handoff boundary on every platform and every
+        // transport. A shared recovery owner performs status sync; the send
+        // action must never remain open in a two-hour SSH polling loop.
+        void appLog("info", "agent.background_sync.handoff", {
+          serverId,
+          agentId: agent.id,
+          remoteTaskId,
+          taskStatus: created.taskStatus || "queued",
+          transport: createTransport || (Capacitor.isNativePlatform() ? "native" : "ssh-bootstrap"),
+        });
+        return { used: true, ok: false, pending: true };
 
         let retryAgentStartup = false;
         let pollCount = 0;
@@ -5734,7 +6372,14 @@ export function useWorkbenchController() {
             taskStatus,
             output: statusOutput,
             raw: statusOutput,
-            eventFingerprint: JSON.stringify([taskStatus, task.startedAt || "", task.finishedAt || "", statusOutput.length]),
+            eventFingerprint: JSON.stringify([
+              taskStatus,
+              task.startedAt || "",
+              task.finishedAt || "",
+              Number(task.activityBytes || 0),
+              task.activityUpdatedAt || "",
+              statusOutput.length,
+            ]),
             pid: "",
             startedAt: String(task.startedAt || ""),
             runnerStartedAt: String(task.runnerStartedAt || ""),
@@ -6156,7 +6801,7 @@ export function useWorkbenchController() {
   async function recoverUnsubmittedAgentMessage(server, message, reason = "startup") {
     if (!server?.id || !message?.id || message?.backend !== "agent") return false;
     if (String(message.remoteTaskId || "").trim()) return false;
-    if (taskStateForMessage(message) !== taskStateSubmitting) return false;
+    if (!taskStateIsActive(taskStateForMessage(message))) return false;
 
     const promptText = taskTextFromValue(message.promptText || message.retryText || "");
     if (!promptText || !server.conversationId) return false;
@@ -6187,6 +6832,49 @@ export function useWorkbenchController() {
       messageId: message.id,
       reason,
     });
+
+    const recoveryProfile = withKnownPassword(server.profile);
+    if (agentDirectConfig(recoveryProfile).enabled) {
+      try {
+        const response = await agentDirectRequest(
+          recoveryProfile,
+          `/v1/conversations/${encodeURIComponent(server.conversationId)}/latest-task`,
+          { timeoutMs: 15_000 },
+        );
+        const directTask = response?.task || {};
+        if (agentTaskMatchesInterruptedSubmission(directTask, message, server.conversationId)) {
+          const recoveredMessage = {
+            ...message,
+            remoteTaskId: directTask.id,
+            taskState: taskStateSyncing,
+            remoteTaskStatus: String(directTask.rawStatus || "syncing").toLowerCase(),
+            remoteTaskCheckedAt: Date.now(),
+          };
+          updateAssistantMessageInServer(server.id, message.id, {
+            remoteTaskId: recoveredMessage.remoteTaskId,
+            title: "同步中",
+            body: "已找到 Agent 任务，正在恢复最终结果。",
+            taskState: recoveredMessage.taskState,
+            remoteTaskStatus: recoveredMessage.remoteTaskStatus,
+            remoteTaskCheckedAt: recoveredMessage.remoteTaskCheckedAt,
+            forceUpdate: true,
+          });
+          void appLog("info", "agent.submission_recovery.direct_found", {
+            serverId: server.id,
+            messageId: message.id,
+            remoteTaskId: recoveredMessage.remoteTaskId,
+          });
+          await syncRemoteAgentMessage(server.id, recoveredMessage);
+          return true;
+        }
+      } catch (error) {
+        void appLog("warn", "agent.submission_recovery.direct_failed", {
+          serverId: server.id,
+          messageId: message.id,
+          error: shortError(error),
+        });
+      }
+    }
 
     await syncAgentConversationForServer(server, {
       limit: 1,
@@ -6228,13 +6916,13 @@ export function useWorkbenchController() {
     if (syncingAgentSweepRef.current) return;
     syncingAgentSweepRef.current = true;
     try {
-      const snapshot = serversRef.current.length ? serversRef.current : servers;
+      const snapshot = serversRef.current;
       const now = Date.now();
       const serversByConnection = new Map();
 
       for (const server of snapshot) {
         if (sendingServerIdsRef.current.has(server.id)) continue;
-        const connectionKey = profileConnectionKey(normalizeProfile(server.profile));
+        const connectionKey = agentInstallationKey(normalizeProfile(server.profile));
         const connectionServers = serversByConnection.get(connectionKey) || [];
         connectionServers.push(server);
         serversByConnection.set(connectionKey, connectionServers);
@@ -7761,11 +8449,18 @@ export function useWorkbenchController() {
 
   async function clearProfile() {
     const currentId = editingServerId || activeServerIdRef.current;
-    const remaining = servers.filter((server) => server.id !== currentId);
+    if (!currentId) return;
+    if (typeof window !== "undefined" && workspaceSaveTimerRef.current) {
+      window.clearTimeout(workspaceSaveTimerRef.current);
+      workspaceSaveTimerRef.current = null;
+    }
+    const currentServers = serversRef.current;
+    const remaining = currentServers.filter((server) => server.id !== currentId);
 
     if (remaining.length) {
       const nextActive = remaining[0];
       setServers(remaining);
+      serversRef.current = remaining;
       setActiveServerId(nextActive.id);
       activeServerIdRef.current = nextActive.id;
       setEditingServerId(nextActive.id);
@@ -7773,12 +8468,12 @@ export function useWorkbenchController() {
       profileRef.current = nextActive.profile;
       setSettingsOpen(false);
       setRawOpen(false);
-      await saveWorkspace(remaining, nextActive.id);
+      await saveWorkspace(remaining, nextActive.id, { deletedServerIds: [currentId] });
       return;
     }
 
-    setServers([]);
-    serversRef.current = [];
+    setServers(remaining);
+    serversRef.current = remaining;
     setActiveServerId("");
     activeServerIdRef.current = "";
     setEditingServerId("");
@@ -7786,7 +8481,7 @@ export function useWorkbenchController() {
     profileRef.current = defaultProfile;
     setSettingsOpen(false);
     setRawOpen(false);
-    await saveWorkspace([], "");
+    await saveWorkspace(remaining, "", { deletedServerIds: [currentId] });
   }
 
   const bridge = desktopBridge();
@@ -7826,18 +8521,26 @@ export function useWorkbenchController() {
           const nextClass = platform === "ios" ? nativeDeviceClassForRuntime(platform) : width >= 768 ? "tablet" : "phone";
           setNativeDeviceClass((current) => (current === nextClass ? current : nextClass));
         }
+        root.scrollLeft = 0;
+        root.scrollTop = 0;
+        if (body) {
+          body.scrollLeft = 0;
+          body.scrollTop = 0;
+        }
         if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
       });
     };
 
     updateViewportSize();
     window.visualViewport?.addEventListener("resize", updateViewportSize);
+    window.visualViewport?.addEventListener("scroll", updateViewportSize);
     window.addEventListener("resize", updateViewportSize);
     window.addEventListener("orientationchange", updateViewportSize);
 
     return () => {
       window.cancelAnimationFrame(animationFrame);
       window.visualViewport?.removeEventListener("resize", updateViewportSize);
+      window.visualViewport?.removeEventListener("scroll", updateViewportSize);
       window.removeEventListener("resize", updateViewportSize);
       window.removeEventListener("orientationchange", updateViewportSize);
       root.style.removeProperty("--app-viewport-height");

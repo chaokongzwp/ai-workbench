@@ -1,14 +1,16 @@
 # AI Workbench Agent releases
 
-`latest.json` and `windows-latest.json` are the authoritative release pointers.
-Both manifests must reference the same version. The repository retains only the
-current release directory used by the Linux and Windows installers.
+`latest.json`, `macos-latest.json`, and `windows-latest.json` describe the three
+platform releases. All manifests must reference the same version. Runtime
+delivery is owned by the configuration center; GitHub is not an installation or
+upgrade dependency.
 
 ## Current release
 
-- Current version: `v51`
-- Linux entry: `agent/v51/aiwbctl`
-- Windows entry: `agent/v51/aiwb-agent.mjs`
+- Read the version from the three current manifests.
+- Linux entry: `agent/vN/aiwbctl-linux`
+- macOS entry: `agent/vN/aiwbctl-macos`
+- Windows entry: `agent/vN/aiwb-agent-windows.mjs`
 
 Version 41 is the clean-break Agent release. AI tasks require Agent HTTPS;
 clients no longer fall back to direct SSH or tmux execution. The health endpoint
@@ -25,8 +27,10 @@ manually. Read the matching `latest` manifest.
 npm run agent:publish
 ```
 
-Publishing generates both platform artifacts, updates both current manifests,
-commits only Agent release files, pushes them, and verifies the public files.
+Publishing generates all three platform artifacts, uploads them directly to the
+configuration center, and verifies every hosted manifest, platform entry, HTTP
+runtime, and updater runtime hash. Source control commits are a separate
+operation and do not gate Agent delivery.
 
 ## Historical cleanup
 

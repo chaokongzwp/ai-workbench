@@ -4,6 +4,7 @@ import {
   agentPreferredForProfile,
   dedupeRemoteTaskMessages,
   isMessageListDiagnostic,
+  lastRecoverableAgentResponse,
   messageTextKey,
   reconcileServerMessageLifecycle,
 } from "../src/app/controllerMessageLifecycle.js";
@@ -113,6 +114,32 @@ assert.equal(isMessageListDiagnostic({ title: "消息列表已拉取" }), true);
 assert.equal(isMessageListDiagnostic({ title: "Claude 输出已刷新" }), true);
 assert.equal(isMessageListDiagnostic({ title: "Claude 回复" }), false);
 
+const submissionWithoutTaskId = {
+  id: "response-submit-interrupted",
+  role: "assistant",
+  backend: "agent",
+  agentId: "claude",
+  taskState: "submitting",
+  remoteTaskStatus: "preparing",
+  promptText: "继续完成任务",
+};
+assert.equal(
+  lastRecoverableAgentResponse([submissionWithoutTaskId]),
+  submissionWithoutTaskId,
+  "an interrupted submission without a persisted task id must still enter conversation recovery",
+);
+const syncingWithoutTaskId = {
+  ...submissionWithoutTaskId,
+  id: "response-sync-interrupted",
+  taskState: "syncing",
+  remoteTaskStatus: "syncing",
+};
+assert.equal(
+  lastRecoverableAgentResponse([syncingWithoutTaskId]),
+  syncingWithoutTaskId,
+  "a recovery placeholder without a task id must survive an App restart",
+);
+
 const controllerSource = readFileSync(
   new URL("../src/app/useWorkbenchController.jsx", import.meta.url),
   "utf8",
@@ -135,6 +162,15 @@ const connectSessionSource = controllerSource.slice(
 );
 assert.doesNotMatch(connectSessionSource, /if \(busyRef\.current\) return false;/);
 assert.doesNotMatch(connectSessionSource, /setBusy\(true\)|setBusy\(false\)/);
+assert.match(
+  connectSessionSource,
+  /if \(!settingsOpenRef\.current\) \{[\s\S]*?setEditingServerId\(target\.id\)/,
+  "a background reconnect must not replace the settings target while settings are open",
+);
+assert.doesNotMatch(
+  connectSessionSource,
+  /!settingsOpenRef\.current \|\| editingServerIdRef\.current !== target\.id/,
+);
 assert.doesNotMatch(
   connectSessionSource,
   /connectionIsLive\(server\.connection\)[\s\S]*?readyConnectionForSession\(server\.profile, server\.connection\)/,
@@ -158,12 +194,29 @@ assert.match(controllerSource, /allowCachedReady: true/);
 assert.match(controllerSource, /refreshAgentHealthForServer\(target\.id, "background-connect"\)/);
 assert.match(controllerSource, /title: "正在刷新最后一条结果"/);
 assert.match(controllerSource, /agentDirectRequest\(directProfile, "\/v1\/cache\/clear"/);
+const openGlobalSettingsSource = controllerSource.slice(
+  controllerSource.indexOf("  function openGlobalSettings("),
+  controllerSource.indexOf("  function openCloudSyncSettings(", controllerSource.indexOf("  function openGlobalSettings(")),
+);
+assert.match(openGlobalSettingsSource, /editingServerIdRef\.current = "global"/);
+assert.match(openGlobalSettingsSource, /settingsOpenRef\.current = true/);
+const followActiveSettingsSource = controllerSource.slice(
+  controllerSource.indexOf("  function followActiveSessionInSettings("),
+  controllerSource.indexOf("  // Connection probes complete asynchronously.", controllerSource.indexOf("  function followActiveSessionInSettings(")),
+);
+assert.match(followActiveSettingsSource, /if \(settingsOpenRef\.current\) return false/);
+const authoritativeWorkspaceSource = controllerSource.slice(
+  controllerSource.indexOf("  function applyAuthoritativeWorkspaceProfile("),
+  controllerSource.indexOf("  useEffect(() => {", controllerSource.indexOf("  function applyAuthoritativeWorkspaceProfile(")),
+);
+assert.match(authoritativeWorkspaceSource, /followActiveSessionInSettings\(active\)/);
+assert.doesNotMatch(authoritativeWorkspaceSource, /setEditingServerId\(/);
 const agentRouteSource = controllerSource.slice(
   controllerSource.indexOf("const probedAgent = parseWorkbenchAgentOutput(probeOutput);"),
-  controllerSource.indexOf("const runtimeProfile = agentRuntimeProfile(directProfile);"),
+  controllerSource.indexOf("const conversationId = ensureServerConversationId"),
 );
 assert.match(agentRouteSource, /patchServersByConnection\(/);
-assert.doesNotMatch(agentRouteSource, /setServers\(/);
+assert.doesNotMatch(agentRouteSource, /\bsetServers\(/);
 assert.doesNotMatch(controllerSource, /SSH 直连中|改用 SSH 直连|Agent 自动降级/);
 
 const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
@@ -171,12 +224,34 @@ assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);
 assert.match(chatSource, />\s*重试\s*</);
 assert.match(chatSource, /aria-label="文件下载进度"/);
 
+const iphoneShellSource = readFileSync(
+  new URL("../src/platforms/iphone/IphoneWorkbenchShell.jsx", import.meta.url),
+  "utf8",
+);
+assert.match(iphoneShellSource, /maximum-scale=1\.0, user-scalable=no/);
+assert.match(iphoneShellSource, /function resetIphonePageOffset\(\)/);
+assert.doesNotMatch(iphoneShellSource, /scrollIntoView\(/);
+assert.doesNotMatch(iphoneShellSource, /setProperty\("--app-viewport-(?:width|height)"/);
+const settingsSource = readFileSync(new URL("../src/features/settings.jsx", import.meta.url), "utf8");
+assert.doesNotMatch(settingsSource, /setProperty\("--app-viewport-(?:width|height)"/);
+assert.match(controllerSource, /visualViewport\?\.addEventListener\("scroll", updateViewportSize\)/);
+
 const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+assert.match(
+  stylesSource,
+  /\.iphone-shell :is\(input, textarea, select\) \{[\s\S]*?font-size:\s*16px !important/,
+);
 const sentMessageStyle = stylesSource.slice(
   stylesSource.indexOf(".user-prompt .user-message-card {"),
   stylesSource.indexOf("}", stylesSource.indexOf(".user-prompt .user-message-card {")) + 1,
 );
-assert.match(sentMessageStyle, /border:\s*0/);
-assert.match(sentMessageStyle, /background:\s*transparent/);
+assert.match(sentMessageStyle, /width:\s*fit-content/);
+assert.match(sentMessageStyle, /max-width:\s*min\(560px,\s*78%\)/);
+const sentMessageParagraphStyle = stylesSource.slice(
+  stylesSource.indexOf(".conversation .user-prompt .user-message-card > p,"),
+  stylesSource.indexOf("}", stylesSource.indexOf(".conversation .user-prompt .user-message-card > p,")) + 1,
+);
+assert.match(sentMessageParagraphStyle, /margin:\s*0/);
+assert.match(sentMessageParagraphStyle, /background:\s*transparent/);
 
 console.log("controller message lifecycle regression: ok");

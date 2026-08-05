@@ -7,30 +7,23 @@ import { fileURLToPath } from "node:url";
 import {
   latestWorkbenchAgentVersion,
   workbenchAgentControlEndpoint,
-  workbenchAgentGithubRawBaseUrl,
 } from "../src/core/agent.js";
 
 const repoRoot = join(fileURLToPath(new URL("..", import.meta.url)));
 const version = String(process.env.AIWB_AGENT_VERSION || latestWorkbenchAgentVersion).trim();
-const manifestPath = join(repoRoot, "agent", "latest.json");
-const scriptPath = join(repoRoot, "agent", `v${version}`, "aiwbctl");
-const windowsManifestPath = join(repoRoot, "agent", "windows-latest.json");
-const windowsScriptPath = join(repoRoot, "agent", `v${version}`, "aiwb-agent.mjs");
-const directRuntimePath = join(repoRoot, "agent", `v${version}`, "aiwb-agent-http.mjs");
-const updaterRuntimePath = join(repoRoot, "agent", `v${version}`, "aiwb-agent-updater.mjs");
-const remote = String(process.env.AIWB_AGENT_GIT_REMOTE || "origin").trim();
-const branch = String(process.env.AIWB_AGENT_GIT_BRANCH || "main").trim();
+const releaseRoot = join(repoRoot, "agent", `v${version}`);
 const controlEndpoint = String(process.env.AIWB_AGENT_CONTROL_ENDPOINT || workbenchAgentControlEndpoint).replace(/\/+$/, "");
 const agentControlKeychainService = "com.beexofficial.aiworkbench.agent-control-admin";
-const minimumControlServiceVersion = 6;
+const minimumControlServiceVersion = 8;
 
-function git(args, options = {}) {
-  const output = execFileSync("git", args, {
-    cwd: repoRoot,
-    encoding: "utf8",
-    stdio: options.stdio || "pipe",
-  });
-  return typeof output === "string" ? output.trim() : "";
+const platformFiles = {
+  linux: { manifest: "linux-manifest.json", entry: "aiwbctl-linux" },
+  macos: { manifest: "macos-manifest.json", entry: "aiwbctl-macos" },
+  windows: { manifest: "windows-manifest.json", entry: "aiwb-agent-windows.mjs" },
+};
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function agentControlAdminToken() {
@@ -56,106 +49,56 @@ async function verifyControlCenterCanHostArtifacts() {
   if (!Number.isFinite(serviceVersion) || serviceVersion < minimumControlServiceVersion) {
     throw new Error(
       `配置中心版本过旧（当前 v${serviceVersion || "未知"}，至少需要 v${minimumControlServiceVersion}），` +
-      "请先部署支持 Agent 制品托管的配置中心服务。",
+      "请先部署支持三平台 Agent 制品托管的配置中心服务。",
     );
   }
 }
 
 await verifyControlCenterCanHostArtifacts();
+execFileSync(process.execPath, ["scripts/export-agent-release.mjs"], { cwd: repoRoot, stdio: "inherit" });
 
-execFileSync(process.execPath, ["scripts/export-agent-github.mjs"], {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
-
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const script = await readFile(scriptPath);
-const sha256 = createHash("sha256").update(script).digest("hex");
-if (manifest.version !== version || manifest.sha256 !== sha256) {
-  throw new Error("Generated Agent manifest does not match the published script.");
-}
-const windowsManifest = JSON.parse(await readFile(windowsManifestPath, "utf8"));
-const windowsScript = await readFile(windowsScriptPath);
-const windowsSha256 = createHash("sha256").update(windowsScript).digest("hex");
-if (windowsManifest.version !== version || windowsManifest.sha256 !== windowsSha256) {
-  throw new Error("Generated Windows Agent manifest does not match the published script.");
-}
-const directRuntime = await readFile(directRuntimePath);
-const updaterRuntime = await readFile(updaterRuntimePath);
-for (const [runtime, file, path] of [
-  [manifest.directRuntime, directRuntime, directRuntimePath],
-  [manifest.updaterRuntime, updaterRuntime, updaterRuntimePath],
-]) {
-  const runtimeSha256 = createHash("sha256").update(file).digest("hex");
-  if (!runtime?.url || runtime.sha256 !== runtimeSha256) {
-    throw new Error(`Generated Agent runtime manifest does not match ${path}.`);
+const manifests = {};
+const entries = {};
+for (const [platform, files] of Object.entries(platformFiles)) {
+  const manifest = JSON.parse(await readFile(join(releaseRoot, files.manifest), "utf8"));
+  const entry = await readFile(join(releaseRoot, files.entry));
+  if (manifest.version !== version || manifest.platform !== platform || manifest.sha256 !== sha256(entry)) {
+    throw new Error(`生成的 ${platform} Agent 清单与入口文件不一致。`);
   }
+  manifests[platform] = manifest;
+  entries[platform] = entry;
+}
+const unixVersionOutput = execFileSync(join(releaseRoot, platformFiles.macos.entry), ["--version"], {
+  encoding: "utf8",
+}).trim();
+const unixReportedVersion =
+  unixVersionOutput.match(/__AIWB_AGENT_VERSION__([^\r\n]+)/)?.[1]?.trim()
+  || unixVersionOutput.match(/^v?([0-9]+(?:\.[0-9]+)*)$/)?.[1];
+if (unixReportedVersion !== version) {
+  throw new Error(`POSIX Agent 入口报告 v${unixReportedVersion || "?"}，与清单 v${version} 不一致。`);
 }
 
-const releaseSourcePaths = [
-  "agent/README.md",
-  "agent/runtime/aiwb-agent-http.mjs",
-  "agent/runtime/aiwb-agent-updater.mjs",
-  "scripts/export-agent-github.mjs",
-  "scripts/release-agent.mjs",
-  "src/core/agent.js",
-  "src/core/windowsAgent.js",
-];
-git(["add", "agent/latest.json", "agent/windows-latest.json", `agent/v${version}`, ...releaseSourcePaths]);
-const allowedStagedPaths = new Set([
-  "agent/latest.json",
-  "agent/windows-latest.json",
-  `agent/v${version}/aiwbctl`,
-  `agent/v${version}/aiwb-agent.mjs`,
-  `agent/v${version}/aiwb-agent-http.mjs`,
-  `agent/v${version}/aiwb-agent-updater.mjs`,
-  `agent/v${version}/manifest.json`,
-  `agent/v${version}/windows-manifest.json`,
-  ...releaseSourcePaths,
-]);
-const unexpectedStagedPaths = git(["diff", "--cached", "--name-only"])
-  .split(/\r?\n/)
-  .map((path) => path.trim())
-  .filter(Boolean)
-  .filter((path) => !allowedStagedPaths.has(path));
-if (unexpectedStagedPaths.length) {
-  throw new Error(
-    `Refusing to publish Agent because unrelated files are already staged: ${unexpectedStagedPaths.join(", ")}`,
-  );
-}
-try {
-  git(["diff", "--cached", "--quiet"]);
-  console.log(`AI Workbench Agent v${version} is already staged and unchanged.`);
-} catch {
-  git(["commit", "-m", `Release AI Workbench Agent v${version}`], { stdio: "inherit" });
-}
-
-git(["push", remote, branch], { stdio: "inherit" });
-
-const manifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${encodeURIComponent(version)}/manifest.json`;
-const response = await fetch(manifestUrl, { cache: "no-store" });
-if (!response.ok) throw new Error(`Cloud manifest verification failed: HTTP ${response.status}`);
-const cloudManifest = await response.json();
-if (cloudManifest.version !== version || cloudManifest.sha256 !== sha256) {
-  throw new Error(`Cloud manifest verification failed: expected Agent v${version}.`);
-}
-
-const windowsManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${encodeURIComponent(version)}/windows-manifest.json`;
-const windowsResponse = await fetch(windowsManifestUrl, { cache: "no-store" });
-if (!windowsResponse.ok) throw new Error(`Cloud Windows manifest verification failed: HTTP ${windowsResponse.status}`);
-const cloudWindowsManifest = await windowsResponse.json();
-if (cloudWindowsManifest.version !== version || cloudWindowsManifest.sha256 !== windowsSha256) {
-  throw new Error(`Cloud Windows manifest verification failed: expected Agent v${version}.`);
+const directRuntime = await readFile(join(releaseRoot, "aiwb-agent-http.mjs"));
+const updaterRuntime = await readFile(join(releaseRoot, "aiwb-agent-updater.mjs"));
+const verifiedHostedRuntimeUrls = new Map();
+for (const [platform, manifest] of Object.entries(manifests)) {
+  if (manifest.directRuntime?.sha256 !== sha256(directRuntime)) {
+    throw new Error(`${platform} Agent 的 direct runtime 校验值不一致。`);
+  }
+  if (manifest.updaterRuntime?.sha256 !== sha256(updaterRuntime)) {
+    throw new Error(`${platform} Agent 的 updater runtime 校验值不一致。`);
+  }
 }
 
 const controlAdminToken = agentControlAdminToken();
 if (!controlAdminToken) {
   throw new Error(
-    `Agent 已推送到 GitHub，但配置中心尚未收到发布通知。请设置 AIWB_AGENT_CONTROL_ADMIN_TOKEN，` +
-    `或将凭证存入 macOS 钥匙串服务 ${agentControlKeychainService}，然后重新运行发布命令。`,
+    `配置中心尚未收到发布凭证。请设置 AIWB_AGENT_CONTROL_ADMIN_TOKEN，` +
+    `或将凭证存入 macOS 钥匙串服务 ${agentControlKeychainService}。`,
   );
 }
-const controlPublishResponse = await fetch(`${controlEndpoint}/publish`, {
+
+const publishResponse = await fetch(`${controlEndpoint}/publish`, {
   method: "POST",
   headers: {
     Authorization: `Bearer ${controlAdminToken}`,
@@ -163,44 +106,74 @@ const controlPublishResponse = await fetch(`${controlEndpoint}/publish`, {
   },
   body: JSON.stringify({
     version,
-    manifest,
-    windowsManifest,
+    manifests,
     artifacts: {
-      aiwbctl: script.toString("base64"),
-      "aiwb-agent.mjs": windowsScript.toString("base64"),
-      "aiwb-agent-http.mjs": directRuntime.toString("base64"),
-      "aiwb-agent-updater.mjs": updaterRuntime.toString("base64"),
+      "linux/aiwbctl": entries.linux.toString("base64"),
+      "macos/aiwbctl": entries.macos.toString("base64"),
+      "windows/aiwb-agent.mjs": entries.windows.toString("base64"),
+      "common/aiwb-agent-http.mjs": directRuntime.toString("base64"),
+      "common/aiwb-agent-updater.mjs": updaterRuntime.toString("base64"),
     },
   }),
 });
-if (!controlPublishResponse.ok) {
-  const detail = (await controlPublishResponse.text()).replace(/\s+/g, " ").slice(0, 500);
-  throw new Error(`配置中心发布通知失败：HTTP ${controlPublishResponse.status}${detail ? `（${detail}）` : ""}`);
+if (!publishResponse.ok) {
+  const detail = (await publishResponse.text()).replace(/\s+/g, " ").slice(0, 500);
+  throw new Error(`配置中心发布失败：HTTP ${publishResponse.status}${detail ? `（${detail}）` : ""}`);
 }
-const controlLatestResponse = await fetch(`${controlEndpoint}/latest`, { cache: "no-store" });
-if (!controlLatestResponse.ok) {
-  throw new Error(`配置中心版本验证失败：HTTP ${controlLatestResponse.status}`);
+
+const latestResponse = await fetch(`${controlEndpoint}/latest`, { cache: "no-store" });
+if (!latestResponse.ok) throw new Error(`配置中心版本验证失败：HTTP ${latestResponse.status}`);
+const latest = await latestResponse.json();
+if (String(latest?.agent?.version || "") !== version || latest?.agent?.source !== "config-center") {
+  throw new Error(`配置中心版本验证失败：目标不是托管的 Agent v${version}。`);
 }
-const controlLatest = await controlLatestResponse.json();
-if (String(controlLatest?.agent?.version || "") !== version) {
-  throw new Error(`配置中心版本验证失败：目标版本不是 v${version}。`);
-}
-if (controlLatest?.agent?.source !== "config-center") {
-  throw new Error("配置中心版本验证失败：Agent 制品没有托管到配置中心。");
-}
-for (const [url, expectedSha256, label] of [
-  [controlLatest.manifestUrl, sha256, "Agent"],
-  [controlLatest.windowsManifestUrl, windowsSha256, "Windows Agent"],
-]) {
-  const hostedResponse = await fetch(url, { cache: "no-store" });
-  if (!hostedResponse.ok) throw new Error(`配置中心 ${label} 清单验证失败：HTTP ${hostedResponse.status}`);
-  const hostedManifest = await hostedResponse.json();
-  if (hostedManifest.version !== version || hostedManifest.sha256 !== expectedSha256 || hostedManifest.source !== "config-center") {
-    throw new Error(`配置中心 ${label} 清单验证失败：内容不一致。`);
+
+for (const [platform, manifest] of Object.entries(manifests)) {
+  const manifestUrl = String(
+    latest?.platforms?.[platform]?.manifestUrl
+      || latest?.agent?.platforms?.[platform]?.manifestUrl
+      || latest?.[`${platform}ManifestUrl`]
+      || "",
+  );
+  if (!manifestUrl.startsWith("https://")) throw new Error(`配置中心没有返回 ${platform} Agent 清单。`);
+  const hostedResponse = await fetch(manifestUrl, { cache: "no-store" });
+  if (!hostedResponse.ok) throw new Error(`配置中心 ${platform} Agent 清单验证失败：HTTP ${hostedResponse.status}`);
+  const hosted = await hostedResponse.json();
+  if (
+    hosted.version !== version
+    || hosted.platform !== platform
+    || hosted.sha256 !== manifest.sha256
+    || hosted.directRuntime?.sha256 !== manifest.directRuntime?.sha256
+    || hosted.updaterRuntime?.sha256 !== manifest.updaterRuntime?.sha256
+    || hosted.source !== "config-center"
+  ) {
+    throw new Error(`配置中心 ${platform} Agent 清单内容不一致。`);
+  }
+  const entryResponse = await fetch(hosted.scriptUrl, { cache: "no-store" });
+  if (!entryResponse.ok || sha256(Buffer.from(await entryResponse.arrayBuffer())) !== manifest.sha256) {
+    throw new Error(`配置中心 ${platform} Agent 入口文件校验失败。`);
+  }
+  for (const [runtimeName, runtime] of [
+    ["HTTP runtime", hosted.directRuntime],
+    ["updater runtime", hosted.updaterRuntime],
+  ]) {
+    const runtimeUrl = String(runtime?.url || "");
+    const expectedSha256 = String(runtime?.sha256 || "").toLowerCase();
+    if (!runtimeUrl.startsWith("https://") || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+      throw new Error(`配置中心 ${platform} Agent 的 ${runtimeName} 清单无效。`);
+    }
+    const previousSha256 = verifiedHostedRuntimeUrls.get(runtimeUrl);
+    if (previousSha256 && previousSha256 !== expectedSha256) {
+      throw new Error(`配置中心共享 ${runtimeName} 在不同平台清单中的校验值不一致。`);
+    }
+    if (previousSha256) continue;
+    const runtimeResponse = await fetch(runtimeUrl, { cache: "no-store" });
+    if (!runtimeResponse.ok || sha256(Buffer.from(await runtimeResponse.arrayBuffer())) !== expectedSha256) {
+      throw new Error(`配置中心 ${platform} Agent 的 ${runtimeName} 下载校验失败。`);
+    }
+    verifiedHostedRuntimeUrls.set(runtimeUrl, expectedSha256);
   }
 }
 
 console.log(`Published AI Workbench Agent v${version} to the configuration center.`);
-console.log(`Hosted manifest: ${controlLatest.manifestUrl}`);
-console.log(`Hosted Windows manifest: ${controlLatest.windowsManifestUrl}`);
-console.log(`Agent control target: v${version}`);
+console.log("Platforms: linux, macos, windows");

@@ -10,7 +10,11 @@ import { connect as tlsConnect } from "node:tls";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { Client } from "ssh2";
-import { sortConversationMessages } from "../src/core/messageLifecycle.js";
+import {
+  mergeWorkspaceProfile,
+  workspaceProfileEffectiveRevision,
+  workspaceProfileRevision,
+} from "../src/core/workspaceProfileMerge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -201,37 +205,6 @@ function openChatWindow({ serverId, title } = {}) {
 
 function profileFilePath() {
   return join(app.getPath("userData"), "connection-profile.json");
-}
-
-function mergeWorkspaceMessages(currentMessages = [], incomingMessages = []) {
-  const byId = new Map();
-  for (const message of [...currentMessages, ...incomingMessages]) {
-    const id = String(message?.id || "").trim();
-    if (!id) continue;
-    byId.set(id, { ...(byId.get(id) || {}), ...message });
-  }
-  return sortConversationMessages([...byId.values()])
-    .slice(-120);
-}
-
-function mergeWorkspaceProfile(currentProfile = {}, incomingProfile = {}) {
-  if (!Array.isArray(incomingProfile.servers)) return incomingProfile;
-  const currentServers = new Map(
-    (Array.isArray(currentProfile.servers) ? currentProfile.servers : []).map((server) => [server.id, server]),
-  );
-  return {
-    ...currentProfile,
-    ...incomingProfile,
-    servers: incomingProfile.servers.map((server) => {
-      const current = currentServers.get(server.id);
-      if (!current) return server;
-      return {
-        ...current,
-        ...server,
-        messages: mergeWorkspaceMessages(current.messages, server.messages),
-      };
-    }),
-  };
 }
 
 function stripWorkspaceRuntimeState(profile = {}) {
@@ -614,7 +587,7 @@ function normalizeTerminalRequest(input = {}) {
   const host = String(input.host || "").trim();
   const username = String(input.username || "").trim();
   const port = Math.max(1, Number(input.port || 22) || 22);
-  const platform = ["windows", "wsl"].includes(input.platform) ? input.platform : "linux";
+  const platform = ["macos", "windows", "wsl"].includes(input.platform) ? input.platform : "linux";
   const wslDistro = String(input.wslDistro || "").trim();
   const workdir = String(input.workdir || "").trim();
   const tmuxSession = String(input.tmuxSession || "").trim();
@@ -633,7 +606,7 @@ function normalizeEmbeddedTerminalRequest(input = {}) {
   const username = String(input.username || "").trim();
   const password = String(input.password || "");
   const port = Math.max(1, Number(input.port || 22) || 22);
-  const platform = ["windows", "wsl"].includes(input.platform) ? input.platform : "linux";
+  const platform = ["macos", "windows", "wsl"].includes(input.platform) ? input.platform : "linux";
   const wslDistro = String(input.wslDistro || "").trim();
   const workdir = String(input.workdir || "").trim();
   const terminalId = String(input.terminalId || randomUUID()).trim();
@@ -2926,6 +2899,23 @@ ipcMain.handle("aiwb:stop-speech-output", async () => {
 ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
   const incomingProfile = payload.profile && typeof payload.profile === "object" ? payload.profile : {};
   const replaceMessages = payload.replaceMessages === true;
+  const deletedServerIds = [...new Set(
+    (Array.isArray(payload.deletedServerIds) ? payload.deletedServerIds : [])
+      .map((serverId) => String(serverId || "").trim())
+      .filter(Boolean),
+  )];
+  const replaceMessageServerIds = [...new Set(
+    (Array.isArray(payload.replaceMessageServerIds)
+      ? payload.replaceMessageServerIds
+      : replaceMessages && Array.isArray(incomingProfile.servers)
+        ? incomingProfile.servers.map((server) => server?.id)
+        : [])
+      .map((serverId) => String(serverId || "").trim())
+      .filter(Boolean),
+  )];
+  const baseRevision = workspaceProfileRevision(
+    payload.baseRevision ?? incomingProfile.workspaceRevision,
+  );
   const senderId = event.sender.id;
   const saveOperation = profileSaveChain.then(async () => {
     const filePath = profileFilePath();
@@ -2941,14 +2931,45 @@ ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
         throw new Error("本地会话配置暂时无法读取，已停止覆盖写入以保护现有记录。");
       }
     }
-    const rawProfile = stripWorkspaceRuntimeState(
-      replaceMessages ? incomingProfile : mergeWorkspaceProfile(currentProfile, incomingProfile),
-    );
+    const currentRevision = workspaceProfileEffectiveRevision(currentProfile);
+    if (baseRevision !== currentRevision) {
+      const authoritativeProfile = stripWorkspaceRuntimeState({
+        ...currentProfile,
+        workspaceRevision: currentRevision,
+      });
+      await appendPersistentLog("info", "profile.native.save.conflict", {
+        baseRevision,
+        workspaceRevision: currentRevision,
+        deletedServerCount: deletedServerIds.length,
+        replaceMessages,
+      });
+      return {
+        ok: false,
+        conflict: true,
+        profile: authoritativeProfile,
+        operations: {
+          saveApplied: false,
+          replaceMessagesRequested: replaceMessages,
+          replaceMessagesApplied: replaceMessages ? false : null,
+        },
+      };
+    }
+    const replaceMessagesApplied = replaceMessages ? true : null;
+    const rawProfile = stripWorkspaceRuntimeState(mergeWorkspaceProfile(currentProfile, incomingProfile, {
+      baseRevision,
+      deletedServerIds,
+      replaceMessages,
+      replaceMessageServerIds,
+    }));
     const { passwordEncrypted, payloadEncrypted, insecurePasswordStorage, ...rest } = rawProfile;
     const profile = encryptProfilePayload(rest);
     await appendPersistentLog("info", "profile.native.save.start", {
       serverCount: Array.isArray(rawProfile.servers) ? rawProfile.servers.length : 0,
       activeServerId: rawProfile.activeServerId,
+      workspaceRevision: rawProfile.workspaceRevision,
+      deletedServerCount: deletedServerIds.length,
+      replaceMessages,
+      replaceMessagesApplied,
     });
     await mkdir(dirname(filePath), { recursive: true });
     const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -2961,15 +2982,30 @@ ipcMain.handle("aiwb:save-profile", async (event, payload = {}) => {
     await appendPersistentLog("info", "profile.native.save.success", {
       serverCount: Array.isArray(rawProfile.servers) ? rawProfile.servers.length : 0,
       path: filePath,
+      workspaceRevision: rawProfile.workspaceRevision,
     });
-    broadcastProfileUpdated(rawProfile, senderId, { replaceMessages });
-    return { ok: true, profile: rawProfile };
+    broadcastProfileUpdated(rawProfile, senderId, {
+      replaceMessages: replaceMessagesApplied === true,
+      replaceMessageServerIds,
+      deletedServerIds,
+      workspaceRevision: rawProfile.workspaceRevision,
+    });
+    return {
+      ok: true,
+      profile: rawProfile,
+      operations: {
+        saveApplied: true,
+        replaceMessagesRequested: replaceMessages,
+        replaceMessagesApplied,
+      },
+    };
   });
   profileSaveChain = saveOperation.catch(() => {});
   return saveOperation;
 });
 
 ipcMain.handle("aiwb:load-profile", async () => {
+  await profileSaveChain;
   const filePath = profileFilePath();
   if (!existsSync(filePath)) {
     await appendPersistentLog("warn", "profile.native.load.missing", { path: filePath });

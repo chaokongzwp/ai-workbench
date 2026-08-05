@@ -45,6 +45,7 @@ function createConnection(profile) {
 }
 
 function normalizePlatform(value) {
+  if (value === "macos" || value === "darwin" || value === "mac") return "macos";
   return value === "wsl" || value === "windows" ? value : "linux";
 }
 
@@ -68,7 +69,13 @@ function normalizeProfile(profile = {}) {
       ? { workdir: "", codexCommand: "codex", claudeCommand: "claude" }
       : platform === "wsl"
         ? { workdir: "", codexCommand: "codex", claudeCommand: "claude" }
-        : { workdir: "", codexCommand: "/usr/local/bin/codex", claudeCommand: "claude" };
+        : platform === "macos"
+          ? {
+              workdir: "",
+              codexCommand: "/Applications/ChatGPT.app/Contents/Resources/codex",
+              claudeCommand: "/opt/homebrew/bin/claude",
+            }
+          : { workdir: "", codexCommand: "/usr/local/bin/codex", claudeCommand: "claude" };
   const useWorkbenchAgent =
     platform === "windows" ? false : profile.useWorkbenchAgent === undefined ? true : Boolean(profile.useWorkbenchAgent);
   return {

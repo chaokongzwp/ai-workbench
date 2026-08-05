@@ -140,6 +140,8 @@ const {
   serverPlatforms,
   serverSessionName,
   serverTaskRunning,
+  sessionEnvironmentBashScript,
+  sessionEnvironmentPowerShellScript,
   sessionName,
   sessionSelectionKey,
   shQuote,
@@ -184,6 +186,12 @@ function selectedAgentModel(profile, agent) {
   return normalizeAgentModel(agent?.id || profile?.agentId, profile?.aiModel);
 }
 
+function conversationSessionStem(profile, agent) {
+  const base = sanitizeId(sessionName(profile, agent.id));
+  const conversation = sanitizeId(String(profile?.conversationId || "").trim()).slice(-64);
+  return conversation ? `${base}-${conversation}` : base;
+}
+
 export function createRemoteTaskId(conversationId, agentId) {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   return sanitizeId(`task-${unique}-${agentId}-${conversationId || "local"}`).replace(/-+/g, "-").slice(0, 48);
@@ -193,9 +201,18 @@ export function profileWithDetectedTools(profile, health) {
   const normalized = normalizeProfile(profile);
   const codexCommand = String(health?.codex || "").trim();
   const claudeCommand = String(health?.claude || "").trim();
+  const detectedPlatform = String(health?.platform || health?.os || "").trim().toLowerCase();
+  const platform = isWslProfile(normalized) || isWindowsProfile(normalized)
+    ? normalized.platform
+    : detectedPlatform === "darwin" || detectedPlatform === "mac" || detectedPlatform === "macos"
+      ? "macos"
+      : detectedPlatform === "linux"
+        ? "linux"
+        : normalized.platform;
 
   return {
     ...normalized,
+    platform,
     codexCommand: codexCommand || normalized.codexCommand,
     claudeCommand: claudeCommand || normalized.claudeCommand,
   };
@@ -329,7 +346,9 @@ def collect_tools():
         if not path and tool == "codex":
             for candidate in [
                 Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
+                Path("/Applications/Codex.app/Contents/Resources/codex"),
                 Path.home() / "Applications/ChatGPT.app/Contents/Resources/codex",
+                Path.home() / "Applications/Codex.app/Contents/Resources/codex",
             ]:
                 if candidate.is_file() and os.access(candidate, os.X_OK):
                     path = str(candidate)
@@ -1059,19 +1078,28 @@ export function buildCodexExecCommand(profile, agent, prompt) {
   const commandProbe = commandName(command);
   const commandFallback = commandProbe.split("/").filter(Boolean).at(-1) || "codex";
   const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
-  const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.session`;
+  const sessionFile = `${stateDir}/${conversationSessionStem(profile, agent)}.session`;
   const model = selectedAgentModel(profile, agent);
   const permissionArgs = codexPermissionArgs(profile).map(shQuote).join(" ");
+  const environmentScript = sessionEnvironmentBashScript(profile.environmentVariables);
 
   return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 mkdir -p ${shQuote(stateDir)}
 cd ${shQuote(profile.workdir)}
+${environmentScript}
 
 AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
 AIWB_OUTPUT=$(mktemp /tmp/aiwb-codex-output.XXXXXX)
-AIWB_LOG=$(mktemp /tmp/aiwb-codex-log.XXXXXX)
+AIWB_LOG_PERSIST=0
+if [ -n "\${AIWB_TASK_DIR:-}" ] && [ -d "\${AIWB_TASK_DIR:-}" ]; then
+  AIWB_LOG="$AIWB_TASK_DIR/activity.jsonl"
+  : >"$AIWB_LOG"
+  AIWB_LOG_PERSIST=1
+else
+  AIWB_LOG=$(mktemp /tmp/aiwb-codex-log.XXXXXX)
+fi
 AIWB_SESSION=""
 AIWB_COMMAND=${shQuote(command)}
 AIWB_MODEL=${shQuote(model)}
@@ -1097,16 +1125,17 @@ fi
 
 set +e
 if printf '%s' "$AIWB_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
-  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --skip-git-repo-check ${permissionArgs} --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --json --color never --skip-git-repo-check ${permissionArgs} --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" resume "$AIWB_SESSION" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
 else
-  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --skip-git-repo-check ${permissionArgs} --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
+  "$AIWB_COMMAND" exec "\${AIWB_MODEL_ARGS[@]}" --json --color never --skip-git-repo-check ${permissionArgs} --cd ${shQuote(profile.workdir)} --output-last-message "$AIWB_OUTPUT" "$AIWB_PROMPT" >"$AIWB_LOG" 2>&1
 fi
 AIWB_STATUS=$?
 set -e
 
 if [ "$AIWB_STATUS" -ne 0 ]; then
-  cat "$AIWB_LOG"
-  rm -f "$AIWB_OUTPUT" "$AIWB_LOG"
+  tail -c 120000 "$AIWB_LOG" 2>/dev/null || cat "$AIWB_LOG"
+  rm -f "$AIWB_OUTPUT"
+  [ "$AIWB_LOG_PERSIST" -eq 1 ] || rm -f "$AIWB_LOG"
   exit "$AIWB_STATUS"
 fi
 
@@ -1114,9 +1143,20 @@ printf '__AIWB_RESPONSE_START__\\n'
 cat "$AIWB_OUTPUT"
 printf '\\n__AIWB_RESPONSE_END__\\n'
 
-AIWB_NEXT_SESSION=$(grep -Eo 'session id: [0-9a-fA-F-]{36}' "$AIWB_LOG" | tail -n 1 | awk '{print $3}' || true)
+AIWB_NEXT_SESSION=$(grep -Eo '"thread_id"[[:space:]]*:[[:space:]]*"[0-9a-fA-F-]{36}"' "$AIWB_LOG" | tail -n 1 | grep -Eo '[0-9a-fA-F-]{36}' || true)
 if [ -z "$AIWB_NEXT_SESSION" ]; then
-  AIWB_LATEST=$(find "$HOME/.codex/sessions" -type f -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+  AIWB_NEXT_SESSION=$(grep -Eo 'session id: [0-9a-fA-F-]{36}' "$AIWB_LOG" | tail -n 1 | awk '{print $3}' || true)
+fi
+if [ -z "$AIWB_NEXT_SESSION" ]; then
+  AIWB_LATEST=""
+  AIWB_LATEST_MTIME="0"
+  while IFS= read -r AIWB_SESSION_CANDIDATE; do
+    AIWB_SESSION_MTIME=$(stat -c %Y "$AIWB_SESSION_CANDIDATE" 2>/dev/null || stat -f %m "$AIWB_SESSION_CANDIDATE" 2>/dev/null || printf 0)
+    if [ "$AIWB_SESSION_MTIME" -gt "$AIWB_LATEST_MTIME" ] 2>/dev/null; then
+      AIWB_LATEST="$AIWB_SESSION_CANDIDATE"
+      AIWB_LATEST_MTIME="$AIWB_SESSION_MTIME"
+    fi
+  done < <(find "$HOME/.codex/sessions" -type f -name '*.jsonl' 2>/dev/null)
   AIWB_NEXT_SESSION=$(basename "$AIWB_LATEST" 2>/dev/null | grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | tail -n 1 || true)
 fi
 if printf '%s' "$AIWB_NEXT_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
@@ -1124,7 +1164,8 @@ if printf '%s' "$AIWB_NEXT_SESSION" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
   printf '\\n__AIWB_SESSION__%s\\n' "$AIWB_NEXT_SESSION"
 fi
 
-rm -f "$AIWB_OUTPUT" "$AIWB_LOG"
+rm -f "$AIWB_OUTPUT"
+[ "$AIWB_LOG_PERSIST" -eq 1 ] || rm -f "$AIWB_LOG"
 `);
 }
 
@@ -1136,6 +1177,7 @@ export function buildWindowsCodexExecCommand(profile, agent, prompt) {
   const pidFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}.pid`);
   const model = selectedAgentModel(profile, agent);
   const permissionArgs = codexPermissionArgs(profile).map(psQuote).join(", ");
+  const environmentScript = sessionEnvironmentPowerShellScript(profile.environmentVariables);
 
   return powershellStdinCommand(`
 $AIWB_WORKDIR = ${psQuote(profile.workdir)}
@@ -1145,6 +1187,7 @@ $AIWB_PID_FILE = ${psQuote(pidFile)}
 New-Item -ItemType Directory -Force -Path $AIWB_WORKDIR | Out-Null
 New-Item -ItemType Directory -Force -Path $AIWB_STATE_DIR | Out-Null
 Set-Location -LiteralPath $AIWB_WORKDIR
+${environmentScript}
 
 $AIWB_PROMPT = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${psQuote(encodedPrompt)}))
 $AIWB_OUTPUT = Join-Path $env:TEMP ("aiwb-codex-output-" + [guid]::NewGuid().ToString() + ".txt")
@@ -1243,15 +1286,17 @@ export function buildClaudePrintCommand(profile, agent, prompt) {
   const commandProbe = commandName(command);
   const commandFallback = commandProbe.split("/").filter(Boolean).at(-1) || "claude";
   const stateDir = `${String(profile.workdir || ".").replace(/\/+$/, "")}/.ai-workbench`;
-  const sessionFile = `${stateDir}/${sanitizeId(sessionName(profile, agent.id))}.claude-session`;
+  const sessionFile = `${stateDir}/${conversationSessionStem(profile, agent)}.claude-session`;
   const model = selectedAgentModel(profile, agent);
   const permissionArgs = claudePermissionArgs(profile).map(shQuote).join(" ");
+  const environmentScript = sessionEnvironmentBashScript(profile.environmentVariables);
 
   return remoteBashCommand(profile, `
 set -e
 mkdir -p ${shQuote(profile.workdir)}
 mkdir -p ${shQuote(stateDir)}
 cd ${shQuote(profile.workdir)}
+${environmentScript}
 
 export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
 AIWB_PROMPT=$(printf '%s' ${shQuote(encodedPrompt)} | base64 -d)
@@ -1285,55 +1330,13 @@ if [ -n "$AIWB_SESSION" ]; then
 fi
 
 set +e
-AIWB_RETRY_FRESH=0
-aiwb_run_claude_with_startup_watchdog() {
-  AIWB_STARTUP_STALLED=0
-  "$AIWB_COMMAND" "$@" >"$AIWB_OUTPUT" 2>"$AIWB_LOG" &
-  AIWB_CLAUDE_PID=$!
-  AIWB_LAST_CPU=""
-  AIWB_STALLED_SAMPLES=0
-  for AIWB_STARTUP_SAMPLE in 1 2 3 4 5 6; do
-    sleep 5
-    if ! kill -0 "$AIWB_CLAUDE_PID" 2>/dev/null; then
-      break
-    fi
-    AIWB_CPU=$(ps -o time= -p "$AIWB_CLAUDE_PID" 2>/dev/null | tr -d '[:space:]')
-    if [ ! -s "$AIWB_OUTPUT" ] && [ ! -s "$AIWB_LOG" ] &&
-       ! lsof -nP -a -p "$AIWB_CLAUDE_PID" -iTCP -iUDP 2>/dev/null | grep -q . &&
-       [ -n "$AIWB_LAST_CPU" ] && [ "$AIWB_CPU" = "$AIWB_LAST_CPU" ]; then
-      AIWB_STALLED_SAMPLES=$((AIWB_STALLED_SAMPLES + 1))
-    else
-      AIWB_STALLED_SAMPLES=0
-    fi
-    AIWB_LAST_CPU="$AIWB_CPU"
-    if [ "$AIWB_STALLED_SAMPLES" -ge 4 ]; then
-      kill "$AIWB_CLAUDE_PID" 2>/dev/null || true
-      wait "$AIWB_CLAUDE_PID" 2>/dev/null || true
-      AIWB_STARTUP_STALLED=1
-      return 124
-    fi
-  done
-  wait "$AIWB_CLAUDE_PID"
-}
-
-if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && command -v lsof >/dev/null 2>&1; then
-  aiwb_run_claude_with_startup_watchdog "\${AIWB_ARGS[@]}"
-  AIWB_STATUS=$?
-  if [ "$AIWB_STARTUP_STALLED" -eq 1 ]; then
-    AIWB_RETRY_FRESH=1
-    rm -f ${shQuote(sessionFile)}
-    : >"$AIWB_OUTPUT"
-    : >"$AIWB_LOG"
-    aiwb_run_claude_with_startup_watchdog "\${AIWB_BASE_ARGS[@]}"
-    AIWB_STATUS=$?
-    if [ "$AIWB_STARTUP_STALLED" -eq 1 ]; then
-      printf 'Claude CLI 在 macOS 上连续两次启动后均无 CPU、网络或输出活动，已自动终止。请重试；如果持续发生，请更新 Claude CLI。\n' >"$AIWB_LOG"
-    fi
-  fi
-else
-  "$AIWB_COMMAND" "\${AIWB_ARGS[@]}" >"$AIWB_OUTPUT" 2>"$AIWB_LOG"
-  AIWB_STATUS=$?
-fi
+# Process liveness, cancellation and terminal-state ownership belong to the
+# installed Agent. Do not add a second client-generated watchdog here: Claude
+# can legitimately keep its parent process quiet while a child performs work,
+# especially on macOS. The previous parent-only heuristic killed healthy tasks
+# after roughly one minute and conflicted with the Agent's process-tree watcher.
+"$AIWB_COMMAND" "\${AIWB_ARGS[@]}" >"$AIWB_OUTPUT" 2>"$AIWB_LOG"
+AIWB_STATUS=$?
 set -e
 
 if [ "$AIWB_STATUS" -ne 0 ]; then
@@ -1424,7 +1427,7 @@ export function buildAgentTaskCommand(profile, agent, prompt) {
   const command = agentCommand(profile, agent) || kind;
   const stateDir = joinWindowsPath(profile.workdir || ".", ".ai-workbench");
   const suffix = kind === "claude" ? ".claude-session" : ".session";
-  const sessionFile = joinWindowsPath(stateDir, `${sanitizeId(sessionName(profile, agent.id))}${suffix}`);
+  const sessionFile = joinWindowsPath(stateDir, `${conversationSessionStem(profile, agent)}${suffix}`);
   return {
     kind,
     command,

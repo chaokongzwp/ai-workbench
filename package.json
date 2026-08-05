@@ -44,7 +44,7 @@
     "assistant:schema": "node scripts/aiwb-assistant-cli.mjs schema",
     "assistant:prompt": "node scripts/aiwb-assistant-cli.mjs prompt --format json",
     "assistant:intent": "node scripts/aiwb-assistant-cli.mjs intent",
-    "agent:export:github": "node scripts/export-agent-github.mjs",
+    "agent:export": "node scripts/export-agent-release.mjs",
     "agent:publish": "node scripts/release-agent.mjs",
     "agent:publish:oss": "node scripts/publish-agent-oss.mjs",
     "agent:prune": "node scripts/prune-agent-versions.mjs",

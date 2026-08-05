@@ -16,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -33,7 +34,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 APP_NAME = "AI Workbench Config Sync"
-SERVICE_VERSION = 6
+SERVICE_VERSION = 8
 MAX_BODY_BYTES = int(os.environ.get("AIWB_CONFIG_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
 DATA_DIR = Path(os.environ.get("AIWB_CONFIG_SYNC_DATA_DIR", "/opt/ai-workbench-config-sync/data"))
 HOST = os.environ.get("AIWB_CONFIG_SYNC_HOST", "0.0.0.0")
@@ -47,16 +48,22 @@ APNS_TEAM_ID = os.environ.get("AIWB_APNS_TEAM_ID", "").strip()
 APNS_BUNDLE_ID = os.environ.get("AIWB_APNS_BUNDLE_ID", "com.beexofficial.beex.test").strip()
 APNS_KEY_PATH = Path(os.environ.get("AIWB_APNS_KEY_PATH", "/opt/ai-workbench-config-sync/secrets/apns-auth-key.p8"))
 AGENT_CONTROL_ADMIN_TOKEN = os.environ.get("AIWB_AGENT_CONTROL_ADMIN_TOKEN", "").strip()
-AGENT_CONTROL_DEFAULT_MANIFEST_URL = os.environ.get(
-    "AIWB_AGENT_CONTROL_DEFAULT_MANIFEST_URL",
-    "https://raw.githubusercontent.com/chaokongzwp/ai-workbench/main/agent/latest.json",
-).strip()
 AGENT_CONTROL_PUBLIC_BASE_URL = os.environ.get(
     "AIWB_AGENT_CONTROL_PUBLIC_BASE_URL",
     "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control",
 ).strip().rstrip("/")
 AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS = int(os.environ.get("AIWB_AGENT_CONTROL_DISPATCH_TIMEOUT_SECONDS", "12"))
+AGENT_GENERATION_REPAIR_MIN_VERSION = 54
 AGENT_CONTROL_ARTIFACT_NAMES = {
+    "linux/aiwbctl": "application/octet-stream",
+    "linux/manifest.json": "application/json; charset=utf-8",
+    "macos/aiwbctl": "application/octet-stream",
+    "macos/manifest.json": "application/json; charset=utf-8",
+    "windows/aiwb-agent.mjs": "text/javascript; charset=utf-8",
+    "windows/manifest.json": "application/json; charset=utf-8",
+    "common/aiwb-agent-http.mjs": "text/javascript; charset=utf-8",
+    "common/aiwb-agent-updater.mjs": "text/javascript; charset=utf-8",
+    # Read-only compatibility for already published v52 and older releases.
     "aiwbctl": "application/octet-stream",
     "aiwb-agent.mjs": "text/javascript; charset=utf-8",
     "aiwb-agent-http.mjs": "text/javascript; charset=utf-8",
@@ -743,69 +750,98 @@ def verify_agent_artifact(value: bytes, expected: Any, name: str) -> None:
 
 def publish_agent_artifacts(version: str, body: dict[str, Any]) -> dict[str, Any]:
     artifacts = body.get("artifacts")
-    manifest = body.get("manifest")
-    windows_manifest = body.get("windowsManifest")
-    if not isinstance(artifacts, dict) or not isinstance(manifest, dict) or not isinstance(windows_manifest, dict):
-        raise ValueError("发布请求缺少 Agent 清单或制品。")
-    if str(manifest.get("version") or "") != version or str(windows_manifest.get("version") or "") != version:
-        raise ValueError("Agent 清单版本与发布版本不一致。")
+    manifests = body.get("manifests")
+    platforms = ("linux", "macos", "windows")
+    if not isinstance(artifacts, dict) or not isinstance(manifests, dict):
+        raise ValueError("发布请求缺少三平台 Agent 清单或制品。")
+    if any(not isinstance(manifests.get(platform), dict) for platform in platforms):
+        raise ValueError("Agent 清单必须同时包含 linux、macos、windows。")
 
-    decoded = {
-        name: decode_agent_artifact(artifacts.get(name), name)
-        for name in ("aiwbctl", "aiwb-agent.mjs", "aiwb-agent-http.mjs", "aiwb-agent-updater.mjs")
+    artifact_keys = (
+        "linux/aiwbctl",
+        "macos/aiwbctl",
+        "windows/aiwb-agent.mjs",
+        "common/aiwb-agent-http.mjs",
+        "common/aiwb-agent-updater.mjs",
+    )
+    decoded = {name: decode_agent_artifact(artifacts.get(name), name) for name in artifact_keys}
+    entry_by_platform = {
+        "linux": "linux/aiwbctl",
+        "macos": "macos/aiwbctl",
+        "windows": "windows/aiwb-agent.mjs",
     }
-    verify_agent_artifact(decoded["aiwbctl"], manifest.get("sha256"), "aiwbctl")
-    verify_agent_artifact(decoded["aiwb-agent.mjs"], windows_manifest.get("sha256"), "aiwb-agent.mjs")
-    for candidate in (manifest, windows_manifest):
+    for platform in platforms:
+        manifest = manifests[platform]
+        if str(manifest.get("version") or "") != version or str(manifest.get("platform") or "") != platform:
+            raise ValueError(f"{platform} Agent 清单版本或平台无效。")
+        verify_agent_artifact(decoded[entry_by_platform[platform]], manifest.get("sha256"), entry_by_platform[platform])
         verify_agent_artifact(
-            decoded["aiwb-agent-http.mjs"],
-            (candidate.get("directRuntime") or {}).get("sha256"),
-            "aiwb-agent-http.mjs",
+            decoded["common/aiwb-agent-http.mjs"],
+            (manifest.get("directRuntime") or {}).get("sha256"),
+            "common/aiwb-agent-http.mjs",
         )
         verify_agent_artifact(
-            decoded["aiwb-agent-updater.mjs"],
-            (candidate.get("updaterRuntime") or {}).get("sha256"),
-            "aiwb-agent-updater.mjs",
+            decoded["common/aiwb-agent-updater.mjs"],
+            (manifest.get("updaterRuntime") or {}).get("sha256"),
+            "common/aiwb-agent-updater.mjs",
         )
 
-    runtime_urls = {
-        "directRuntime": {
-            **(manifest.get("directRuntime") or {}),
-            "url": agent_control_artifact_url(version, "aiwb-agent-http.mjs"),
-        },
-        "updaterRuntime": {
-            **(manifest.get("updaterRuntime") or {}),
-            "url": agent_control_artifact_url(version, "aiwb-agent-updater.mjs"),
-        },
-    }
-    stored_manifest = {
-        **manifest,
-        "scriptUrl": agent_control_artifact_url(version, "aiwbctl"),
-        "source": "config-center",
-        **runtime_urls,
-    }
-    stored_windows_manifest = {
-        **windows_manifest,
-        "scriptUrl": agent_control_artifact_url(version, "aiwb-agent.mjs"),
-        "source": "config-center",
-        "directRuntime": {
-            **(windows_manifest.get("directRuntime") or {}),
-            "url": agent_control_artifact_url(version, "aiwb-agent-http.mjs"),
-        },
-        "updaterRuntime": {
-            **(windows_manifest.get("updaterRuntime") or {}),
-            "url": agent_control_artifact_url(version, "aiwb-agent-updater.mjs"),
+    stored_manifests: dict[str, dict[str, Any]] = {}
+    for platform in platforms:
+        manifest = manifests[platform]
+        stored_manifests[platform] = {
+            **manifest,
+            "scriptUrl": agent_control_artifact_url(version, entry_by_platform[platform]),
+            "source": "config-center",
+            "directRuntime": {
+                **(manifest.get("directRuntime") or {}),
+                "url": agent_control_artifact_url(version, "common/aiwb-agent-http.mjs"),
+            },
+            "updaterRuntime": {
+                **(manifest.get("updaterRuntime") or {}),
+                "url": agent_control_artifact_url(version, "common/aiwb-agent-updater.mjs"),
+            },
+        }
+
+    expected_files = {
+        **decoded,
+        **{
+            f"{platform}/manifest.json": json_dumps(stored_manifests[platform])
+            for platform in platforms
         },
     }
     release_dir = agent_control_release_dir(version)
-    with STATE_LOCK:
-        for name, value in decoded.items():
-            atomic_write_bytes(release_dir / name, value, 0o700 if name == "aiwbctl" else 0o600)
-        atomic_write_json(release_dir / "manifest.json", stored_manifest)
-        atomic_write_json(release_dir / "windows-manifest.json", stored_windows_manifest)
+    staging_dir = release_dir.with_name(f".{release_dir.name}.{secrets.token_hex(6)}.staging")
+    safe_mkdir(staging_dir)
+    try:
+        for name, value in expected_files.items():
+            mode = 0o700 if name in entry_by_platform.values() else 0o600
+            atomic_write_bytes(staging_dir / name, value, mode)
+        with STATE_LOCK:
+            if release_dir.exists():
+                for name, value in expected_files.items():
+                    existing = release_dir / name
+                    if not existing.is_file() or existing.read_bytes() != value:
+                        raise ValueError(f"Agent v{version} 已存在且制品内容不同，拒绝覆盖不可变版本。")
+            else:
+                staging_dir.replace(release_dir)
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+
+    platform_records = {
+        platform: {
+            "manifestUrl": agent_control_artifact_url(version, f"{platform}/manifest.json"),
+            "downloadUrl": f"{AGENT_CONTROL_PUBLIC_BASE_URL}/download/{platform}",
+        }
+        for platform in platforms
+    }
     return {
-        "manifestUrl": agent_control_artifact_url(version, "manifest.json"),
-        "windowsManifestUrl": agent_control_artifact_url(version, "windows-manifest.json"),
+        "platforms": platform_records,
+        "manifestUrl": platform_records["linux"]["manifestUrl"],
+        "linuxManifestUrl": platform_records["linux"]["manifestUrl"],
+        "macosManifestUrl": platform_records["macos"]["manifestUrl"],
+        "windowsManifestUrl": platform_records["windows"]["manifestUrl"],
     }
 
 
@@ -814,10 +850,14 @@ def agent_control_latest() -> dict[str, Any]:
     if isinstance(record, dict) and str(record.get("manifestUrl") or "").strip():
         return record
     return {
-        "version": "bootstrap",
-        "manifestUrl": AGENT_CONTROL_DEFAULT_MANIFEST_URL,
+        "version": "unpublished",
+        "manifestUrl": "",
+        "linuxManifestUrl": "",
+        "macosManifestUrl": "",
+        "windowsManifestUrl": "",
+        "platforms": {},
         "publishedAt": None,
-        "source": "default",
+        "source": "unpublished",
     }
 
 
@@ -833,6 +873,44 @@ def require_agent_control_admin(headers: Any) -> None:
 def agent_version_number(value: Any) -> int:
     matched = re.search(r"\d+", str(value or ""))
     return int(matched.group(0)) if matched else 0
+
+
+def normalize_agent_platform(value: Any) -> str:
+    platform = str(value or "unknown").strip().lower()
+    if platform in {"darwin", "mac", "macos", "osx"}:
+        return "macos"
+    if platform in {"win32", "win64", "windows"}:
+        return "windows"
+    if platform in {"linux", "wsl"}:
+        return platform
+    return platform[:40] or "unknown"
+
+
+def agent_generation_ready(body: dict[str, Any]) -> bool:
+    running_sha = str(body.get("runningRuntimeSha256") or "").strip().lower()
+    disk_sha = str(body.get("diskRuntimeSha256") or "").strip().lower()
+    return (
+        body.get("generationReady") is True
+        and re.fullmatch(r"[a-f0-9]{64}", running_sha) is not None
+        and hmac.compare_digest(running_sha, disk_sha)
+    )
+
+
+def agent_control_client_needs_update(client: dict[str, Any], target: dict[str, Any]) -> bool:
+    target_version = agent_version_number(target.get("version"))
+    if target_version <= 0:
+        return False
+    version_behind = agent_version_number(client.get("version")) < target_version
+    generation_repair = target_version >= AGENT_GENERATION_REPAIR_MIN_VERSION and bool(client.get("needsRepair"))
+    return version_behind or generation_repair
+
+
+def agent_control_client_can_receive_push(client: dict[str, Any]) -> bool:
+    # v53 and older HTTP runtimes restart unconditionally after an update
+    # callback, even while a task is active. Only the generation-aware v54+
+    # protocol may receive proactive callbacks. Legacy clients still report
+    # updateRequired and converge through their periodic updater/App install.
+    return client.get("generationReady") is True
 
 
 def normalize_agent_callback_endpoint(value: Any) -> str:
@@ -870,6 +948,8 @@ def register_agent_control_client(body: dict[str, Any]) -> dict[str, Any]:
     update_token = str(body.get("updateToken") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{24,256}", update_token):
         raise ValueError("Agent 升级凭证无效。")
+    generation_ready = agent_generation_ready(body)
+    disk_version = str(body.get("diskVersion") or body.get("version") or "").strip()[:80]
     record = {
         "agentId": agent_id,
         "endpoint": normalize_agent_callback_endpoint(body.get("endpoint")),
@@ -877,7 +957,12 @@ def register_agent_control_client(body: dict[str, Any]) -> dict[str, Any]:
         # it is deliberately different from the task API bearer token.
         "updateToken": update_token,
         "version": str(body.get("version") or "").strip()[:80],
-        "platform": str(body.get("platform") or "unknown").strip()[:40],
+        "diskVersion": disk_version,
+        "platform": normalize_agent_platform(body.get("platform")),
+        "generationReady": generation_ready,
+        "needsRepair": not generation_ready,
+        "runningRuntimeSha256": str(body.get("runningRuntimeSha256") or "").strip().lower()[:64],
+        "diskRuntimeSha256": str(body.get("diskRuntimeSha256") or "").strip().lower()[:64],
         "hostname": str(body.get("hostname") or "").strip()[:160],
         "lastSeenAt": utc_now(),
     }
@@ -886,10 +971,17 @@ def register_agent_control_client(body: dict[str, Any]) -> dict[str, Any]:
         records.insert(0, record)
         atomic_write_json(agent_control_agents_path(), records[:2000])
     latest = agent_control_latest()
-    update_required = agent_version_number(record["version"]) < agent_version_number(latest.get("version"))
-    if update_required:
+    update_required = agent_control_client_needs_update(record, latest)
+    if update_required and agent_control_client_can_receive_push(record):
         threading.Thread(target=dispatch_agent_updates, args=(latest, {agent_id}), daemon=True).start()
-    return {"ok": True, "agentId": agent_id, "targetVersion": latest.get("version", ""), "updateRequired": update_required}
+    return {
+        "ok": True,
+        "agentId": agent_id,
+        "targetVersion": latest.get("version", ""),
+        "updateRequired": update_required,
+        "generationReady": generation_ready,
+        "needsRepair": not generation_ready,
+    }
 
 
 def dispatch_agent_update(client: dict[str, Any], target: dict[str, Any]) -> None:
@@ -912,11 +1004,12 @@ def dispatch_agent_update(client: dict[str, Any], target: dict[str, Any]) -> Non
 
 
 def dispatch_agent_updates(target: dict[str, Any], only_agent_ids: set[str] | None = None) -> None:
-    target_version = agent_version_number(target.get("version"))
     for client in read_agent_control_clients():
         if only_agent_ids is not None and str(client.get("agentId") or "") not in only_agent_ids:
             continue
-        if agent_version_number(client.get("version")) >= target_version:
+        if not agent_control_client_needs_update(client, target):
+            continue
+        if not agent_control_client_can_receive_push(client):
             continue
         dispatch_agent_update(client, target)
 
@@ -924,27 +1017,24 @@ def dispatch_agent_updates(target: dict[str, Any], only_agent_ids: set[str] | No
 def publish_agent_control(headers: Any, body: dict[str, Any]) -> dict[str, Any]:
     require_agent_control_admin(headers)
     version = str(body.get("version") or "").strip()[:80] or "published"
-    if isinstance(body.get("artifacts"), dict):
-        hosted = publish_agent_artifacts(version, body)
-        manifest_url = hosted["manifestUrl"]
-        windows_manifest_url = hosted["windowsManifestUrl"]
-        source = "config-center"
-    else:
-        # Backward compatibility for an older release client. New releases
-        # always upload verified artifacts and never install from this branch.
-        manifest_url = str(body.get("manifestUrl") or "").strip()
-        if not manifest_url.startswith("https://"):
-            raise ValueError("Agent manifestUrl 必须是 HTTPS 地址。")
-        windows_manifest_url = str(body.get("windowsManifestUrl") or "").strip()[:1024]
-        source = "published-url"
+    current = agent_control_latest()
+    if agent_version_number(version) < agent_version_number(current.get("version")):
+        raise ValueError(f"Agent 目标版本不能从 v{current.get('version')} 回退到 v{version}。")
+    if not isinstance(body.get("artifacts"), dict):
+        raise ValueError("Agent 只能通过配置中心上传三平台制品，不能发布外部下载地址。")
+    hosted = publish_agent_artifacts(version, body)
     record = {
         "version": version,
-        "manifestUrl": manifest_url[:1024],
-        "windowsManifestUrl": windows_manifest_url,
+        **hosted,
         "publishedAt": utc_now(),
-        "source": source,
+        "source": "config-center",
     }
     with STATE_LOCK:
+        # A concurrent slower publisher must not overwrite a newer latest
+        # record after both passed the optimistic check above.
+        current = agent_control_latest()
+        if agent_version_number(version) < agent_version_number(current.get("version")):
+            raise ValueError(f"Agent 目标版本不能从 v{current.get('version')} 回退到 v{version}。")
         atomic_write_json(agent_control_record_path(), record)
     threading.Thread(target=dispatch_agent_updates, args=(record,), daemon=True).start()
     return {"ok": True, "agent": record}
@@ -967,10 +1057,18 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/agent-control/latest":
                 latest = agent_control_latest()
-                self.send_json({"ok": True, "agent": latest, "manifestUrl": latest.get("manifestUrl", ""), "windowsManifestUrl": latest.get("windowsManifestUrl", "")})
+                self.send_json({
+                    "ok": True,
+                    "agent": latest,
+                    "platforms": latest.get("platforms", {}),
+                    "manifestUrl": latest.get("manifestUrl", ""),
+                    "linuxManifestUrl": latest.get("linuxManifestUrl", latest.get("manifestUrl", "")),
+                    "macosManifestUrl": latest.get("macosManifestUrl", ""),
+                    "windowsManifestUrl": latest.get("windowsManifestUrl", ""),
+                })
                 return
             artifact_match = re.fullmatch(
-                r"/v1/agent-control/releases/v(\d{1,12})/(aiwbctl|aiwb-agent\.mjs|aiwb-agent-http\.mjs|aiwb-agent-updater\.mjs|manifest\.json|windows-manifest\.json)",
+                r"/v1/agent-control/releases/v(\d{1,12})/((?:linux|macos)/aiwbctl|(?:linux|macos|windows)/manifest\.json|windows/aiwb-agent\.mjs|common/aiwb-agent-(?:http|updater)\.mjs|aiwbctl|aiwb-agent\.mjs|aiwb-agent-(?:http|updater)\.mjs|manifest\.json|windows-manifest\.json)",
                 path,
             )
             if artifact_match:
@@ -980,7 +1078,11 @@ class ConfigSyncHandler(BaseHTTPRequestHandler):
             if path in {"/v1/agent-control/download/linux", "/v1/agent-control/download/macos", "/v1/agent-control/download/windows"}:
                 latest = agent_control_latest()
                 version = str(latest.get("version") or "")
-                name = "aiwb-agent.mjs" if path.endswith("/windows") else "aiwbctl"
+                platform = path.rsplit("/", 1)[-1]
+                if latest.get("platforms"):
+                    name = "windows/aiwb-agent.mjs" if platform == "windows" else f"{platform}/aiwbctl"
+                else:
+                    name = "aiwb-agent.mjs" if platform == "windows" else "aiwbctl"
                 self.send_agent_artifact(version, name)
                 return
             if path == "/v1/agent-control/agents":

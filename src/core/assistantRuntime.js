@@ -312,7 +312,7 @@ export function createAssistantRuntimeCatalog(extra = {}) {
         roleAliases: "工作分身别名，用于自然语言匹配。",
         roleGoal: "这个工作分身负责的目标、视角或任务线，不等同于固定岗位边界。",
         agent: "codex 或 claude。",
-        platform: "linux / windows / wsl。",
+        platform: "macos / linux / windows / wsl。",
         workdir: "远端工作目录。",
         connectionMode: "agent 或 ssh。",
         status: "idle / connected / running / error / disconnected。",

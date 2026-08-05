@@ -104,6 +104,7 @@ const {
   extractResponseText,
   extractWorkbenchResponse,
   fallbackFinalOutput,
+  unwrapWholeMarkdownFence,
   fileToImageAttachment,
   finalAnswerEnd,
   finalAnswerStart,
@@ -593,7 +594,7 @@ export function MessageBubble({
   const taskState = taskStateForMessage(message);
   const taskRunning = taskStateIsActive(taskState);
   const bodyText = messageDisplayText(message.body);
-  const outputText = messageDisplayText(message.output);
+  const outputText = unwrapWholeMarkdownFence(messageDisplayText(message.output));
   const liveOutputText = messageDisplayText(message.liveOutput);
   const legacyFailureSource = `${bodyText}\n${outputText}\n${messageDisplayText(message.technicalDetail)}`;
   const legacyAgentFailure =

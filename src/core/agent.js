@@ -1,15 +1,9 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "52";
-export const workbenchAgentGithubRepo = "chaokongzwp/ai-workbench";
-export const workbenchAgentGithubBranch = "main";
-export const workbenchAgentGithubRawBaseUrl = `https://raw.githubusercontent.com/${workbenchAgentGithubRepo}/${workbenchAgentGithubBranch}`;
-export const workbenchAgentGithubManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/latest.json`;
-export const workbenchWindowsAgentManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${latestWorkbenchAgentVersion}/windows-manifest.json`;
+export const latestWorkbenchAgentVersion = "55";
 export const workbenchAgentOssBucket = "limpet-ai-workbench-47t37ccfz2";
 export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
-export const workbenchAgentManifestUrl = `${workbenchAgentGithubRawBaseUrl}/agent/v${latestWorkbenchAgentVersion}/manifest.json`;
 export const workbenchAgentControlEndpoint = "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control";
 export const workbenchAgentControlLatestUrl = `${workbenchAgentControlEndpoint}/latest`;
 
@@ -186,6 +180,12 @@ AIWB_DAEMON_LOG="$AIWB_HOME/daemon.log"
 AIWB_DAEMON_HEARTBEAT="$AIWB_HOME/daemon.heartbeat"
 AIWB_DAEMON_LOCK="$AIWB_HOME/daemon.lock"
 AIWB_TICK_LOCK="$AIWB_HOME/tick.lock"
+AIWB_SERVICE_PID="$AIWB_HOME/service.pid"
+AIWB_HTTP_PID="$AIWB_HOME/http.pid"
+AIWB_UPDATER_PID="$AIWB_HOME/updater.pid"
+AIWB_SERVICE_RUNTIME_SHA="$AIWB_HOME/service.runtime.sha256"
+AIWB_RUNTIME_GENERATION="$AIWB_HOME/runtime.generation"
+AIWB_RUNTIME_UPDATE_FENCE="$AIWB_HOME/runtime-update.fence"
 AIWB_LAUNCH_AGENT_LABEL="com.beexofficial.ai-workbench-agent"
 AIWB_LAUNCH_AGENT_DIR="$AIWB_USER_HOME/Library/LaunchAgents"
 AIWB_LAUNCH_AGENT_PLIST="$AIWB_LAUNCH_AGENT_DIR/$AIWB_LAUNCH_AGENT_LABEL.plist"
@@ -194,6 +194,30 @@ mkdir -p "$AIWB_TASKS" "$AIWB_CONVERSATIONS" "$AIWB_CONVERSATION_LOCKS"
 
 aiwb_now() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+aiwb_is_macos() {
+  [ "$(uname -s 2>/dev/null || printf unknown)" = "Darwin" ]
+}
+
+aiwb_has_user_execution_context() {
+  # The HTTPS runtime is intentionally headless even if its parent service was
+  # once started from an SSH shell and accidentally retained SSH_CONNECTION.
+  [ "\${AIWB_AGENT_HEADLESS_HTTP:-}" = "1" ] && return 1
+  [ -n "\${SSH_CONNECTION:-}" ] || [ -n "\${SSH_TTY:-}" ] || [ -t 0 ] || [ -t 1 ]
+}
+
+aiwb_print_execution_context_required() {
+  printf "__AIWB_AGENT_STATUS__error\\n"
+  printf "__AIWB_AGENT_ERROR_CODE__execution_context_required\\n"
+  printf "__AIWB_AGENT_ERROR__macOS 任务必须从 SSH 或交互式用户上下文启动。\\n"
+}
+
+aiwb_print_capacity_reached() {
+  printf "__AIWB_AGENT_STATUS__error\\n"
+  printf "__AIWB_AGENT_ERROR_CODE__capacity_reached\\n"
+  printf "__AIWB_AGENT_CAPACITY__%s\\n" "$AIWB_MAX_CONCURRENCY"
+  printf "__AIWB_AGENT_ERROR__Agent 当前并发任务已达到上限，请等待正在运行的任务结束后重试。\\n"
 }
 
 aiwb_task_dir() {
@@ -298,7 +322,7 @@ aiwb_update_conversation_from_task() {
   aiwb_write_file "$conversation_dir/status" "$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
   aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
 
-  for name in name workdir agent_id turn_id request_message_id response_message_id created_at started_at runner_started_at finished_at exit_code; do
+  for name in name workdir agent_id turn_id request_message_id response_message_id created_at started_at runner_started_at command_started_at heartbeat_at finished_at exit_code; do
     if [ -f "$task_dir/$name" ]; then
       cp "$task_dir/$name" "$conversation_dir/$name" 2>/dev/null || true
     fi
@@ -339,7 +363,11 @@ aiwb_task_age_seconds() {
   local started_at="$1"
   local start_epoch
   local now_epoch
-  start_epoch="$(date -u -d "$started_at" +%s 2>/dev/null || printf 0)"
+  start_epoch="$(
+    date -u -d "$started_at" +%s 2>/dev/null ||
+      date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$started_at" +%s 2>/dev/null ||
+      printf 0
+  )"
   now_epoch="$(date -u +%s)"
   if [ "$start_epoch" -gt 0 ] 2>/dev/null; then
     printf "%s\\n" "$((now_epoch - start_epoch))"
@@ -353,15 +381,145 @@ aiwb_path_mtime_epoch() {
   stat -c %Y "$path" 2>/dev/null || date -u -r "$path" +%s 2>/dev/null || printf 0
 }
 
+aiwb_file_sha256() {
+  local path="$1"
+  [ -s "$path" ] || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" 2>/dev/null | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
+    return 0
+  fi
+  return 1
+}
+
+# Cache the generation that this shell process actually started in. The file at
+# $AIWB_HOME/aiwbctl can be atomically replaced while an older create-now
+# process is waiting for tick.lock, so reading it only after the wait would
+# confuse the old process with the newly committed runtime.
+AIWB_PROCESS_CONTROL_SHA="$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
+AIWB_PROCESS_GENERATION_TOKEN="$(cat "$AIWB_RUNTIME_GENERATION" 2>/dev/null || printf "")"
+
+aiwb_runtime_update_in_progress() {
+  [ -f "$AIWB_RUNTIME_UPDATE_FENCE" ]
+}
+
+aiwb_process_generation_is_current() {
+  local installed_control_sha
+  local installed_version
+  local installed_generation_token
+
+  aiwb_runtime_update_in_progress && return 1
+  installed_control_sha="$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
+  installed_version="$("$AIWB_HOME/aiwbctl" --version 2>/dev/null | head -n 1 || printf "")"
+  installed_generation_token="$(cat "$AIWB_RUNTIME_GENERATION" 2>/dev/null || printf "")"
+  [ -n "$AIWB_PROCESS_CONTROL_SHA" ] &&
+    [ "$installed_control_sha" = "$AIWB_PROCESS_CONTROL_SHA" ] &&
+    [ "$installed_version" = "$AIWB_VERSION" ] &&
+    [ "$installed_generation_token" = "$AIWB_PROCESS_GENERATION_TOKEN" ]
+}
+
+aiwb_print_generation_changed() {
+  printf "__AIWB_AGENT_STATUS__error\\n"
+  printf "__AIWB_AGENT_ERROR_CODE__generation_changed\\n"
+  printf "__AIWB_AGENT_RETRYABLE__1\\n"
+  printf "__AIWB_AGENT_ERROR__Agent 正在升级或已切换到新版本，本次旧版本任务未启动；请重试。\\n"
+}
+
+aiwb_reject_task_for_generation_change() {
+  local task_dir="$1"
+  local reason="$2"
+  {
+    printf "AI Workbench Agent: task was not started because the runtime generation changed.\\n"
+    printf "reason: %s\\n" "$reason"
+    printf "checked_at: %s\\n" "$(aiwb_now)"
+  } >> "$task_dir/bootstrap.log"
+  aiwb_write_file "$task_dir/retryable_error_code" "generation_changed"
+  aiwb_set_status "$task_dir" "error" "76"
+}
+
+aiwb_process_matches_component() {
+  local pid="$1"
+  local component="$2"
+  local command_line
+
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$pid" -gt 1 ] 2>/dev/null || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  command_line="$(LC_ALL=C ps -p "$pid" -o command= 2>/dev/null || printf "")"
+  [ -n "$command_line" ] || return 1
+
+  case "$component" in
+    service)
+      case "$command_line" in
+        *bash*"$AIWB_HOME/aiwbctl"*service-run*|*sh*"$AIWB_HOME/aiwbctl"*service-run*) return 0 ;;
+      esac
+      ;;
+    daemon)
+      case "$command_line" in
+        *bash*"$AIWB_HOME/aiwbctl"*daemon*|*sh*"$AIWB_HOME/aiwbctl"*daemon*|*bash*"$AIWB_HOME/aiwbctl"*service-run*|*sh*"$AIWB_HOME/aiwbctl"*service-run*) return 0 ;;
+      esac
+      ;;
+    http)
+      case "$command_line" in
+        *node*"$AIWB_HOME/aiwb-agent-http.mjs"*) return 0 ;;
+      esac
+      ;;
+    updater)
+      case "$command_line" in
+        *node*"$AIWB_HOME/aiwb-agent-updater.mjs"*) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+aiwb_component_pid_file_ready() {
+  local pid_file="$1"
+  local component="$2"
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || printf "")"
+  aiwb_process_matches_component "$pid" "$component"
+}
+
+aiwb_runtime_marker_matches_file() {
+  local runtime_path="$1"
+  local marker_path="$2"
+  local expected_sha
+  local running_sha
+  expected_sha="$(aiwb_file_sha256 "$runtime_path" 2>/dev/null || printf "")"
+  running_sha="$(cat "$marker_path" 2>/dev/null || printf "")"
+  [ -n "$expected_sha" ] && [ "$running_sha" = "$expected_sha" ]
+}
+
+aiwb_detach_install_from_agent_parent() {
+  if aiwb_process_matches_component "$PPID" http || aiwb_process_matches_component "$PPID" updater; then
+    # A direct-runtime self-update invokes install-service as its child. The
+    # old parent must be stopped to release the port/PID, so detach our stdio
+    # first; otherwise its closed pipes can terminate this installer midway.
+    trap '' HUP
+    exec </dev/null >> "$AIWB_DAEMON_LOG" 2>&1
+  fi
+}
+
 aiwb_clear_stale_tick_lock() {
   local lock_epoch
   local now_epoch
   local age
+  local owner_pid
   [ -d "$AIWB_TICK_LOCK" ] || return 0
 
   lock_epoch="$(aiwb_path_mtime_epoch "$AIWB_TICK_LOCK")"
   now_epoch="$(date -u +%s)"
   age="$((now_epoch - lock_epoch))"
+  owner_pid="$(cat "$AIWB_TICK_LOCK/owner.pid" 2>/dev/null || printf "")"
+  if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+    return 0
+  fi
   if [ "$lock_epoch" -gt 0 ] 2>/dev/null && [ "$age" -gt 30 ] 2>/dev/null; then
     rm -f "$AIWB_TICK_LOCK/owner.pid" "$AIWB_TICK_LOCK/started_at" 2>/dev/null || true
     if rmdir "$AIWB_TICK_LOCK" 2>/dev/null; then
@@ -370,23 +528,57 @@ aiwb_clear_stale_tick_lock() {
   fi
 }
 
+aiwb_acquire_tick_lock() {
+  local attempt
+  attempt=0
+  while ! mkdir "$AIWB_TICK_LOCK" 2>/dev/null; do
+    aiwb_clear_stale_tick_lock
+    if mkdir "$AIWB_TICK_LOCK" 2>/dev/null; then
+      break
+    fi
+    attempt="$((attempt + 1))"
+    if [ "$attempt" -ge 100 ] 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.02
+  done
+  aiwb_write_file "$AIWB_TICK_LOCK/owner.pid" "$$"
+  aiwb_write_file "$AIWB_TICK_LOCK/started_at" "$(aiwb_now)"
+}
+
+aiwb_release_tick_lock() {
+  if [ "$(cat "$AIWB_TICK_LOCK/owner.pid" 2>/dev/null || printf "")" = "$$" ]; then
+    rm -f "$AIWB_TICK_LOCK/owner.pid" "$AIWB_TICK_LOCK/started_at" 2>/dev/null || true
+    rmdir "$AIWB_TICK_LOCK" 2>/dev/null || true
+  fi
+}
+
 aiwb_daemon_alive() {
   local pid
   pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  aiwb_process_matches_component "$pid" daemon
 }
 
 aiwb_daemon_lock_owner_alive() {
   local pid
+  local lock_version
+  local lock_control_sha
+  local installed_control_sha
   pid="$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  lock_version="$(cat "$AIWB_DAEMON_LOCK/version" 2>/dev/null || printf "")"
+  lock_control_sha="$(cat "$AIWB_DAEMON_LOCK/control.sha256" 2>/dev/null || printf "")"
+  installed_control_sha="$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
+  [ "$lock_version" = "$AIWB_VERSION" ] &&
+    [ -n "$installed_control_sha" ] &&
+    [ "$lock_control_sha" = "$installed_control_sha" ] &&
+    aiwb_process_matches_component "$pid" daemon
 }
 
 aiwb_release_daemon_lock() {
   local owner
   owner="$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")"
   if [ "$owner" = "$$" ]; then
-    rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+    rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" "$AIWB_DAEMON_LOCK/control.sha256" 2>/dev/null || true
     rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
   fi
   if [ "$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")" = "$$" ]; then
@@ -398,6 +590,7 @@ aiwb_acquire_daemon_lock() {
   if mkdir "$AIWB_DAEMON_LOCK" 2>/dev/null; then
     aiwb_write_file "$AIWB_DAEMON_LOCK/owner.pid" "$$"
     aiwb_write_file "$AIWB_DAEMON_LOCK/version" "$AIWB_VERSION"
+    aiwb_write_file "$AIWB_DAEMON_LOCK/control.sha256" "$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
     return 0
   fi
 
@@ -405,11 +598,12 @@ aiwb_acquire_daemon_lock() {
     return 1
   fi
 
-  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
+  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" "$AIWB_DAEMON_LOCK/control.sha256" 2>/dev/null || true
   rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
   if mkdir "$AIWB_DAEMON_LOCK" 2>/dev/null; then
     aiwb_write_file "$AIWB_DAEMON_LOCK/owner.pid" "$$"
     aiwb_write_file "$AIWB_DAEMON_LOCK/version" "$AIWB_VERSION"
+    aiwb_write_file "$AIWB_DAEMON_LOCK/control.sha256" "$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
     return 0
   fi
   return 1
@@ -424,35 +618,70 @@ aiwb_installed_version() {
 }
 
 aiwb_stop_daemons() {
-  local pid
+  # v52 could leave HTTP and updater running as independent nohup processes.
+  # Stop only processes whose command line proves they belong to this Agent
+  # home; a stale PID file must never be allowed to kill an unrelated process.
+  aiwb_stop_component_processes service "$AIWB_SERVICE_PID" TERM
+  aiwb_stop_component_processes daemon "$AIWB_DAEMON_PID" TERM
+  aiwb_stop_component_processes http "$AIWB_HTTP_PID" TERM
+  aiwb_stop_component_processes updater "$AIWB_UPDATER_PID" TERM
+
+  sleep 0.4
+
+  aiwb_stop_component_processes service "$AIWB_SERVICE_PID" KILL
+  aiwb_stop_component_processes daemon "$AIWB_DAEMON_PID" KILL
+  aiwb_stop_component_processes http "$AIWB_HTTP_PID" KILL
+  aiwb_stop_component_processes updater "$AIWB_UPDATER_PID" KILL
+
+  rm -f "$AIWB_DAEMON_HEARTBEAT" "$AIWB_SERVICE_RUNTIME_SHA" \
+    "$AIWB_HOME/http.runtime.sha256" "$AIWB_HOME/updater.runtime.sha256" 2>/dev/null || true
+  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" "$AIWB_DAEMON_LOCK/control.sha256" 2>/dev/null || true
+  rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+}
+
+aiwb_stop_component_processes() {
+  local component="$1"
+  local pid_file="$2"
+  local signal="$3"
+  local recorded_pid
+  local current_pid
   local candidates
+  local pattern
+  local pid
 
-  candidates="$(pgrep -f "$AIWB_HOME/aiwbctl daemon" 2>/dev/null || printf "")"
+  recorded_pid="$(cat "$pid_file" 2>/dev/null || printf "")"
+  candidates="$recorded_pid"
+  case "$component" in
+    service) pattern="$AIWB_HOME/aiwbctl.*service-run" ;;
+    daemon) pattern="$AIWB_HOME/aiwbctl" ;;
+    http) pattern="$AIWB_HOME/aiwb-agent-http.mjs" ;;
+    updater) pattern="$AIWB_HOME/aiwb-agent-updater.mjs" ;;
+    *) pattern="" ;;
+  esac
+  if [ -n "$pattern" ] && command -v pgrep >/dev/null 2>&1; then
+    candidates="$candidates $(pgrep -f "$pattern" 2>/dev/null || printf "")"
+  fi
+
   for pid in $candidates; do
     [ "$pid" = "$$" ] && continue
-    [ "$pid" = "$PPID" ] && continue
-    kill "$pid" >/dev/null 2>&1 || true
-  done
-
-  sleep 0.2
-  for pid in $candidates; do
-    [ "$pid" = "$$" ] && continue
-    [ "$pid" = "$PPID" ] && continue
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -9 "$pid" >/dev/null 2>&1 || true
+    if aiwb_process_matches_component "$pid" "$component"; then
+      kill -"$signal" "$pid" >/dev/null 2>&1 || true
     fi
   done
 
-  rm -f "$AIWB_DAEMON_PID" "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || true
-  rm -f "$AIWB_DAEMON_LOCK/owner.pid" "$AIWB_DAEMON_LOCK/version" 2>/dev/null || true
-  rmdir "$AIWB_DAEMON_LOCK" 2>/dev/null || true
+  if [ "$signal" = "KILL" ]; then
+    current_pid="$(cat "$pid_file" 2>/dev/null || printf "")"
+    if [ -n "$recorded_pid" ] && [ "$current_pid" = "$recorded_pid" ]; then
+      rm -f "$pid_file" 2>/dev/null || true
+    fi
+  fi
 }
 
 aiwb_task_pid_alive() {
   local task_dir="$1"
   local pid
   pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  aiwb_task_runner_matches "$task_dir" "$pid"
 }
 
 aiwb_stop_pid_tree() {
@@ -473,6 +702,117 @@ aiwb_stop_pid_tree() {
   kill -"$signal" "$root_pid" >/dev/null 2>&1 || true
 }
 
+aiwb_task_runner_matches() {
+  local task_dir="$1"
+  local runner_pid="$2"
+  local command_line
+
+  case "$runner_pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$runner_pid" -gt 1 ] 2>/dev/null || return 1
+  kill -0 "$runner_pid" 2>/dev/null || return 1
+  command_line="$(LC_ALL=C ps -p "$runner_pid" -o command= 2>/dev/null || printf "")"
+  case "$command_line" in
+    *"$task_dir/run.sh"*) return 0 ;;
+  esac
+  return 1
+}
+
+aiwb_task_creator_process_matches() {
+  local task_dir="$1"
+  local creator_pid="$2"
+  local task_id
+  local command_line
+
+  case "$creator_pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$creator_pid" -gt 1 ] 2>/dev/null || return 1
+  kill -0 "$creator_pid" 2>/dev/null || return 1
+  task_id="$(basename -- "$task_dir")"
+  command_line="$(LC_ALL=C ps -p "$creator_pid" -o command= 2>/dev/null || printf "")"
+  case "$command_line" in
+    *"$AIWB_HOME/aiwbctl"*create*"$task_id"*) return 0 ;;
+  esac
+  return 1
+}
+
+aiwb_task_creator_alive() {
+  local task_dir="$1"
+  local creator_pid
+  local candidate_pid
+
+  creator_pid="$(cat "$task_dir/creator.pid" 2>/dev/null || printf "")"
+  if aiwb_task_creator_process_matches "$task_dir" "$creator_pid"; then
+    return 0
+  fi
+
+  # v54 create-now did not publish creator.pid. During the one-release
+  # migration, find an old creator by its exact Agent path and task id so an
+  # installer/daemon never mistakes a live lock waiter for abandoned work.
+  if command -v pgrep >/dev/null 2>&1; then
+    for candidate_pid in $(pgrep -f "$AIWB_HOME/aiwbctl" 2>/dev/null || printf ""); do
+      if aiwb_task_creator_process_matches "$task_dir" "$candidate_pid"; then
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+aiwb_fail_macos_legacy_task_if_needed() {
+  local task_dir="$1"
+  local status
+
+  aiwb_is_macos || return 1
+  status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+  case "$status" in
+    queued|preparing) ;;
+    *) return 1 ;;
+  esac
+  aiwb_task_pid_alive "$task_dir" && return 1
+  aiwb_task_creator_alive "$task_dir" && return 1
+
+  {
+    printf "AI Workbench Agent migration: macOS 后台服务不能安全启动旧版 %s 任务。\\n" "$status"
+    printf "该任务没有有效的用户上下文启动进程，已终止；客户端可以安全重试。\\n"
+    printf "checked_at: %s\\n" "$(aiwb_now)"
+  } >> "$task_dir/bootstrap.log"
+  aiwb_write_file "$task_dir/migration_error_code" "macos_user_context_required"
+  aiwb_set_status "$task_dir" "error" "78"
+  aiwb_append_log "terminated macOS legacy task=$(basename -- "$task_dir") previous_status=$status"
+  return 0
+}
+
+aiwb_pid_is_descendant_of() {
+  local child_pid="$1"
+  local ancestor_pid="$2"
+  local current_pid
+  local parent_pid
+  local depth="0"
+
+  case "$child_pid:$ancestor_pid" in
+    *[!0-9:]*) return 1 ;;
+  esac
+  [ "$child_pid" -gt 1 ] 2>/dev/null || return 1
+  [ "$ancestor_pid" -gt 1 ] 2>/dev/null || return 1
+  kill -0 "$child_pid" 2>/dev/null || return 1
+  current_pid="$child_pid"
+  while [ "$depth" -lt 64 ] 2>/dev/null; do
+    parent_pid="$(LC_ALL=C ps -p "$current_pid" -o ppid= 2>/dev/null | tr -d '[:space:]' || printf "")"
+    case "$parent_pid" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$parent_pid" = "$ancestor_pid" ] && return 0
+    [ "$parent_pid" -gt 1 ] 2>/dev/null || return 1
+    [ "$parent_pid" != "$current_pid" ] || return 1
+    current_pid="$parent_pid"
+    depth="$((depth + 1))"
+  done
+  return 1
+}
+
 aiwb_stop_task_processes() {
   local task_dir="$1"
   local runner_pid
@@ -481,21 +821,26 @@ aiwb_stop_task_processes() {
   runner_pid="$(cat "$task_dir/pid" 2>/dev/null || printf "")"
   command_pid="$(cat "$task_dir/command_pid" 2>/dev/null || printf "")"
 
-  # Stop the actual command first. The runner can disappear independently and
-  # leave a long-running Claude/Codex descendant orphaned behind.
-  if [ -n "$command_pid" ] && kill -0 "$command_pid" 2>/dev/null; then
+  # PID files survive crashes and PIDs can be reused. Never signal a recorded
+  # runner unless its live command line contains this exact task's run.sh; only
+  # signal command_pid while it is still provably below that verified runner.
+  if ! aiwb_task_runner_matches "$task_dir" "$runner_pid"; then
+    return 0
+  fi
+  if aiwb_pid_is_descendant_of "$command_pid" "$runner_pid"; then
     aiwb_stop_pid_tree "$command_pid" TERM
   fi
-  if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+  if aiwb_task_runner_matches "$task_dir" "$runner_pid"; then
     aiwb_stop_pid_tree "$runner_pid" TERM
   fi
 
   sleep 0.4
 
-  if [ -n "$command_pid" ] && kill -0 "$command_pid" 2>/dev/null; then
+  if aiwb_task_runner_matches "$task_dir" "$runner_pid" &&
+     aiwb_pid_is_descendant_of "$command_pid" "$runner_pid"; then
     aiwb_stop_pid_tree "$command_pid" KILL
   fi
-  if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+  if aiwb_task_runner_matches "$task_dir" "$runner_pid"; then
     aiwb_stop_pid_tree "$runner_pid" KILL
   fi
 }
@@ -582,6 +927,7 @@ aiwb_write_runner_script() {
 #!/usr/bin/env bash
 set +e
 AIWB_TASK_DIR="$1"
+export AIWB_TASK_DIR
 
 aiwb_now() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -783,7 +1129,7 @@ aiwb_update_conversation_from_task() {
   aiwb_write_file "$conversation_dir/status" "$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf unknown)"
   aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
 
-  for name in name workdir agent_id created_at started_at runner_started_at finished_at exit_code; do
+  for name in name workdir agent_id created_at started_at runner_started_at command_started_at heartbeat_at finished_at exit_code; do
     if [ -f "$AIWB_TASK_DIR/$name" ]; then
       cp "$AIWB_TASK_DIR/$name" "$conversation_dir/$name" 2>/dev/null || true
     fi
@@ -828,10 +1174,25 @@ if [ "$AIWB_DECODE_STATUS" -ne 0 ] || [ -z "$AIWB_DECODED_COMMAND" ]; then
   exit 0
 fi
 
-# Codex bundled with ChatGPT is executable but is not exposed on the PATH used
-# by remote SSH commands. Keep older saved profiles working on macOS hosts.
-if [ ! -x "/usr/local/bin/codex" ] && [ -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]; then
-  AIWB_DECODED_COMMAND="$(printf "%s" "$AIWB_DECODED_COMMAND" | sed "s#/usr/local/bin/codex#/Applications/ChatGPT.app/Contents/Resources/codex#g")"
+# Bundled Codex is executable but is not exposed on the PATH used by remote
+# SSH commands. Resolve both supported macOS application locations so an App
+# rename or an older saved profile cannot break task startup.
+AIWB_MAC_CODEX=""
+for AIWB_MAC_CODEX_CANDIDATE in \\
+  "/Applications/ChatGPT.app/Contents/Resources/codex" \\
+  "/Applications/Codex.app/Contents/Resources/codex" \\
+  "$HOME/Applications/ChatGPT.app/Contents/Resources/codex" \\
+  "$HOME/Applications/Codex.app/Contents/Resources/codex"; do
+  if [ -x "$AIWB_MAC_CODEX_CANDIDATE" ]; then
+    AIWB_MAC_CODEX="$AIWB_MAC_CODEX_CANDIDATE"
+    break
+  fi
+done
+if [ -n "$AIWB_MAC_CODEX" ]; then
+  AIWB_DECODED_COMMAND="$(printf "%s" "$AIWB_DECODED_COMMAND" | sed \\
+    -e "s#/usr/local/bin/codex#$AIWB_MAC_CODEX#g" \\
+    -e "s#/Applications/ChatGPT.app/Contents/Resources/codex#$AIWB_MAC_CODEX#g" \\
+    -e "s#/Applications/Codex.app/Contents/Resources/codex#$AIWB_MAC_CODEX#g")"
 fi
 
 AIWB_TASK_AGENT_ID="$(cat "$AIWB_TASK_DIR/agent_id" 2>/dev/null || printf "")"
@@ -842,6 +1203,17 @@ fi
 eval "$AIWB_DECODED_COMMAND" > "$AIWB_TASK_DIR/output.log" 2>&1 &
 AIWB_COMMAND_PID=$!
 aiwb_write_file "$AIWB_TASK_DIR/command_pid" "$AIWB_COMMAND_PID"
+aiwb_write_file "$AIWB_TASK_DIR/command_started_at" "$(aiwb_now)"
+
+aiwb_task_heartbeat() {
+  local command_pid="$1"
+  while kill -0 "$command_pid" 2>/dev/null; do
+    aiwb_write_file "$AIWB_TASK_DIR/heartbeat_at" "$(aiwb_now)"
+    sleep 5
+  done
+}
+aiwb_task_heartbeat "$AIWB_COMMAND_PID" &
+AIWB_HEARTBEAT_PID=$!
 
 aiwb_process_tree_pids() {
   local root_pid="$1"
@@ -943,6 +1315,8 @@ if [ "$AIWB_TASK_AGENT_ID" = "claude" ]; then
 fi
 wait "$AIWB_COMMAND_PID"
 AIWB_EXIT_CODE=$?
+kill "$AIWB_HEARTBEAT_PID" >/dev/null 2>&1 || true
+wait "$AIWB_HEARTBEAT_PID" 2>/dev/null || true
 if [ -n "$AIWB_CLAUDE_WATCHDOG_PID" ]; then
   kill "$AIWB_CLAUDE_WATCHDOG_PID" >/dev/null 2>&1 || true
   wait "$AIWB_CLAUDE_WATCHDOG_PID" 2>/dev/null || true
@@ -1075,9 +1449,21 @@ aiwb_tick_tasks_unlocked() {
     status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
     case "$status" in
       queued)
+        if aiwb_is_macos; then
+          # launchd/service-run is a headless macOS context. Legacy queued work
+          # must be made terminal and retried through SSH create-now; it must
+          # never cross into aiwb_launch_task from this daemon.
+          aiwb_fail_macos_legacy_task_if_needed "$task_dir" || true
+          continue
+        fi
         if [ "$count" -lt "$AIWB_MAX_CONCURRENCY" ] 2>/dev/null; then
           aiwb_launch_task "$task_dir"
           count="$((count + 1))"
+        fi
+        ;;
+      preparing)
+        if aiwb_is_macos; then
+          aiwb_fail_macos_legacy_task_if_needed "$task_dir" || true
         fi
         ;;
       running)
@@ -1091,20 +1477,13 @@ aiwb_tick_tasks_unlocked() {
 }
 
 aiwb_tick_tasks() {
-  if ! mkdir "$AIWB_TICK_LOCK" 2>/dev/null; then
-    aiwb_clear_stale_tick_lock
-    if ! mkdir "$AIWB_TICK_LOCK" 2>/dev/null; then
-      return 0
-    fi
+  if ! aiwb_acquire_tick_lock; then
+    return 0
   fi
-
-  aiwb_write_file "$AIWB_TICK_LOCK/owner.pid" "$$"
-  aiwb_write_file "$AIWB_TICK_LOCK/started_at" "$(aiwb_now)"
 
   aiwb_tick_tasks_unlocked
   local rc="$?"
-  rm -f "$AIWB_TICK_LOCK/owner.pid" "$AIWB_TICK_LOCK/started_at" 2>/dev/null || true
-  rmdir "$AIWB_TICK_LOCK" 2>/dev/null || true
+  aiwb_release_tick_lock
   return "$rc"
 }
 
@@ -1115,7 +1494,7 @@ aiwb_daemon_loop() {
   fi
   aiwb_write_file "$AIWB_DAEMON_PID" "$$"
   aiwb_append_log "daemon started pid=$$ version=$AIWB_VERSION"
-  trap 'aiwb_append_log "daemon stopped pid=$$ version=$AIWB_VERSION"; aiwb_release_daemon_lock; exit 0' INT TERM EXIT
+  trap 'aiwb_append_log "daemon stopped pid=$$ version=$AIWB_VERSION"; aiwb_release_tick_lock; aiwb_release_daemon_lock; exit 0' INT TERM EXIT
   while true; do
     if [ "$(aiwb_installed_version)" != "$AIWB_VERSION" ]; then
       aiwb_append_log "daemon version superseded pid=$$ version=$AIWB_VERSION"
@@ -1132,7 +1511,15 @@ aiwb_node_command() {
     command -v node
     return 0
   fi
-  for candidate in /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+  for candidate in \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node \
+    /usr/bin/node \
+    "$HOME/.local/bin/node" \
+    "$HOME/.volta/bin/node" \
+    "$HOME/.asdf/shims/node" \
+    "$HOME"/.nvm/versions/node/*/bin/node \
+    "$HOME"/.fnm/node-versions/*/installation/bin/node; do
     if [ -x "$candidate" ]; then
       printf "%s\n" "$candidate"
       return 0
@@ -1143,34 +1530,63 @@ aiwb_node_command() {
 
 aiwb_service_run() {
   local node_command=""
-  local daemon_pid=""
-  local http_pid=""
-  local updater_pid=""
+
+  aiwb_write_file "$AIWB_SERVICE_PID" "$$"
+  aiwb_write_file "$AIWB_SERVICE_RUNTIME_SHA" "$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
+  AIWB_SERVICE_DAEMON_PID=""
+  AIWB_SERVICE_HTTP_PID=""
+  AIWB_SERVICE_UPDATER_PID=""
 
   node_command="$(aiwb_node_command 2>/dev/null || printf "")"
   if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-http.mjs" ]; then
     "$node_command" "$AIWB_HOME/aiwb-agent-http.mjs" >> "$AIWB_HOME/http.log" 2>&1 &
-    http_pid="$!"
+    AIWB_SERVICE_HTTP_PID="$!"
   fi
   if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-updater.mjs" ]; then
     "$node_command" "$AIWB_HOME/aiwb-agent-updater.mjs" >> "$AIWB_HOME/updater.log" 2>&1 &
-    updater_pid="$!"
+    AIWB_SERVICE_UPDATER_PID="$!"
   fi
   aiwb_daemon_loop &
-  daemon_pid="$!"
+  AIWB_SERVICE_DAEMON_PID="$!"
 
-  trap 'for child_pid in "$daemon_pid" "$http_pid" "$updater_pid"; do [ -n "$child_pid" ] && kill "$child_pid" >/dev/null 2>&1 || true; done; wait >/dev/null 2>&1 || true; exit 0' INT TERM EXIT
-  while kill -0 "$daemon_pid" >/dev/null 2>&1; do
-    if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-http.mjs" ] && { [ -z "$http_pid" ] || ! kill -0 "$http_pid" >/dev/null 2>&1; }; then
+  trap 'aiwb_service_cleanup; exit 0' INT TERM EXIT
+  while kill -0 "$AIWB_SERVICE_DAEMON_PID" >/dev/null 2>&1; do
+    if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-http.mjs" ] && { [ -z "$AIWB_SERVICE_HTTP_PID" ] || ! kill -0 "$AIWB_SERVICE_HTTP_PID" >/dev/null 2>&1; }; then
       "$node_command" "$AIWB_HOME/aiwb-agent-http.mjs" >> "$AIWB_HOME/http.log" 2>&1 &
-      http_pid="$!"
+      AIWB_SERVICE_HTTP_PID="$!"
     fi
-    if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-updater.mjs" ] && { [ -z "$updater_pid" ] || ! kill -0 "$updater_pid" >/dev/null 2>&1; }; then
+    if [ -n "$node_command" ] && [ -f "$AIWB_HOME/aiwb-agent-updater.mjs" ] && { [ -z "$AIWB_SERVICE_UPDATER_PID" ] || ! kill -0 "$AIWB_SERVICE_UPDATER_PID" >/dev/null 2>&1; }; then
       "$node_command" "$AIWB_HOME/aiwb-agent-updater.mjs" >> "$AIWB_HOME/updater.log" 2>&1 &
-      updater_pid="$!"
+      AIWB_SERVICE_UPDATER_PID="$!"
     fi
     sleep 2
   done
+  aiwb_service_cleanup
+  trap - INT TERM EXIT
+}
+
+aiwb_service_cleanup() {
+  local child_pid
+  for child_pid in "$AIWB_SERVICE_DAEMON_PID" "$AIWB_SERVICE_HTTP_PID" "$AIWB_SERVICE_UPDATER_PID"; do
+    [ -n "$child_pid" ] && kill "$child_pid" >/dev/null 2>&1 || true
+  done
+  wait >/dev/null 2>&1 || true
+  if [ "$(cat "$AIWB_SERVICE_PID" 2>/dev/null || printf "")" = "$$" ]; then
+    rm -f "$AIWB_SERVICE_PID" "$AIWB_SERVICE_RUNTIME_SHA"
+  fi
+}
+
+aiwb_start_service_run() {
+  local service_pid
+  service_pid="$(cat "$AIWB_SERVICE_PID" 2>/dev/null || printf "")"
+  if aiwb_process_matches_component "$service_pid" service; then
+    return 0
+  fi
+  rm -f "$AIWB_SERVICE_PID" 2>/dev/null || true
+  nohup "$0" service-run </dev/null >> "$AIWB_DAEMON_LOG" 2>&1 &
+  sleep 0.5
+  service_pid="$(cat "$AIWB_SERVICE_PID" 2>/dev/null || printf "")"
+  aiwb_process_matches_component "$service_pid" service
 }
 
 aiwb_start_daemon() {
@@ -1188,6 +1604,17 @@ aiwb_start_daemon() {
 
 aiwb_daemon_status() {
   if aiwb_daemon_alive; then
+    printf "running\\n"
+  else
+    printf "stopped\\n"
+  fi
+}
+
+aiwb_pid_file_status() {
+  local path="$1"
+  local pid
+  pid="$(cat "$path" 2>/dev/null || printf "")"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     printf "running\\n"
   else
     printf "stopped\\n"
@@ -1300,12 +1727,19 @@ aiwb_host_metrics() {
 }
 
 aiwb_print_health() {
-  aiwb_start_daemon >/dev/null 2>&1 || true
+  local generation_ready="0"
+  if aiwb_runtime_components_ready; then
+    generation_ready="1"
+  fi
   printf "__AIWB_AGENT_STATUS__ready\\n"
   printf "__AIWB_AGENT_VERSION__%s\\n" "$AIWB_VERSION"
+  printf "__AIWB_AGENT_GENERATION_READY__%s\\n" "$generation_ready"
   printf "__AIWB_AGENT_HOME__%s\\n" "$AIWB_HOME"
   printf "__AIWB_AGENT_SERVICE_STATUS__%s\\n" "$(aiwb_service_status)"
+  printf "__AIWB_AGENT_SERVICE_PROCESS_STATUS__%s\\n" "$(aiwb_pid_file_status "$AIWB_SERVICE_PID")"
   printf "__AIWB_AGENT_DAEMON_STATUS__%s\\n" "$(aiwb_daemon_status)"
+  printf "__AIWB_AGENT_HTTP_STATUS__%s\\n" "$(aiwb_pid_file_status "$AIWB_HOME/http.pid")"
+  printf "__AIWB_AGENT_UPDATER_STATUS__%s\\n" "$(aiwb_pid_file_status "$AIWB_HOME/updater.pid")"
   printf "__AIWB_AGENT_DAEMON_HEARTBEAT__%s\\n" "$(cat "$AIWB_DAEMON_HEARTBEAT" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASKS_QUEUED__%s\\n" "$(aiwb_task_count queued)"
   printf "__AIWB_AGENT_TASKS_RUNNING__%s\\n" "$(aiwb_task_count running)"
@@ -1364,7 +1798,7 @@ aiwb_print_task() {
 
   status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
   if [ "$status" = "queued" ] || [ "$status" = "running" ]; then
-    aiwb_start_daemon >/dev/null 2>&1 || true
+    aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
   fi
   aiwb_mark_queued_stale_if_needed "$task_dir"
   aiwb_mark_stale_if_needed "$task_dir"
@@ -1384,6 +1818,8 @@ aiwb_print_task() {
   printf "__AIWB_AGENT_TASK_ATTEMPTS__%s\\n" "$(cat "$task_dir/attempts" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_STARTED_AT__%s\\n" "$(cat "$task_dir/started_at" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_RUNNER_STARTED_AT__%s\\n" "$(cat "$task_dir/runner_started_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_COMMAND_STARTED_AT__%s\\n" "$(cat "$task_dir/command_started_at" 2>/dev/null || printf "")"
+  printf "__AIWB_AGENT_TASK_HEARTBEAT_AT__%s\\n" "$(cat "$task_dir/heartbeat_at" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_FINISHED_AT__%s\\n" "$(cat "$task_dir/finished_at" 2>/dev/null || printf "")"
   printf "__AIWB_AGENT_TASK_OUTPUT_START__\\n"
   local current_status
@@ -1481,7 +1917,7 @@ aiwb_wait_task() {
     return 0
   fi
 
-  aiwb_start_daemon >/dev/null 2>&1 || true
+  aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
   started_epoch="$(date -u +%s)"
 
   while true; do
@@ -1567,9 +2003,10 @@ aiwb_task_sort_key() {
     value="$(cat "$task_dir/$name" 2>/dev/null || printf "")"
     if [ -n "$value" ]; then
       date -u -d "$value" +%s 2>/dev/null && return 0
+      date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$value" +%s 2>/dev/null && return 0
     fi
   done
-  stat -c %Y "$task_dir" 2>/dev/null || printf "0\\n"
+  aiwb_path_mtime_epoch "$task_dir"
 }
 
 aiwb_print_conversation_history_item() {
@@ -1715,6 +2152,81 @@ aiwb_print_conversation_status() {
   aiwb_print_conversation_block "$conversation_dir" "$history_limit" "$history_before"
 }
 
+aiwb_runtime_processes_ready() {
+  local control_sha
+  local daemon_pid
+  control_sha="$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
+  daemon_pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
+
+  [ -n "$control_sha" ] &&
+    aiwb_component_pid_file_ready "$AIWB_SERVICE_PID" service &&
+    [ "$(cat "$AIWB_SERVICE_RUNTIME_SHA" 2>/dev/null || printf "")" = "$control_sha" ] &&
+    aiwb_component_pid_file_ready "$AIWB_DAEMON_PID" daemon &&
+    [ "$(cat "$AIWB_DAEMON_LOCK/owner.pid" 2>/dev/null || printf "")" = "$daemon_pid" ] &&
+    [ "$(cat "$AIWB_DAEMON_LOCK/version" 2>/dev/null || printf "")" = "$AIWB_VERSION" ] &&
+    [ "$(cat "$AIWB_DAEMON_LOCK/control.sha256" 2>/dev/null || printf "")" = "$control_sha" ] &&
+    aiwb_component_pid_file_ready "$AIWB_HTTP_PID" http &&
+    aiwb_runtime_marker_matches_file "$AIWB_HOME/aiwb-agent-http.mjs" "$AIWB_HOME/http.runtime.sha256" &&
+    aiwb_component_pid_file_ready "$AIWB_UPDATER_PID" updater &&
+    aiwb_runtime_marker_matches_file "$AIWB_HOME/aiwb-agent-updater.mjs" "$AIWB_HOME/updater.runtime.sha256"
+}
+
+aiwb_runtime_components_ready() {
+  aiwb_committed_generation_matches_current && aiwb_runtime_processes_ready
+}
+
+aiwb_committed_generation_value() {
+  local key="$1"
+  [ -s "$AIWB_RUNTIME_GENERATION" ] || return 1
+  awk -F= -v expected="$key" '$1 == expected { sub(/^[^=]*=/, ""); print; exit }' "$AIWB_RUNTIME_GENERATION" 2>/dev/null
+}
+
+aiwb_committed_generation_matches_current() {
+  local control_sha
+  local http_sha
+  local updater_sha
+  local committed_format
+  local committed_state
+  local committed_epoch
+  local committed_version
+  local committed_control_sha
+  local committed_http_sha
+  local committed_updater_sha
+
+  aiwb_runtime_update_in_progress && return 1
+  control_sha="$(aiwb_file_sha256 "$AIWB_HOME/aiwbctl" 2>/dev/null || printf "")"
+  http_sha="$(aiwb_file_sha256 "$AIWB_HOME/aiwb-agent-http.mjs" 2>/dev/null || printf "")"
+  updater_sha="$(aiwb_file_sha256 "$AIWB_HOME/aiwb-agent-updater.mjs" 2>/dev/null || printf "")"
+  committed_format="$(aiwb_committed_generation_value format 2>/dev/null || printf "")"
+  committed_state="$(aiwb_committed_generation_value state 2>/dev/null || printf "")"
+  committed_epoch="$(aiwb_committed_generation_value epoch 2>/dev/null || printf "")"
+  committed_version="$(aiwb_committed_generation_value version 2>/dev/null || printf "")"
+  committed_control_sha="$(aiwb_committed_generation_value control_sha256 2>/dev/null || printf "")"
+  committed_http_sha="$(aiwb_committed_generation_value http_sha256 2>/dev/null || printf "")"
+  committed_updater_sha="$(aiwb_committed_generation_value updater_sha256 2>/dev/null || printf "")"
+  [ "$committed_format" = "1" ] &&
+    [ "$committed_state" = "committed" ] &&
+    [ -n "$committed_epoch" ] &&
+    [ -n "$control_sha" ] &&
+    [ -n "$http_sha" ] &&
+    [ -n "$updater_sha" ] &&
+    [ "$committed_version" = "$AIWB_VERSION" ] &&
+    [ "$committed_control_sha" = "$control_sha" ] &&
+    [ "$committed_http_sha" = "$http_sha" ] &&
+    [ "$committed_updater_sha" = "$updater_sha" ]
+}
+
+aiwb_wait_runtime_ready() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if aiwb_runtime_components_ready; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 aiwb_install_service() {
   if command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
     systemctl stop ai-workbench-agent.service >/dev/null 2>&1 || true
@@ -1765,17 +2277,22 @@ AIWB_LAUNCH_AGENT
     done
     if launchctl bootstrap "gui/$(id -u)" "$AIWB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
       launchctl kickstart -k "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-      printf "__AIWB_AGENT_SERVICE__launchd\\n"
-      return 0
+      if aiwb_wait_runtime_ready; then
+        printf "__AIWB_AGENT_SERVICE__launchd\\n"
+        return 0
+      fi
+      launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
     fi
     printf "__AIWB_AGENT_SERVICE__launchd-fallback\\n"
-    aiwb_start_daemon >/dev/null 2>&1 || true
-    return 0
+    aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
+    aiwb_wait_runtime_ready
+    return $?
   fi
   if ! command -v systemctl >/dev/null 2>&1; then
     printf "__AIWB_AGENT_SERVICE__unsupported\\n"
-    aiwb_start_daemon >/dev/null 2>&1 || true
-    return 0
+    aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
+    aiwb_wait_runtime_ready
+    return $?
   fi
 
   if [ "$(id -u)" = "0" ]; then
@@ -1798,18 +2315,21 @@ WantedBy=multi-user.target
 AIWB_SYSTEMD_UNIT
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable ai-workbench-agent.service >/dev/null 2>&1 || true
-    systemctl restart ai-workbench-agent.service >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
-    printf "__AIWB_AGENT_SERVICE__system\\n"
-    return 0
+    systemctl restart ai-workbench-agent.service >/dev/null 2>&1 || aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
+    if aiwb_wait_runtime_ready; then
+      printf "__AIWB_AGENT_SERVICE__system\\n"
+      return 0
+    fi
+    return 1
   fi
 
-  aiwb_start_daemon >/dev/null 2>&1 || true
+  aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
   printf "__AIWB_AGENT_SERVICE__user-fallback\\n"
+  aiwb_wait_runtime_ready
 }
 
 aiwb_uninstall_service() {
   local task_dir
-  local daemon_pid
 
   if command -v systemctl >/dev/null 2>&1; then
     if [ "$(id -u)" = "0" ]; then
@@ -1825,10 +2345,7 @@ aiwb_uninstall_service() {
     rm -f "$AIWB_LAUNCH_AGENT_PLIST"
   fi
 
-  daemon_pid="$(cat "$AIWB_DAEMON_PID" 2>/dev/null || printf "")"
-  if [ -n "$daemon_pid" ]; then
-    kill "$daemon_pid" >/dev/null 2>&1 || true
-  fi
+  aiwb_stop_daemons
   for task_dir in "$AIWB_TASKS"/*; do
     [ -d "$task_dir" ] || continue
     aiwb_stop_task_processes "$task_dir"
@@ -1919,7 +2436,12 @@ case "$AIWB_CMD" in
     aiwb_service_run
     ;;
   install-service)
-    aiwb_install_service
+    aiwb_detach_install_from_agent_parent
+    if ! aiwb_install_service; then
+      printf "__AIWB_AGENT_STATUS__error\\n"
+      printf "__AIWB_AGENT_ERROR__Agent supervisor 启动失败，daemon、HTTPS 或 updater 未全部就绪。\\n"
+      exit 3
+    fi
     "$AIWB_HOME/aiwbctl" status
     ;;
   uninstall-service)
@@ -1928,7 +2450,26 @@ case "$AIWB_CMD" in
   clear-cache)
     aiwb_clear_cache
     ;;
-  create)
+  create|create-now)
+    AIWB_CREATE_IMMEDIATE="0"
+    if [ "$AIWB_CMD" = "create-now" ]; then
+      if ! aiwb_has_user_execution_context; then
+        aiwb_print_execution_context_required
+        exit 42
+      fi
+      AIWB_CREATE_IMMEDIATE="1"
+    elif aiwb_is_macos; then
+      # A task launched by the macOS LaunchAgent inherits a headless execution
+      # context. Codex/Claude can then block before their native process starts
+      # when the workspace is protected by macOS privacy controls. Old Apps
+      # first call the HTTPS endpoint and then fall back to this same create
+      # command over SSH, so keep plain create compatible when SSH is present.
+      if ! aiwb_has_user_execution_context; then
+        aiwb_print_execution_context_required
+        exit 42
+      fi
+      AIWB_CREATE_IMMEDIATE="1"
+    fi
     AIWB_TASK_ID=""
     if [ "$#" -gt 1 ]; then
       AIWB_TASK_ID="$2"
@@ -1944,6 +2485,14 @@ case "$AIWB_CMD" in
       printf "__AIWB_AGENT_STATUS__error\\n"
       printf "__AIWB_AGENT_ERROR__missing command payload\\n"
       exit 2
+    fi
+    # An updater publishes the fence before its late drain scan. Reject before
+    # accepting conversation/task metadata so that the scan cannot mistake a
+    # new request for work belonging to the generation being replaced.
+    if aiwb_runtime_update_in_progress; then
+      aiwb_reject_task_for_generation_change "$AIWB_TASK_DIR" "runtime_update_in_progress"
+      aiwb_print_generation_changed
+      exit 44
     fi
     AIWB_CONVERSATION_ID="$(cat "$AIWB_TASK_DIR/conversation_id" 2>/dev/null || printf "")"
     if [ -n "$AIWB_CONVERSATION_ID" ]; then
@@ -1984,8 +2533,46 @@ case "$AIWB_CMD" in
     aiwb_write_file "$AIWB_TASK_DIR/pid" ""
     aiwb_write_file "$AIWB_TASK_DIR/runner_started_at" ""
     aiwb_write_file "$AIWB_TASK_DIR/finished_at" ""
-    aiwb_set_status "$AIWB_TASK_DIR" "queued" ""
-    aiwb_start_daemon >/dev/null 2>&1 || true
+    if [ "$AIWB_CREATE_IMMEDIATE" = "1" ]; then
+      aiwb_write_file "$AIWB_TASK_DIR/creator.pid" "$$"
+      aiwb_write_file "$AIWB_TASK_DIR/creator.version" "$AIWB_VERSION"
+      aiwb_write_file "$AIWB_TASK_DIR/creator.control.sha256" "$AIWB_PROCESS_CONTROL_SHA"
+      # Publish preparing before waiting on the shared tick lock. An installer
+      # holding that lock can now see and defer for this accepted creator,
+      # instead of replacing the runtime underneath an old aiwbctl process.
+      aiwb_set_status "$AIWB_TASK_DIR" "preparing" ""
+      # Serialize capacity accounting with the daemon and other SSH creators.
+      # A rejected direct launch is terminal, never queued for launchd later.
+      if ! aiwb_acquire_tick_lock; then
+        printf "AI Workbench Agent: task launch capacity lock timed out.\\n" >> "$AIWB_TASK_DIR/bootstrap.log"
+        aiwb_set_status "$AIWB_TASK_DIR" "error" "75"
+        aiwb_print_capacity_reached
+        exit 43
+      fi
+      # The script can remain alive while an updater atomically replaces
+      # aiwbctl. Owning tick.lock is necessary but not sufficient: prove that
+      # the disk control SHA and committed generation still belong to this
+      # process before launching anything in its old execution context.
+      if ! aiwb_process_generation_is_current; then
+        aiwb_reject_task_for_generation_change "$AIWB_TASK_DIR" "generation_changed_after_tick_lock"
+        aiwb_release_tick_lock
+        aiwb_print_generation_changed
+        exit 44
+      fi
+      AIWB_RUNNING_COUNT="$(aiwb_running_count)"
+      if [ "$AIWB_RUNNING_COUNT" -ge "$AIWB_MAX_CONCURRENCY" ] 2>/dev/null; then
+        printf "AI Workbench Agent: task launch rejected at capacity %s.\\n" "$AIWB_MAX_CONCURRENCY" >> "$AIWB_TASK_DIR/bootstrap.log"
+        aiwb_set_status "$AIWB_TASK_DIR" "error" "75"
+        aiwb_release_tick_lock
+        aiwb_print_capacity_reached
+        exit 43
+      fi
+      aiwb_launch_task "$AIWB_TASK_DIR"
+      aiwb_release_tick_lock
+    else
+      aiwb_set_status "$AIWB_TASK_DIR" "queued" ""
+      aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
+    fi
 
     printf "__AIWB_AGENT_STATUS__ready\\n"
     printf "__AIWB_AGENT_VERSION__%s\\n" "$AIWB_VERSION"
@@ -2075,6 +2662,8 @@ export function buildInstallWorkbenchAgentCommand(profile) {
     return powershellStdinCommand(`
 $AIWB_HOME = Join-Path $env:USERPROFILE ".ai-workbench\\agent"
 $AIWB_SCRIPT = Join-Path $AIWB_HOME "aiwb-agent.mjs"
+$AIWB_RUNTIME_GENERATION = Join-Path $AIWB_HOME "runtime.generation"
+$AIWB_RUNTIME_UPDATE_FENCE = Join-Path $AIWB_HOME "runtime-update.fence"
 $AIWB_CONTROL_URL = ${psQuote(workbenchAgentControlLatestUrl)}
 $AIWB_MANIFEST_URL = ""
 $AIWB_REQUIRED_VERSION = ${psQuote(latestWorkbenchAgentVersion)}
@@ -2118,7 +2707,12 @@ if (-not (Invoke-AiwbCloudDownload $AIWB_CONTROL_URL $AIWB_CONTROL_TMP)) {
 }
 try {
   $AIWB_CONTROL = Get-Content -LiteralPath $AIWB_CONTROL_TMP -Raw -Encoding UTF8 | ConvertFrom-Json
-  $AIWB_MANIFEST_URL = [string]$AIWB_CONTROL.windowsManifestUrl
+  if ($AIWB_CONTROL.platforms -and $AIWB_CONTROL.platforms.windows) {
+    $AIWB_MANIFEST_URL = [string]$AIWB_CONTROL.platforms.windows.manifestUrl
+  }
+  if ([string]::IsNullOrWhiteSpace($AIWB_MANIFEST_URL)) {
+    $AIWB_MANIFEST_URL = [string]$AIWB_CONTROL.windowsManifestUrl
+  }
 } catch {}
 if ([string]::IsNullOrWhiteSpace($AIWB_MANIFEST_URL)) {
   Write-Output "__AIWB_AGENT_STATUS__error"
@@ -2144,6 +2738,7 @@ try {
 }
 
 $AIWB_REMOTE_VERSION = [string]$AIWB_MANIFEST.version
+$AIWB_REMOTE_VERSION_NORMALIZED = $AIWB_REMOTE_VERSION.Trim() -replace '^[vV]', ''
 $AIWB_REMOTE_VERSION_NUM = Convert-AiwbVersionNumber $AIWB_REMOTE_VERSION
 $AIWB_REQUIRED_VERSION_NUM = Convert-AiwbVersionNumber $AIWB_REQUIRED_VERSION
 if ($AIWB_REMOTE_VERSION_NUM -lt $AIWB_REQUIRED_VERSION_NUM) {
@@ -2151,6 +2746,268 @@ if ($AIWB_REMOTE_VERSION_NUM -lt $AIWB_REQUIRED_VERSION_NUM) {
   Write-Output ("__AIWB_AGENT_ERROR__云端 Windows Agent 版本过旧（当前 v{0}，需要 v{1}）。请先发布最新 Agent。" -f $AIWB_REMOTE_VERSION, $AIWB_REQUIRED_VERSION)
   Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
   exit 5
+}
+
+$AIWB_SCRIPT_URL = [string]$AIWB_MANIFEST.scriptUrl
+$AIWB_EXPECTED_SHA = ([string]$AIWB_MANIFEST.sha256).ToLowerInvariant()
+$AIWB_DIRECT_RUNTIME = $AIWB_MANIFEST.directRuntime
+$AIWB_UPDATER_RUNTIME = $AIWB_MANIFEST.updaterRuntime
+
+function Test-AiwbFileHash([string]$Path, [string]$Expected) {
+  if (-not $Expected -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  try {
+    return ([string](Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash).ToLowerInvariant() -eq $Expected.ToLowerInvariant()
+  } catch { return $false }
+}
+
+function Get-AiwbGenerationRecord([string]$Path) {
+  $record = @{}
+  try {
+    foreach ($line in @((Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction Stop))) {
+      $separator = $line.IndexOf("=")
+      if ($separator -le 0) { continue }
+      $record[$line.Substring(0, $separator)] = $line.Substring($separator + 1)
+    }
+  } catch { return @{} }
+  return $record
+}
+
+function Test-AiwbCommittedGeneration {
+  if (Test-Path -LiteralPath $AIWB_RUNTIME_UPDATE_FENCE -PathType Leaf) { return $false }
+  $record = Get-AiwbGenerationRecord $AIWB_RUNTIME_GENERATION
+  $directSha = ([string]$AIWB_DIRECT_RUNTIME.sha256).ToLowerInvariant()
+  $updaterSha = ([string]$AIWB_UPDATER_RUNTIME.sha256).ToLowerInvariant()
+  return $record["format"] -eq "1" -and
+    $record["state"] -eq "committed" -and
+    -not [string]::IsNullOrWhiteSpace([string]$record["epoch"]) -and
+    $record["version"] -eq $AIWB_REMOTE_VERSION_NORMALIZED -and
+    $record["control_sha256"] -eq $AIWB_EXPECTED_SHA -and
+    $record["http_sha256"] -eq $directSha -and
+    $record["updater_sha256"] -eq $updaterSha -and
+    (Test-AiwbFileHash $AIWB_SCRIPT $AIWB_EXPECTED_SHA) -and
+    (Test-AiwbFileHash (Join-Path $AIWB_HOME "aiwb-agent-http.mjs") $directSha) -and
+    (Test-AiwbFileHash (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs") $updaterSha)
+}
+
+function Test-AiwbProcessAlive([object]$ProcessId) {
+  try {
+    $numericId = [int]$ProcessId
+    return $numericId -gt 1 -and [bool](Get-Process -Id $numericId -ErrorAction SilentlyContinue)
+  } catch { return $false }
+}
+
+function Get-AiwbProcessDescriptor([object]$ProcessId) {
+  try {
+    $numericId = [int]$ProcessId
+    if ($numericId -le 1) { return $null }
+    return Get-CimInstance Win32_Process -Filter ("ProcessId = " + $numericId) -ErrorAction Stop | Select-Object -First 1
+  } catch { return $null }
+}
+
+function ConvertTo-AiwbProcessPath([object]$Path) {
+  try { return [System.IO.Path]::GetFullPath([string]$Path).TrimEnd([char]92).ToLowerInvariant() } catch { return "" }
+}
+
+function Test-AiwbCommandToken([string]$CommandLine, [string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($Value)) { return $false }
+  $pattern = '(?:^|[\\s"]+)' + [regex]::Escape($Value) + '(?=$|[\\s"]+)'
+  return [regex]::IsMatch($CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Test-AiwbComponentPidFile([string]$Path, [string]$Component) {
+  try { $processId = [int](Get-Content -LiteralPath $Path -Raw -ErrorAction Stop).Trim() } catch { return $false }
+  $descriptor = Get-AiwbProcessDescriptor $processId
+  if (-not $descriptor) { return $false }
+  if ((ConvertTo-AiwbProcessPath $descriptor.ExecutablePath) -ne (ConvertTo-AiwbProcessPath $AIWB_NODE_COMMAND.Source)) { return $false }
+  $commandLine = [string]$descriptor.CommandLine
+  $directPath = Join-Path $AIWB_HOME "aiwb-agent-http.mjs"
+  $updaterPath = Join-Path $AIWB_HOME "aiwb-agent-updater.mjs"
+  switch ($Component) {
+    "service" { return (Test-AiwbCommandToken $commandLine $AIWB_SCRIPT) -and (Test-AiwbCommandToken $commandLine "service-run") }
+    "daemon" { return (Test-AiwbCommandToken $commandLine $AIWB_SCRIPT) -and ((Test-AiwbCommandToken $commandLine "daemon") -or (Test-AiwbCommandToken $commandLine "service-run")) }
+    "http" { return Test-AiwbCommandToken $commandLine $directPath }
+    "updater" { return Test-AiwbCommandToken $commandLine $updaterPath }
+  }
+  return $false
+}
+
+function Test-AiwbTaskRunner([string]$Directory, [object]$ProcessId) {
+  $descriptor = Get-AiwbProcessDescriptor $ProcessId
+  if (-not $descriptor) { return $false }
+  if ((ConvertTo-AiwbProcessPath $descriptor.ExecutablePath) -ne (ConvertTo-AiwbProcessPath $AIWB_NODE_COMMAND.Source)) { return $false }
+  $commandLine = [string]$descriptor.CommandLine
+  $taskId = Split-Path -Leaf $Directory
+  return (Test-AiwbCommandToken $commandLine $AIWB_SCRIPT) -and
+    (Test-AiwbCommandToken $commandLine "runner") -and
+    (Test-AiwbCommandToken $commandLine $taskId)
+}
+
+function Test-AiwbPidDescendant([object]$ChildProcessId, [object]$AncestorProcessId) {
+  try {
+    $current = [int]$ChildProcessId
+    $ancestor = [int]$AncestorProcessId
+    if ($current -le 1 -or $ancestor -le 1) { return $false }
+    for ($depth = 0; $depth -lt 64; $depth += 1) {
+      $descriptor = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $current) -ErrorAction Stop | Select-Object -First 1
+      if (-not $descriptor) { return $false }
+      $parent = [int]$descriptor.ParentProcessId
+      if ($parent -eq $ancestor) { return $true }
+      if ($parent -le 1 -or $parent -eq $current) { return $false }
+      $current = $parent
+    }
+  } catch {}
+  return $false
+}
+
+function Test-AiwbHeartbeatFresh {
+  try {
+    $raw = (Get-Content -LiteralPath (Join-Path $AIWB_HOME "daemon.heartbeat") -Raw -ErrorAction Stop).Trim()
+    $timestamp = [DateTimeOffset]::Parse($raw).ToUniversalTime()
+    $age = ([DateTimeOffset]::UtcNow - $timestamp).TotalSeconds
+    return $age -ge -5 -and $age -le 15
+  } catch { return $false }
+}
+
+function Get-AiwbTaskAgeSeconds([string]$Directory) {
+  foreach ($name in @("queued_at", "created_at", "started_at")) {
+    $path = Join-Path $Directory $name
+    try {
+      $raw = (Get-Content -LiteralPath $path -Raw -ErrorAction Stop).Trim()
+      if ($raw) { return ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($raw).ToUniversalTime()).TotalSeconds }
+    } catch {}
+  }
+  try { return ([DateTimeOffset]::UtcNow - (Get-Item -LiteralPath $Directory -ErrorAction Stop).LastWriteTimeUtc).TotalSeconds } catch { return [double]::PositiveInfinity }
+}
+
+function Get-AiwbActiveTaskCount {
+  $tasksPath = Join-Path $AIWB_HOME "tasks"
+  if (-not (Test-Path -LiteralPath $tasksPath -PathType Container)) { return 0 }
+  $count = 0
+  foreach ($directory in @(Get-ChildItem -LiteralPath $tasksPath -Directory -ErrorAction SilentlyContinue)) {
+    $statusPath = Join-Path $directory.FullName "status"
+    try { $status = (Get-Content -LiteralPath $statusPath -Raw -ErrorAction Stop).Trim().ToLowerInvariant() } catch { $status = "" }
+    try { $runnerPid = [int](Get-Content -LiteralPath (Join-Path $directory.FullName "pid") -Raw -ErrorAction Stop).Trim() } catch { $runnerPid = 0 }
+    try { $commandPid = [int](Get-Content -LiteralPath (Join-Path $directory.FullName "command_pid") -Raw -ErrorAction Stop).Trim() } catch { $commandPid = 0 }
+    $runnerAlive = Test-AiwbTaskRunner $directory.FullName $runnerPid
+    $commandAlive = $runnerAlive -and (Test-AiwbProcessAlive $commandPid) -and (Test-AiwbPidDescendant $commandPid $runnerPid)
+    $hasLiveProcess = $runnerAlive -or $commandAlive
+    if ($hasLiveProcess -and @("running", "preparing", "queued", "busy", "") -contains $status) {
+      $count += 1
+      continue
+    }
+    if ($status -eq "preparing" -and (Get-AiwbTaskAgeSeconds $directory.FullName) -lt 30) {
+      $count += 1
+      continue
+    }
+    if (-not $status -and (Test-Path -LiteralPath (Join-Path $directory.FullName "command.b64") -PathType Leaf) -and
+        (Get-AiwbTaskAgeSeconds $directory.FullName) -lt 30) {
+      $count += 1
+    }
+    # A queued task without a live process is preserved for the new runtime.
+  }
+  return $count
+}
+
+$AIWB_TICK_LOCK = Join-Path $AIWB_HOME "tick.lock"
+$AIWB_UPGRADE_LOCK_TOKEN = ""
+function Exit-AiwbUpgradeLock {
+  if ([string]::IsNullOrWhiteSpace($AIWB_UPGRADE_LOCK_TOKEN)) { return }
+  try {
+    $tokenPath = Join-Path $AIWB_TICK_LOCK "owner.token"
+    if ((Get-Content -LiteralPath $tokenPath -Raw -ErrorAction Stop).Trim() -ne $AIWB_UPGRADE_LOCK_TOKEN) { return }
+    foreach ($name in @("owner.pid", "owner.token", "started_at")) {
+      Remove-Item -LiteralPath (Join-Path $AIWB_TICK_LOCK $name) -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $AIWB_TICK_LOCK -Force -ErrorAction SilentlyContinue
+  } finally { $script:AIWB_UPGRADE_LOCK_TOKEN = "" }
+}
+
+function Enter-AiwbUpgradeLock {
+  for ($attempt = 0; $attempt -lt 250; $attempt += 1) {
+    try {
+      New-Item -ItemType Directory -Path $AIWB_TICK_LOCK -ErrorAction Stop | Out-Null
+      $token = [Guid]::NewGuid().ToString("N")
+      [System.IO.File]::WriteAllText((Join-Path $AIWB_TICK_LOCK "owner.pid"), [string]$PID, [System.Text.UTF8Encoding]::new($false))
+      [System.IO.File]::WriteAllText((Join-Path $AIWB_TICK_LOCK "owner.token"), $token, [System.Text.UTF8Encoding]::new($false))
+      [System.IO.File]::WriteAllText((Join-Path $AIWB_TICK_LOCK "started_at"), [DateTimeOffset]::UtcNow.ToString("o"), [System.Text.UTF8Encoding]::new($false))
+      $script:AIWB_UPGRADE_LOCK_TOKEN = $token
+      return $true
+    } catch {
+      try {
+        $ownerPath = Join-Path $AIWB_TICK_LOCK "owner.pid"
+        $startedPath = Join-Path $AIWB_TICK_LOCK "started_at"
+        $owner = [int](Get-Content -LiteralPath $ownerPath -Raw -ErrorAction Stop).Trim()
+        try { $started = [DateTimeOffset]::Parse((Get-Content -LiteralPath $startedPath -Raw -ErrorAction Stop).Trim()).ToUniversalTime() }
+        catch { $started = (Get-Item -LiteralPath $AIWB_TICK_LOCK -ErrorAction Stop).LastWriteTimeUtc }
+        if (-not (Test-AiwbProcessAlive $owner) -and ([DateTimeOffset]::UtcNow - $started).TotalSeconds -gt 30) {
+          Remove-Item -LiteralPath $AIWB_TICK_LOCK -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      } catch {}
+      Start-Sleep -Milliseconds 20
+    }
+  }
+  return $false
+}
+
+$AIWB_INSTALL_FENCE_EPOCH = ""
+$AIWB_INSTALL_FENCE_OWNED = $false
+
+function ConvertTo-AiwbGenerationField([object]$Value) {
+  $field = ([string]$Value) -replace '[\\r\\n=]', ''
+  if ($field.Length -gt 256) { return $field.Substring(0, 256) }
+  return $field
+}
+
+function Exit-AiwbInstallFence {
+  if (-not $AIWB_INSTALL_FENCE_OWNED -or [string]::IsNullOrWhiteSpace($AIWB_INSTALL_FENCE_EPOCH)) { return }
+  try {
+    $record = Get-AiwbGenerationRecord $AIWB_RUNTIME_UPDATE_FENCE
+    if ($record["epoch"] -eq $AIWB_INSTALL_FENCE_EPOCH -and [int]$record["owner_pid"] -eq $PID) {
+      Remove-Item -LiteralPath $AIWB_RUNTIME_UPDATE_FENCE -Force -ErrorAction SilentlyContinue
+    }
+  } finally {
+    $script:AIWB_INSTALL_FENCE_OWNED = $false
+    $script:AIWB_INSTALL_FENCE_EPOCH = ""
+  }
+}
+
+function Enter-AiwbInstallFence {
+  if (Test-Path -LiteralPath $AIWB_RUNTIME_UPDATE_FENCE -PathType Leaf) {
+    $existing = Get-AiwbGenerationRecord $AIWB_RUNTIME_UPDATE_FENCE
+    try { $owner = [int]$existing["owner_pid"] } catch { $owner = 0 }
+    try { $age = ([DateTimeOffset]::UtcNow - (Get-Item -LiteralPath $AIWB_RUNTIME_UPDATE_FENCE -ErrorAction Stop).LastWriteTimeUtc).TotalSeconds }
+    catch { $age = 0 }
+    if ((Test-AiwbProcessAlive $owner) -or $age -lt 30) { return $false }
+    Remove-Item -LiteralPath $AIWB_RUNTIME_UPDATE_FENCE -Force -ErrorAction SilentlyContinue
+  }
+  $epoch = [Guid]::NewGuid().ToString()
+  $temporary = $AIWB_RUNTIME_UPDATE_FENCE + ".stage-" + $PID
+  $lines = @(
+    "format=1",
+    "state=draining",
+    ("epoch=" + (ConvertTo-AiwbGenerationField $epoch)),
+    ("owner_pid=" + $PID),
+    ("target_version=" + (ConvertTo-AiwbGenerationField $AIWB_REMOTE_VERSION_NORMALIZED)),
+    ("target_control_sha256=" + (ConvertTo-AiwbGenerationField $AIWB_EXPECTED_SHA)),
+    ""
+  )
+  try {
+    [System.IO.File]::WriteAllText($temporary, ($lines -join "\`n"), [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $temporary -Destination $AIWB_RUNTIME_UPDATE_FENCE -Force -ErrorAction Stop
+    $record = Get-AiwbGenerationRecord $AIWB_RUNTIME_UPDATE_FENCE
+    if ($record["epoch"] -ne $epoch -or [int]$record["owner_pid"] -ne $PID) { throw "runtime fence ownership mismatch" }
+    $script:AIWB_INSTALL_FENCE_EPOCH = $epoch
+    $script:AIWB_INSTALL_FENCE_OWNED = $true
+    return $true
+  } catch {
+    Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+}
+
+function Exit-AiwbInstallTransaction {
+  Exit-AiwbInstallFence
+  Exit-AiwbUpgradeLock
 }
 
 $AIWB_INSTALLED_VERSION_NUM = 0
@@ -2161,7 +3018,23 @@ if (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf) {
   } catch {}
 }
 
-if ($AIWB_INSTALLED_VERSION_NUM -ge $AIWB_REMOTE_VERSION_NUM -and (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf)) {
+if (
+  $AIWB_INSTALLED_VERSION_NUM -ge $AIWB_REMOTE_VERSION_NUM -and
+  (Test-AiwbCommittedGeneration) -and
+  (Test-AiwbFileHash $AIWB_SCRIPT $AIWB_EXPECTED_SHA) -and
+  (Test-AiwbFileHash (Join-Path $AIWB_HOME "aiwb-agent-http.mjs") ([string]$AIWB_DIRECT_RUNTIME.sha256)) -and
+  (Test-AiwbFileHash (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs") ([string]$AIWB_UPDATER_RUNTIME.sha256)) -and
+  (([string](Get-Content -LiteralPath (Join-Path $AIWB_HOME "service.runtime.sha256") -Raw -ErrorAction SilentlyContinue)).Trim() -eq $AIWB_EXPECTED_SHA) -and
+  (([string](Get-Content -LiteralPath (Join-Path $AIWB_HOME "http.runtime.sha256") -Raw -ErrorAction SilentlyContinue)).Trim() -eq ([string]$AIWB_DIRECT_RUNTIME.sha256).ToLowerInvariant()) -and
+  (([string](Get-Content -LiteralPath (Join-Path $AIWB_HOME "updater.runtime.sha256") -Raw -ErrorAction SilentlyContinue)).Trim() -eq ([string]$AIWB_UPDATER_RUNTIME.sha256).ToLowerInvariant()) -and
+  (([string](Get-Content -LiteralPath (Join-Path $AIWB_HOME "service.pid") -Raw -ErrorAction SilentlyContinue)).Trim() -eq
+    ([string](Get-Content -LiteralPath (Join-Path $AIWB_HOME "daemon.pid") -Raw -ErrorAction SilentlyContinue)).Trim()) -and
+  (Test-AiwbComponentPidFile (Join-Path $AIWB_HOME "service.pid") "service") -and
+  (Test-AiwbComponentPidFile (Join-Path $AIWB_HOME "daemon.pid") "daemon") -and
+  (Test-AiwbComponentPidFile (Join-Path $AIWB_HOME "http.pid") "http") -and
+  (Test-AiwbComponentPidFile (Join-Path $AIWB_HOME "updater.pid") "updater") -and
+  (Test-AiwbHeartbeatFresh)
+) {
   Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
   Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
   Write-Output "__AIWB_AGENT_INSTALL_RESULT__unchanged"
@@ -2169,8 +3042,18 @@ if ($AIWB_INSTALLED_VERSION_NUM -ge $AIWB_REMOTE_VERSION_NUM -and (Test-Path -Li
   exit $LASTEXITCODE
 }
 
-$AIWB_SCRIPT_URL = [string]$AIWB_MANIFEST.scriptUrl
-$AIWB_EXPECTED_SHA = ([string]$AIWB_MANIFEST.sha256).ToLowerInvariant()
+$AIWB_ACTIVE_TASK_COUNT = Get-AiwbActiveTaskCount
+if ($AIWB_ACTIVE_TASK_COUNT -gt 0) {
+  Write-Output "__AIWB_AGENT_STATUS__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_DEFER_REASON__active_tasks"
+  Write-Output ("__AIWB_AGENT_ACTIVE_TASKS__" + $AIWB_ACTIVE_TASK_COUNT)
+  Write-Output "__AIWB_AGENT_ERROR__Agent 正在执行任务，升级已安全延后；任务结束后会自动重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  exit 20
+}
+
 if ([string]::IsNullOrWhiteSpace($AIWB_SCRIPT_URL) -or -not (Invoke-AiwbCloudDownload $AIWB_SCRIPT_URL $AIWB_SCRIPT_TMP)) {
   Write-Output "__AIWB_AGENT_STATUS__error"
   Write-Output "__AIWB_AGENT_ERROR__配置中心 Windows Agent 下载失败，未修改服务器上的现有 Agent。"
@@ -2186,49 +3069,259 @@ if ([string]::IsNullOrWhiteSpace($AIWB_EXPECTED_SHA) -or $AIWB_ACTUAL_SHA -ne $A
   exit 7
 }
 
-Move-Item -LiteralPath $AIWB_SCRIPT_TMP -Destination $AIWB_SCRIPT -Force
-$AIWB_DIRECT_RUNTIME = $AIWB_MANIFEST.directRuntime
-$AIWB_UPDATER_RUNTIME = $AIWB_MANIFEST.updaterRuntime
-function Install-AiwbRuntime([object]$Runtime, [string]$Target) {
-  if (-not $Runtime -or [string]::IsNullOrWhiteSpace([string]$Runtime.url)) { return }
-  $temporary = $Target + ".download-" + $PID
-  if (-not (Invoke-AiwbCloudDownload ([string]$Runtime.url) $temporary)) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue; return }
+$AIWB_DIRECT_TARGET = Join-Path $AIWB_HOME "aiwb-agent-http.mjs"
+$AIWB_UPDATER_TARGET = Join-Path $AIWB_HOME "aiwb-agent-updater.mjs"
+$AIWB_DIRECT_TMP = $AIWB_DIRECT_TARGET + ".stage-" + $PID
+$AIWB_UPDATER_TMP = $AIWB_UPDATER_TARGET + ".stage-" + $PID
+
+function Receive-AiwbRuntimeStage([object]$Runtime, [string]$Temporary) {
+  if (-not $Runtime) { return $false }
+  $url = [string]$Runtime.url
   $expected = ([string]$Runtime.sha256).ToLowerInvariant()
-  $actual = ([string](Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash).ToLowerInvariant()
-  if ($expected -and $actual -ne $expected) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue; return }
-  Move-Item -LiteralPath $temporary -Destination $Target -Force
+  if ([string]::IsNullOrWhiteSpace($url) -or [string]::IsNullOrWhiteSpace($expected)) { return $false }
+  Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
+  if (-not (Invoke-AiwbCloudDownload $url $Temporary)) {
+    Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  if (-not (Test-AiwbFileHash $Temporary $expected)) {
+    Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  return $true
 }
-Install-AiwbRuntime $AIWB_DIRECT_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-http.mjs")
-Install-AiwbRuntime $AIWB_UPDATER_RUNTIME (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs")
-$AIWB_UPDATER_CONFIG = @{ manifestUrl = $AIWB_MANIFEST_URL; controlEndpoint = ${psQuote(workbenchAgentControlEndpoint)}; advertisedEndpoint = ${psQuote(agentAdvertisedEndpoint)} } | ConvertTo-Json
-[System.IO.File]::WriteAllText((Join-Path $AIWB_HOME "updater.json"), $AIWB_UPDATER_CONFIG, [System.Text.UTF8Encoding]::new($false))
-if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-http.mjs") -PathType Leaf) {
-  $direct = Join-Path $AIWB_HOME "aiwb-agent-http.mjs"
-  $directConfig = Join-Path $AIWB_HOME "http.json"
-  if (-not (Test-Path -LiteralPath $directConfig -PathType Leaf)) { [System.IO.File]::WriteAllText($directConfig, '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}', [System.Text.UTF8Encoding]::new($false)) }
-  $directRunning = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$direct*" } | Select-Object -First 1
-  if ($directRunning) { Stop-Process -Id $directRunning.ProcessId -Force -ErrorAction SilentlyContinue }
-  Start-Process -FilePath $AIWB_NODE_COMMAND.Source -ArgumentList @($direct) -WindowStyle Hidden
+
+if (
+  -not (Receive-AiwbRuntimeStage $AIWB_DIRECT_RUNTIME $AIWB_DIRECT_TMP) -or
+  -not (Receive-AiwbRuntimeStage $AIWB_UPDATER_RUNTIME $AIWB_UPDATER_TMP)
+) {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent runtime 下载或校验失败，现有 Agent 未被替换。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP -Force -ErrorAction SilentlyContinue
+  exit 8
 }
-if (Test-Path -LiteralPath (Join-Path $AIWB_HOME "aiwb-agent-updater.mjs") -PathType Leaf) {
-  $updater = Join-Path $AIWB_HOME "aiwb-agent-updater.mjs"
-  $running = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$updater*" } | Select-Object -First 1
-  if (-not $running) { Start-Process -FilePath $AIWB_NODE_COMMAND.Source -ArgumentList @($updater) -WindowStyle Hidden }
+
+if (-not (Enter-AiwbUpgradeLock)) {
+  Write-Output "__AIWB_AGENT_STATUS__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_DEFER_REASON__task_lock_busy"
+  Write-Output "__AIWB_AGENT_ERROR__Agent 任务启动锁正忙，升级未修改现有文件；请稍后重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP -Force -ErrorAction SilentlyContinue
+  exit 21
 }
-$AIWB_CTL = Join-Path $AIWB_HOME "aiwbctl.cmd"
-$AIWB_CTL_CONTENT = '@echo off' + [Environment]::NewLine + 'node ' + [char]34 + '%~dp0aiwb-agent.mjs' + [char]34 + ' %*' + [Environment]::NewLine
-[System.IO.File]::WriteAllText($AIWB_CTL, $AIWB_CTL_CONTENT, [System.Text.UTF8Encoding]::new($false))
+trap { Exit-AiwbInstallTransaction; break }
+
+$AIWB_ACTIVE_TASK_COUNT = Get-AiwbActiveTaskCount
+if ($AIWB_ACTIVE_TASK_COUNT -gt 0) {
+  Write-Output "__AIWB_AGENT_STATUS__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_DEFER_REASON__active_tasks"
+  Write-Output ("__AIWB_AGENT_ACTIVE_TASKS__" + $AIWB_ACTIVE_TASK_COUNT)
+  Write-Output "__AIWB_AGENT_ERROR__Agent 正在执行任务，升级已安全延后；任务结束后会自动重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP -Force -ErrorAction SilentlyContinue
+  Exit-AiwbInstallTransaction
+  exit 20
+}
+
+if (-not (Enter-AiwbInstallFence)) {
+  Write-Output "__AIWB_AGENT_STATUS__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_DEFER_REASON__runtime_update_fence_busy"
+  Write-Output "__AIWB_AGENT_ERROR__另一个 Agent 升级事务仍在进行，本次未修改现有文件；请稍后重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP -Force -ErrorAction SilentlyContinue
+  Exit-AiwbInstallTransaction
+  exit 22
+}
+
+# A v55 creator sees the fence before accepting work. The quiet window also
+# exposes a legacy creator that wrote command metadata immediately beforehand.
+Start-Sleep -Milliseconds 250
+$AIWB_ACTIVE_TASK_COUNT = Get-AiwbActiveTaskCount
+if ($AIWB_ACTIVE_TASK_COUNT -gt 0) {
+  Write-Output "__AIWB_AGENT_STATUS__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_DEFER_REASON__active_tasks"
+  Write-Output ("__AIWB_AGENT_ACTIVE_TASKS__" + $AIWB_ACTIVE_TASK_COUNT)
+  Write-Output "__AIWB_AGENT_ERROR__Agent 正在执行任务，升级已安全延后；任务结束后会自动重试。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP -Force -ErrorAction SilentlyContinue
+  Exit-AiwbInstallTransaction
+  exit 20
+}
+
+$AIWB_DIRECT_SHA = ([string]$AIWB_DIRECT_RUNTIME.sha256).ToLowerInvariant()
+$AIWB_UPDATER_SHA = ([string]$AIWB_UPDATER_RUNTIME.sha256).ToLowerInvariant()
+$AIWB_GENERATION_STAGE = $AIWB_RUNTIME_GENERATION + ".stage-" + $PID
+$AIWB_GENERATION_LINES = @(
+  "format=1",
+  "state=committed",
+  ("epoch=" + (ConvertTo-AiwbGenerationField $AIWB_INSTALL_FENCE_EPOCH)),
+  ("version=" + (ConvertTo-AiwbGenerationField $AIWB_REMOTE_VERSION_NORMALIZED)),
+  ("control_sha256=" + (ConvertTo-AiwbGenerationField $AIWB_EXPECTED_SHA)),
+  ("http_sha256=" + (ConvertTo-AiwbGenerationField $AIWB_DIRECT_SHA)),
+  ("updater_sha256=" + (ConvertTo-AiwbGenerationField $AIWB_UPDATER_SHA)),
+  ""
+)
+try {
+  [System.IO.File]::WriteAllText($AIWB_GENERATION_STAGE, ($AIWB_GENERATION_LINES -join "\`n"), [System.Text.UTF8Encoding]::new($false))
+  $AIWB_STAGED_GENERATION = Get-AiwbGenerationRecord $AIWB_GENERATION_STAGE
+  if (
+    $AIWB_STAGED_GENERATION["format"] -ne "1" -or
+    $AIWB_STAGED_GENERATION["state"] -ne "committed" -or
+    $AIWB_STAGED_GENERATION["epoch"] -ne $AIWB_INSTALL_FENCE_EPOCH -or
+    $AIWB_STAGED_GENERATION["version"] -ne $AIWB_REMOTE_VERSION_NORMALIZED -or
+    $AIWB_STAGED_GENERATION["control_sha256"] -ne $AIWB_EXPECTED_SHA -or
+    $AIWB_STAGED_GENERATION["http_sha256"] -ne $AIWB_DIRECT_SHA -or
+    $AIWB_STAGED_GENERATION["updater_sha256"] -ne $AIWB_UPDATER_SHA
+  ) { throw "invalid staged runtime generation" }
+} catch {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent generation 事务文件创建失败，现有 Agent 未被替换。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP, $AIWB_GENERATION_STAGE -Force -ErrorAction SilentlyContinue
+  Exit-AiwbInstallTransaction
+  exit 8
+}
+
+$AIWB_REPLACEMENTS = @(
+  [pscustomobject]@{ Source = $AIWB_SCRIPT_TMP; Target = $AIWB_SCRIPT; Backup = ($AIWB_SCRIPT + ".backup-" + $PID); HadTarget = $false },
+  [pscustomobject]@{ Source = $AIWB_DIRECT_TMP; Target = $AIWB_DIRECT_TARGET; Backup = ($AIWB_DIRECT_TARGET + ".backup-" + $PID); HadTarget = $false },
+  [pscustomobject]@{ Source = $AIWB_UPDATER_TMP; Target = $AIWB_UPDATER_TARGET; Backup = ($AIWB_UPDATER_TARGET + ".backup-" + $PID); HadTarget = $false },
+  [pscustomobject]@{ Source = $AIWB_GENERATION_STAGE; Target = $AIWB_RUNTIME_GENERATION; Backup = ($AIWB_RUNTIME_GENERATION + ".backup-" + $PID); HadTarget = $false }
+)
+
+function Remove-AiwbReplacementBackups {
+  foreach ($item in $AIWB_REPLACEMENTS) { Remove-Item -LiteralPath $item.Backup -Force -ErrorAction SilentlyContinue }
+}
+
+function Restore-AiwbReplacementSet {
+  $restored = $true
+  foreach ($item in $AIWB_REPLACEMENTS) {
+    try {
+      if ($item.HadTarget) {
+        if (-not (Test-Path -LiteralPath $item.Backup -PathType Leaf)) { $restored = $false; continue }
+        Copy-Item -LiteralPath $item.Backup -Destination $item.Target -Force -ErrorAction Stop
+      } else {
+        Remove-Item -LiteralPath $item.Target -Force -ErrorAction SilentlyContinue
+      }
+    } catch { $restored = $false }
+  }
+  if ($restored) { Write-Output "__AIWB_AGENT_INSTALL_ROLLBACK__restored" }
+  else { Write-Output "__AIWB_AGENT_INSTALL_ROLLBACK__failed" }
+}
+
+function Restart-AiwbPreviousSupervisor {
+  if (-not (Test-Path -LiteralPath $AIWB_SCRIPT -PathType Leaf)) { return }
+  try { & $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service *> (Join-Path $AIWB_HOME "rollback-supervisor.log") } catch {}
+}
+
+try {
+  foreach ($item in $AIWB_REPLACEMENTS) {
+    Remove-Item -LiteralPath $item.Backup -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $item.Target) {
+      if (-not (Test-Path -LiteralPath $item.Target -PathType Leaf)) { throw ("Agent target is not a file: " + $item.Target) }
+      $item.HadTarget = $true
+      Copy-Item -LiteralPath $item.Target -Destination $item.Backup -Force -ErrorAction Stop
+    }
+  }
+} catch {
+  Remove-AiwbReplacementBackups
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent 旧版本备份失败，现有 Agent 未被替换。"
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP, $AIWB_GENERATION_STAGE -Force -ErrorAction SilentlyContinue
+  Exit-AiwbInstallTransaction
+  exit 9
+}
+
+try {
+  foreach ($item in $AIWB_REPLACEMENTS) {
+    Move-Item -LiteralPath $item.Source -Destination $item.Target -Force -ErrorAction Stop
+  }
+} catch {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent 文件替换失败，正在恢复原有版本。"
+  Restore-AiwbReplacementSet
+  Restart-AiwbPreviousSupervisor
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP, $AIWB_SCRIPT_TMP, $AIWB_DIRECT_TMP, $AIWB_UPDATER_TMP, $AIWB_GENERATION_STAGE -Force -ErrorAction SilentlyContinue
+  Remove-AiwbReplacementBackups
+  Exit-AiwbInstallTransaction
+  exit 9
+}
+
+try {
+  $AIWB_UPDATER_CONFIG = @{ manifestUrl = $AIWB_MANIFEST_URL; controlEndpoint = ${psQuote(workbenchAgentControlEndpoint)}; advertisedEndpoint = ${psQuote(agentAdvertisedEndpoint)} } | ConvertTo-Json
+  [System.IO.File]::WriteAllText((Join-Path $AIWB_HOME "updater.json"), $AIWB_UPDATER_CONFIG, [System.Text.UTF8Encoding]::new($false))
+  $AIWB_HTTP_CONFIG_PATH = Join-Path $AIWB_HOME "http.json"
+  if (-not (Test-Path -LiteralPath $AIWB_HTTP_CONFIG_PATH -PathType Leaf)) {
+    [System.IO.File]::WriteAllText($AIWB_HTTP_CONFIG_PATH, '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}', [System.Text.UTF8Encoding]::new($false))
+  } else {
+    $AIWB_HTTP_CONFIG = Get-Content -LiteralPath $AIWB_HTTP_CONFIG_PATH -Raw -Encoding UTF8 | ConvertFrom-Json
+    $AIWB_HTTP_CONFIG | Add-Member -NotePropertyName securityVersion -NotePropertyValue 1 -Force
+    $AIWB_HTTP_CONFIG | Add-Member -NotePropertyName listenHost -NotePropertyValue "0.0.0.0" -Force
+    if (-not ([int]$AIWB_HTTP_CONFIG.port -gt 0 -and [int]$AIWB_HTTP_CONFIG.port -le 65535)) {
+      $AIWB_HTTP_CONFIG | Add-Member -NotePropertyName port -NotePropertyValue 8787 -Force
+    }
+    [System.IO.File]::WriteAllText($AIWB_HTTP_CONFIG_PATH, ($AIWB_HTTP_CONFIG | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
+  }
+  $AIWB_CTL = Join-Path $AIWB_HOME "aiwbctl.cmd"
+  $AIWB_CTL_CONTENT = '@echo off' + [Environment]::NewLine + 'node ' + [char]34 + '%~dp0aiwb-agent.mjs' + [char]34 + ' %*' + [Environment]::NewLine
+  [System.IO.File]::WriteAllText($AIWB_CTL, $AIWB_CTL_CONTENT, [System.Text.UTF8Encoding]::new($false))
+} catch {
+  Write-Output "__AIWB_AGENT_STATUS__error"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent 配置写入失败，正在恢复原有版本。"
+  Restore-AiwbReplacementSet
+  Restart-AiwbPreviousSupervisor
+  Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+  Remove-AiwbReplacementBackups
+  Exit-AiwbInstallTransaction
+  exit 10
+}
 Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
+Exit-AiwbInstallFence
+& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service
+$AIWB_INSTALL_EXIT_CODE = $LASTEXITCODE
+if ($AIWB_INSTALL_EXIT_CODE -ne 0) {
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__failed"
+  Write-Output "__AIWB_AGENT_ERROR__Windows Agent supervisor 启动失败，正在恢复原有版本。"
+  Restore-AiwbReplacementSet
+  Restart-AiwbPreviousSupervisor
+  Remove-AiwbReplacementBackups
+  Exit-AiwbInstallTransaction
+  exit 11
+}
+Remove-AiwbReplacementBackups
+Exit-AiwbInstallTransaction
 Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
 Write-Output "__AIWB_AGENT_INSTALL_RESULT__updated"
-& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service
+& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT status
+exit $LASTEXITCODE
 `);
   }
   return remoteBashCommand(profile, `
 set -e
 AIWB_AGENT_HOME="$HOME/.ai-workbench/agent"
+AIWB_AGENT_RUNTIME_GENERATION="$AIWB_AGENT_HOME/runtime.generation"
+AIWB_AGENT_RUNTIME_UPDATE_FENCE="$AIWB_AGENT_HOME/runtime-update.fence"
 AIWB_AGENT_CONTROL_URL=${shQuote(workbenchAgentControlLatestUrl)}
 AIWB_AGENT_MANIFEST_URL=""
+case "$(uname -s 2>/dev/null || printf unknown)" in
+  Darwin)
+    AIWB_AGENT_PLATFORM="macos"
+    AIWB_AGENT_MANIFEST_FIELD="macosManifestUrl"
+    ;;
+  Linux)
+    AIWB_AGENT_PLATFORM="linux"
+    AIWB_AGENT_MANIFEST_FIELD="linuxManifestUrl"
+    ;;
+  *)
+    printf '__AIWB_AGENT_STATUS__error\\n'
+    printf '__AIWB_AGENT_ERROR__当前系统不属于支持的 Agent 平台（windows / macos / linux）。\\n'
+    exit 3
+    ;;
+esac
 AIWB_AGENT_REQUIRED_VERSION="${latestWorkbenchAgentVersion}"
 AIWB_AGENT_INSTALL_SOURCE="config-center"
 AIWB_AGENT_CONTROL_TMP="$AIWB_AGENT_HOME/control-latest.json.$$"
@@ -2263,11 +3356,38 @@ PY
   return 1
 }
 
-aiwb_json_value() {
-  if ! command -v python3 >/dev/null 2>&1; then
-    return 1
+aiwb_install_node_command() {
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
   fi
-  python3 - "$1" "$2" <<'PY'
+  for AIWB_NODE_CANDIDATE in \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node \
+    /usr/bin/node \
+    "$HOME/.local/bin/node" \
+    "$HOME/.volta/bin/node" \
+    "$HOME/.asdf/shims/node" \
+    "$HOME"/.nvm/versions/node/*/bin/node \
+    "$HOME"/.fnm/node-versions/*/installation/bin/node; do
+    if [ -x "$AIWB_NODE_CANDIDATE" ]; then
+      printf '%s\\n' "$AIWB_NODE_CANDIDATE"
+      return 0
+    fi
+  done
+  return 1
+}
+
+AIWB_AGENT_NODE="$(aiwb_install_node_command 2>/dev/null || printf "")"
+if [ -z "$AIWB_AGENT_NODE" ]; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 需要 Node.js 才能运行 HTTPS 与自动升级服务。\\n'
+  exit 3
+fi
+
+aiwb_json_value() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" "$2" <<'PY'
 import json
 import sys
 
@@ -2283,6 +3403,14 @@ if value is None:
     value = ""
 print(str(value))
 PY
+    return $?
+  fi
+  "$AIWB_AGENT_NODE" -e '
+const fs = require("fs");
+let value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+for (const part of process.argv[2].split(".")) value = value && typeof value === "object" ? value[part] : "";
+process.stdout.write(String(value == null ? "" : value));
+' "$1" "$2"
 }
 
 if ! aiwb_download_url "$AIWB_AGENT_CONTROL_URL" "$AIWB_AGENT_CONTROL_TMP"; then
@@ -2291,10 +3419,15 @@ if ! aiwb_download_url "$AIWB_AGENT_CONTROL_URL" "$AIWB_AGENT_CONTROL_TMP"; then
   rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
   exit 3
 fi
-AIWB_AGENT_MANIFEST_URL="$(aiwb_json_value "$AIWB_AGENT_CONTROL_TMP" manifestUrl 2>/dev/null || true)"
+AIWB_AGENT_MANIFEST_URL="$(aiwb_json_value "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_FIELD" 2>/dev/null || true)"
+# v52 and older control centers exposed only manifestUrl. This fallback exists
+# solely for an in-place migration; current releases publish all three fields.
+if [ -z "$AIWB_AGENT_MANIFEST_URL" ]; then
+  AIWB_AGENT_MANIFEST_URL="$(aiwb_json_value "$AIWB_AGENT_CONTROL_TMP" manifestUrl 2>/dev/null || true)"
+fi
 if [ -z "$AIWB_AGENT_MANIFEST_URL" ]; then
   printf '__AIWB_AGENT_STATUS__error\\n'
-  printf '__AIWB_AGENT_ERROR__配置中心没有提供 Agent 下载清单。\\n'
+  printf '__AIWB_AGENT_ERROR__配置中心没有提供 %s Agent 下载清单。\\n' "$AIWB_AGENT_PLATFORM"
   rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
   exit 3
 fi
@@ -2327,8 +3460,370 @@ if [ -x "$AIWB_AGENT_HOME/aiwbctl" ]; then
   [ -n "$AIWB_AGENT_INSTALLED_VERSION_NUM" ] || AIWB_AGENT_INSTALLED_VERSION_NUM="0"
 fi
 
+aiwb_file_sha_matches() {
+  AIWB_SHA_PATH="$1"
+  AIWB_SHA_EXPECTED="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+  [ -s "$AIWB_SHA_PATH" ] || return 1
+  printf '%s' "$AIWB_SHA_EXPECTED" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    [ "$(sha256sum "$AIWB_SHA_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')" = "$AIWB_SHA_EXPECTED" ]
+    return $?
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    [ "$(shasum -a 256 "$AIWB_SHA_PATH" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')" = "$AIWB_SHA_EXPECTED" ]
+    return $?
+  fi
+  return 1
+}
+
+aiwb_process_matches_component() {
+  AIWB_COMPONENT_PID="$1"
+  AIWB_COMPONENT_NAME="$2"
+  case "$AIWB_COMPONENT_PID" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$AIWB_COMPONENT_PID" -gt 1 ] 2>/dev/null || return 1
+  kill -0 "$AIWB_COMPONENT_PID" 2>/dev/null || return 1
+  AIWB_COMPONENT_COMMAND="$(LC_ALL=C ps -p "$AIWB_COMPONENT_PID" -o command= 2>/dev/null || printf "")"
+  [ -n "$AIWB_COMPONENT_COMMAND" ] || return 1
+  case "$AIWB_COMPONENT_NAME" in
+    service)
+      case "$AIWB_COMPONENT_COMMAND" in
+        *"$AIWB_AGENT_HOME/aiwbctl"*service-run*) return 0 ;;
+      esac
+      ;;
+    daemon)
+      case "$AIWB_COMPONENT_COMMAND" in
+        *"$AIWB_AGENT_HOME/aiwbctl"*daemon*|*"$AIWB_AGENT_HOME/aiwbctl"*service-run*) return 0 ;;
+      esac
+      ;;
+    http)
+      case "$AIWB_COMPONENT_COMMAND" in
+        *"$AIWB_AGENT_HOME/aiwb-agent-http.mjs"*) return 0 ;;
+      esac
+      ;;
+    updater)
+      case "$AIWB_COMPONENT_COMMAND" in
+        *"$AIWB_AGENT_HOME/aiwb-agent-updater.mjs"*) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+aiwb_component_pid_file_ready() {
+  AIWB_COMPONENT_PID_FILE="$1"
+  AIWB_COMPONENT_NAME="$2"
+  AIWB_COMPONENT_PID="$(cat "$AIWB_COMPONENT_PID_FILE" 2>/dev/null || printf "")"
+  aiwb_process_matches_component "$AIWB_COMPONENT_PID" "$AIWB_COMPONENT_NAME"
+}
+
+aiwb_pid_value_alive() {
+  AIWB_TASK_PID_VALUE="$1"
+  case "$AIWB_TASK_PID_VALUE" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$AIWB_TASK_PID_VALUE" -gt 1 ] 2>/dev/null && kill -0 "$AIWB_TASK_PID_VALUE" 2>/dev/null
+}
+
+aiwb_install_runner_matches() {
+  AIWB_ACTIVE_TASK_DIR="$1"
+  AIWB_ACTIVE_RUNNER_PID="$2"
+  aiwb_pid_value_alive "$AIWB_ACTIVE_RUNNER_PID" || return 1
+  AIWB_ACTIVE_RUNNER_COMMAND="$(LC_ALL=C ps -p "$AIWB_ACTIVE_RUNNER_PID" -o command= 2>/dev/null || printf "")"
+  case "$AIWB_ACTIVE_RUNNER_COMMAND" in
+    *"$AIWB_ACTIVE_TASK_DIR/run.sh"*) return 0 ;;
+  esac
+  return 1
+}
+
+aiwb_install_creator_matches() {
+  AIWB_ACTIVE_TASK_DIR="$1"
+  AIWB_ACTIVE_CREATOR_PID="$2"
+  aiwb_pid_value_alive "$AIWB_ACTIVE_CREATOR_PID" || return 1
+  AIWB_ACTIVE_TASK_ID="$(basename -- "$AIWB_ACTIVE_TASK_DIR")"
+  AIWB_ACTIVE_CREATOR_COMMAND="$(LC_ALL=C ps -p "$AIWB_ACTIVE_CREATOR_PID" -o command= 2>/dev/null || printf "")"
+  case "$AIWB_ACTIVE_CREATOR_COMMAND" in
+    *"$AIWB_AGENT_HOME/aiwbctl"*create*"$AIWB_ACTIVE_TASK_ID"*) return 0 ;;
+  esac
+  return 1
+}
+
+aiwb_task_has_live_creator() {
+  AIWB_ACTIVE_TASK_DIR="$1"
+  AIWB_ACTIVE_CREATOR_PID="$(cat "$AIWB_ACTIVE_TASK_DIR/creator.pid" 2>/dev/null || printf "")"
+  if aiwb_install_creator_matches "$AIWB_ACTIVE_TASK_DIR" "$AIWB_ACTIVE_CREATOR_PID"; then
+    return 0
+  fi
+  if command -v pgrep >/dev/null 2>&1; then
+    for AIWB_ACTIVE_CREATOR_PID in $(pgrep -f "$AIWB_AGENT_HOME/aiwbctl" 2>/dev/null || printf ""); do
+      if aiwb_install_creator_matches "$AIWB_ACTIVE_TASK_DIR" "$AIWB_ACTIVE_CREATOR_PID"; then
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+aiwb_install_pid_is_descendant() {
+  AIWB_ACTIVE_CHILD_PID="$1"
+  AIWB_ACTIVE_ANCESTOR_PID="$2"
+  AIWB_ACTIVE_CURRENT_PID="$AIWB_ACTIVE_CHILD_PID"
+  AIWB_ACTIVE_DEPTH="0"
+  aiwb_pid_value_alive "$AIWB_ACTIVE_CHILD_PID" || return 1
+  while [ "$AIWB_ACTIVE_DEPTH" -lt 64 ] 2>/dev/null; do
+    AIWB_ACTIVE_PARENT_PID="$(LC_ALL=C ps -p "$AIWB_ACTIVE_CURRENT_PID" -o ppid= 2>/dev/null | tr -d '[:space:]' || printf "")"
+    case "$AIWB_ACTIVE_PARENT_PID" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$AIWB_ACTIVE_PARENT_PID" = "$AIWB_ACTIVE_ANCESTOR_PID" ] && return 0
+    [ "$AIWB_ACTIVE_PARENT_PID" -gt 1 ] 2>/dev/null || return 1
+    [ "$AIWB_ACTIVE_PARENT_PID" != "$AIWB_ACTIVE_CURRENT_PID" ] || return 1
+    AIWB_ACTIVE_CURRENT_PID="$AIWB_ACTIVE_PARENT_PID"
+    AIWB_ACTIVE_DEPTH="$((AIWB_ACTIVE_DEPTH + 1))"
+  done
+  return 1
+}
+
+aiwb_task_has_live_process() {
+  AIWB_ACTIVE_TASK_DIR="$1"
+  AIWB_ACTIVE_RUNNER_PID="$(cat "$AIWB_ACTIVE_TASK_DIR/pid" 2>/dev/null || printf "")"
+  AIWB_ACTIVE_COMMAND_PID="$(cat "$AIWB_ACTIVE_TASK_DIR/command_pid" 2>/dev/null || printf "")"
+  aiwb_install_runner_matches "$AIWB_ACTIVE_TASK_DIR" "$AIWB_ACTIVE_RUNNER_PID" || return 1
+  # The verified runner itself is sufficient proof of active work. If a
+  # command PID exists, it is considered related only while below that runner.
+  if aiwb_pid_value_alive "$AIWB_ACTIVE_COMMAND_PID"; then
+    aiwb_install_pid_is_descendant "$AIWB_ACTIVE_COMMAND_PID" "$AIWB_ACTIVE_RUNNER_PID" || true
+  fi
+  return 0
+}
+
+aiwb_install_task_age_seconds() {
+  AIWB_ACTIVE_TASK_DIR="$1"
+  AIWB_ACTIVE_TIMESTAMP=""
+  for AIWB_ACTIVE_TIMESTAMP_NAME in queued_at created_at started_at; do
+    if [ -s "$AIWB_ACTIVE_TASK_DIR/$AIWB_ACTIVE_TIMESTAMP_NAME" ]; then
+      AIWB_ACTIVE_TIMESTAMP="$(cat "$AIWB_ACTIVE_TASK_DIR/$AIWB_ACTIVE_TIMESTAMP_NAME" 2>/dev/null || printf "")"
+      [ -n "$AIWB_ACTIVE_TIMESTAMP" ] && break
+    fi
+  done
+  AIWB_ACTIVE_EPOCH="$({
+    date -u -d "$AIWB_ACTIVE_TIMESTAMP" +%s 2>/dev/null ||
+      date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$AIWB_ACTIVE_TIMESTAMP" +%s 2>/dev/null ||
+      stat -c %Y "$AIWB_ACTIVE_TASK_DIR/status" 2>/dev/null ||
+      date -u -r "$AIWB_ACTIVE_TASK_DIR/status" +%s 2>/dev/null ||
+      stat -c %Y "$AIWB_ACTIVE_TASK_DIR" 2>/dev/null ||
+      date -u -r "$AIWB_ACTIVE_TASK_DIR" +%s 2>/dev/null ||
+      printf 0
+  } | head -n 1)"
+  AIWB_ACTIVE_NOW="$(date -u +%s)"
+  if [ "$AIWB_ACTIVE_EPOCH" -gt 0 ] 2>/dev/null; then
+    printf '%s\\n' "$((AIWB_ACTIVE_NOW - AIWB_ACTIVE_EPOCH))"
+  else
+    printf '999999\\n'
+  fi
+}
+
+aiwb_active_task_count() {
+  AIWB_ACTIVE_COUNT="0"
+  for AIWB_ACTIVE_TASK_DIR in "$AIWB_AGENT_HOME/tasks"/*; do
+    [ -d "$AIWB_ACTIVE_TASK_DIR" ] || continue
+    AIWB_ACTIVE_STATUS="$(cat "$AIWB_ACTIVE_TASK_DIR/status" 2>/dev/null | tr '[:upper:]' '[:lower:]' || printf "")"
+    if aiwb_task_has_live_process "$AIWB_ACTIVE_TASK_DIR"; then
+      case "$AIWB_ACTIVE_STATUS" in
+        running|preparing|queued|busy|"") AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))" ;;
+      esac
+      continue
+    fi
+    case "$AIWB_ACTIVE_STATUS" in
+      preparing)
+        if [ "$AIWB_AGENT_PLATFORM" = "macos" ] && aiwb_task_has_live_creator "$AIWB_ACTIVE_TASK_DIR"; then
+          AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))"
+        elif [ "$AIWB_AGENT_PLATFORM" = "macos" ]; then
+          # creator.pid publication follows preparing by only a few syscalls;
+          # retain the v54-compatible grace window so an accepted creator is
+          # never migrated out from underneath itself.
+          AIWB_ACTIVE_AGE="$(aiwb_install_task_age_seconds "$AIWB_ACTIVE_TASK_DIR")"
+          if [ "$AIWB_ACTIVE_AGE" -ge 0 ] 2>/dev/null && [ "$AIWB_ACTIVE_AGE" -lt 30 ] 2>/dev/null; then
+            AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))"
+          fi
+        elif [ "$AIWB_AGENT_PLATFORM" != "macos" ]; then
+          AIWB_ACTIVE_AGE="$(aiwb_install_task_age_seconds "$AIWB_ACTIVE_TASK_DIR")"
+          if [ "$AIWB_ACTIVE_AGE" -ge 0 ] 2>/dev/null && [ "$AIWB_ACTIVE_AGE" -lt 30 ] 2>/dev/null; then
+            AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))"
+          fi
+        fi
+        ;;
+      "")
+        # create-now writes metadata immediately before waiting on tick.lock.
+        # Protect this tiny pre-status window from a generation swap.
+        if [ -s "$AIWB_ACTIVE_TASK_DIR/command.b64" ] &&
+           [ "$AIWB_AGENT_PLATFORM" = "macos" ] &&
+           aiwb_task_has_live_creator "$AIWB_ACTIVE_TASK_DIR"; then
+          AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))"
+        elif [ -s "$AIWB_ACTIVE_TASK_DIR/command.b64" ] && [ "$AIWB_AGENT_PLATFORM" = "macos" ]; then
+          AIWB_ACTIVE_AGE="$(aiwb_install_task_age_seconds "$AIWB_ACTIVE_TASK_DIR")"
+          if [ "$AIWB_ACTIVE_AGE" -ge 0 ] 2>/dev/null && [ "$AIWB_ACTIVE_AGE" -lt 30 ] 2>/dev/null; then
+            AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))"
+          fi
+        elif [ -s "$AIWB_ACTIVE_TASK_DIR/command.b64" ] && [ "$AIWB_AGENT_PLATFORM" != "macos" ]; then
+          AIWB_ACTIVE_AGE="$(aiwb_install_task_age_seconds "$AIWB_ACTIVE_TASK_DIR")"
+          if [ "$AIWB_ACTIVE_AGE" -ge 0 ] 2>/dev/null && [ "$AIWB_ACTIVE_AGE" -lt 30 ] 2>/dev/null; then
+            AIWB_ACTIVE_COUNT="$((AIWB_ACTIVE_COUNT + 1))"
+          fi
+        fi
+        ;;
+      # A queued task without a live process is preserved for the new daemon.
+    esac
+  done
+  printf '%s\\n' "$AIWB_ACTIVE_COUNT"
+}
+
+aiwb_migrate_macos_legacy_tasks() {
+  [ "$AIWB_AGENT_PLATFORM" = "macos" ] || return 0
+  for AIWB_MIGRATION_TASK_DIR in "$AIWB_AGENT_HOME/tasks"/*; do
+    [ -d "$AIWB_MIGRATION_TASK_DIR" ] || continue
+    AIWB_MIGRATION_STATUS="$(cat "$AIWB_MIGRATION_TASK_DIR/status" 2>/dev/null | tr '[:upper:]' '[:lower:]' || printf "")"
+    case "$AIWB_MIGRATION_STATUS" in
+      queued|preparing) ;;
+      *) continue ;;
+    esac
+    aiwb_task_has_live_process "$AIWB_MIGRATION_TASK_DIR" && continue
+    aiwb_task_has_live_creator "$AIWB_MIGRATION_TASK_DIR" && continue
+    if [ "$AIWB_MIGRATION_STATUS" = "preparing" ]; then
+      AIWB_MIGRATION_AGE="$(aiwb_install_task_age_seconds "$AIWB_MIGRATION_TASK_DIR")"
+      if [ "$AIWB_MIGRATION_AGE" -ge 0 ] 2>/dev/null && [ "$AIWB_MIGRATION_AGE" -lt 30 ] 2>/dev/null; then
+        continue
+      fi
+    fi
+    {
+      printf 'AI Workbench Agent migration: macOS 后台服务不能安全启动旧版 %s 任务。\\n' "$AIWB_MIGRATION_STATUS"
+      printf '该任务没有有效的用户上下文启动进程，已终止；客户端可以安全重试。\\n'
+      printf 'checked_at: %s\\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    } >> "$AIWB_MIGRATION_TASK_DIR/bootstrap.log"
+    printf '%s\\n' 'macos_user_context_required' > "$AIWB_MIGRATION_TASK_DIR/migration_error_code"
+    printf '%s\\n' '78' > "$AIWB_MIGRATION_TASK_DIR/exit_code"
+    printf '%s\\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "$AIWB_MIGRATION_TASK_DIR/finished_at"
+    printf '%s\\n' 'error' > "$AIWB_MIGRATION_TASK_DIR/status"
+  done
+}
+
+aiwb_report_active_task_deferred() {
+  AIWB_ACTIVE_COUNT="$1"
+  printf '__AIWB_AGENT_STATUS__deferred\\n'
+  printf '__AIWB_AGENT_INSTALL_SOURCE__config-center\\n'
+  printf '__AIWB_AGENT_INSTALL_RESULT__deferred\\n'
+  printf '__AIWB_AGENT_INSTALL_DEFER_REASON__active_tasks\\n'
+  printf '__AIWB_AGENT_ACTIVE_TASKS__%s\\n' "$AIWB_ACTIVE_COUNT"
+  printf '__AIWB_AGENT_ERROR__Agent 正在执行任务，升级已安全延后；任务结束后会自动重试。\\n'
+}
+
+AIWB_AGENT_TICK_LOCK="$AIWB_AGENT_HOME/tick.lock"
+AIWB_AGENT_TICK_LOCK_OWNED=""
+AIWB_INSTALL_FENCE_EPOCH=""
+AIWB_INSTALL_FENCE_OWNED=""
+aiwb_release_install_fence() {
+  if [ -n "$AIWB_INSTALL_FENCE_OWNED" ] &&
+     [ "$(awk -F= '$1 == "epoch" { print $2; exit }' "$AIWB_AGENT_RUNTIME_UPDATE_FENCE" 2>/dev/null || printf "")" = "$AIWB_INSTALL_FENCE_EPOCH" ]; then
+    rm -f "$AIWB_AGENT_RUNTIME_UPDATE_FENCE" 2>/dev/null || true
+  fi
+  AIWB_INSTALL_FENCE_OWNED=""
+}
+
+aiwb_publish_install_fence() {
+  AIWB_INSTALL_FENCE_EPOCH="$(date -u +%s)-$$"
+  AIWB_INSTALL_FENCE_STAGE="$AIWB_AGENT_RUNTIME_UPDATE_FENCE.stage.$$"
+  {
+    printf 'format=1\\n'
+    printf 'state=draining\\n'
+    printf 'epoch=%s\\n' "$AIWB_INSTALL_FENCE_EPOCH"
+    printf 'owner_pid=%s\\n' "$$"
+    printf 'target_version=%s\\n' "$AIWB_AGENT_REMOTE_VERSION"
+    printf 'target_control_sha256=%s\\n' "$AIWB_AGENT_EXPECTED_SHA"
+  } > "$AIWB_INSTALL_FENCE_STAGE" || return 1
+  chmod 600 "$AIWB_INSTALL_FENCE_STAGE" || return 1
+  mv "$AIWB_INSTALL_FENCE_STAGE" "$AIWB_AGENT_RUNTIME_UPDATE_FENCE" || return 1
+  AIWB_INSTALL_FENCE_OWNED="1"
+}
+
+aiwb_release_install_tick_lock() {
+  if [ -n "$AIWB_AGENT_TICK_LOCK_OWNED" ] &&
+     [ "$(cat "$AIWB_AGENT_TICK_LOCK/owner.pid" 2>/dev/null || printf "")" = "$$" ]; then
+    rm -f "$AIWB_AGENT_TICK_LOCK/owner.pid" "$AIWB_AGENT_TICK_LOCK/started_at" 2>/dev/null || true
+    rmdir "$AIWB_AGENT_TICK_LOCK" 2>/dev/null || true
+  fi
+  AIWB_AGENT_TICK_LOCK_OWNED=""
+}
+
+aiwb_acquire_install_tick_lock() {
+  AIWB_LOCK_ATTEMPT="0"
+  while ! mkdir "$AIWB_AGENT_TICK_LOCK" 2>/dev/null; do
+    AIWB_LOCK_OWNER="$(cat "$AIWB_AGENT_TICK_LOCK/owner.pid" 2>/dev/null || printf "")"
+    AIWB_LOCK_EPOCH="$(stat -c %Y "$AIWB_AGENT_TICK_LOCK" 2>/dev/null || date -u -r "$AIWB_AGENT_TICK_LOCK" +%s 2>/dev/null || printf 0)"
+    AIWB_LOCK_NOW="$(date -u +%s)"
+    AIWB_LOCK_AGE="$((AIWB_LOCK_NOW - AIWB_LOCK_EPOCH))"
+    if { ! aiwb_pid_value_alive "$AIWB_LOCK_OWNER"; } &&
+       [ "$AIWB_LOCK_EPOCH" -gt 0 ] 2>/dev/null && [ "$AIWB_LOCK_AGE" -gt 30 ] 2>/dev/null; then
+      rm -f "$AIWB_AGENT_TICK_LOCK/owner.pid" "$AIWB_AGENT_TICK_LOCK/started_at" 2>/dev/null || true
+      rmdir "$AIWB_AGENT_TICK_LOCK" 2>/dev/null || true
+    fi
+    AIWB_LOCK_ATTEMPT="$((AIWB_LOCK_ATTEMPT + 1))"
+    [ "$AIWB_LOCK_ATTEMPT" -lt 250 ] 2>/dev/null || return 1
+    sleep 0.02
+  done
+  printf '%s\\n' "$$" > "$AIWB_AGENT_TICK_LOCK/owner.pid"
+  date -u +'%Y-%m-%dT%H:%M:%SZ' > "$AIWB_AGENT_TICK_LOCK/started_at"
+  AIWB_AGENT_TICK_LOCK_OWNED="1"
+}
+
+AIWB_DIRECT_STAGE="$AIWB_AGENT_HOME/aiwb-agent-http.mjs.stage.$$"
+AIWB_UPDATER_STAGE="$AIWB_AGENT_HOME/aiwb-agent-updater.mjs.stage.$$"
+AIWB_UPDATER_CONFIG_STAGE="$AIWB_AGENT_HOME/updater.json.stage.$$"
+AIWB_HTTP_CONFIG_STAGE="$AIWB_AGENT_HOME/http.json.stage.$$"
+AIWB_GENERATION_STAGE="$AIWB_AGENT_RUNTIME_GENERATION.stage.$$"
+aiwb_install_cleanup() {
+  aiwb_release_install_fence
+  aiwb_release_install_tick_lock
+  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP" \
+    "$AIWB_DIRECT_STAGE" "$AIWB_UPDATER_STAGE" "$AIWB_UPDATER_CONFIG_STAGE" "$AIWB_HTTP_CONFIG_STAGE" \
+    "$AIWB_GENERATION_STAGE" "$AIWB_AGENT_RUNTIME_UPDATE_FENCE.stage.$$" 2>/dev/null || true
+}
+trap 'aiwb_install_cleanup' EXIT
+
+AIWB_AGENT_SAME_VERSION_READY=""
 if [ -x "$AIWB_AGENT_HOME/aiwbctl" ] &&
    [ "$AIWB_AGENT_INSTALLED_VERSION_NUM" -ge "$AIWB_AGENT_REMOTE_VERSION_NUM" ] 2>/dev/null; then
+  AIWB_DIRECT_EXPECTED_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.sha256 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+  AIWB_UPDATER_EXPECTED_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.sha256 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+  AIWB_AGENT_EXPECTED_SHA="$(printf '%s' "$AIWB_AGENT_EXPECTED_SHA" | tr '[:upper:]' '[:lower:]')"
+  AIWB_DAEMON_PID_VALUE="$(cat "$AIWB_AGENT_HOME/daemon.pid" 2>/dev/null || printf "")"
+  if aiwb_file_sha_matches "$AIWB_AGENT_HOME/aiwbctl" "$AIWB_AGENT_EXPECTED_SHA" &&
+     [ ! -f "$AIWB_AGENT_RUNTIME_UPDATE_FENCE" ] &&
+     [ "$(awk -F= '$1 == "format" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" = "1" ] &&
+     [ "$(awk -F= '$1 == "state" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" = "committed" ] &&
+     [ -n "$(awk -F= '$1 == "epoch" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" ] &&
+     [ "$(awk -F= '$1 == "version" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" = "$AIWB_AGENT_REMOTE_VERSION" ] &&
+     [ "$(awk -F= '$1 == "control_sha256" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" = "$AIWB_AGENT_EXPECTED_SHA" ] &&
+     [ "$(awk -F= '$1 == "http_sha256" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" = "$AIWB_DIRECT_EXPECTED_SHA" ] &&
+     [ "$(awk -F= '$1 == "updater_sha256" { print $2; exit }' "$AIWB_AGENT_RUNTIME_GENERATION" 2>/dev/null || printf "")" = "$AIWB_UPDATER_EXPECTED_SHA" ] &&
+     aiwb_file_sha_matches "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" "$AIWB_DIRECT_EXPECTED_SHA" &&
+     aiwb_file_sha_matches "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" "$AIWB_UPDATER_EXPECTED_SHA" &&
+     [ "$(cat "$AIWB_AGENT_HOME/service.runtime.sha256" 2>/dev/null || printf "")" = "$AIWB_AGENT_EXPECTED_SHA" ] &&
+     [ "$(cat "$AIWB_AGENT_HOME/http.runtime.sha256" 2>/dev/null || printf "")" = "$AIWB_DIRECT_EXPECTED_SHA" ] &&
+     [ "$(cat "$AIWB_AGENT_HOME/updater.runtime.sha256" 2>/dev/null || printf "")" = "$AIWB_UPDATER_EXPECTED_SHA" ] &&
+     [ "$(cat "$AIWB_AGENT_HOME/daemon.lock/version" 2>/dev/null || printf "")" = "$AIWB_AGENT_REMOTE_VERSION" ] &&
+     [ "$(cat "$AIWB_AGENT_HOME/daemon.lock/control.sha256" 2>/dev/null || printf "")" = "$AIWB_AGENT_EXPECTED_SHA" ] &&
+     [ "$(cat "$AIWB_AGENT_HOME/daemon.lock/owner.pid" 2>/dev/null || printf "")" = "$AIWB_DAEMON_PID_VALUE" ] &&
+     aiwb_component_pid_file_ready "$AIWB_AGENT_HOME/service.pid" service &&
+     aiwb_component_pid_file_ready "$AIWB_AGENT_HOME/daemon.pid" daemon &&
+     aiwb_component_pid_file_ready "$AIWB_AGENT_HOME/http.pid" http &&
+     aiwb_component_pid_file_ready "$AIWB_AGENT_HOME/updater.pid" updater &&
+     [ -s "$AIWB_AGENT_HOME/http.json" ]; then
+    AIWB_AGENT_SAME_VERSION_READY="1"
+  fi
+fi
+
+if [ -n "$AIWB_AGENT_SAME_VERSION_READY" ]; then
   rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
   printf "__AIWB_AGENT_INSTALL_SOURCE__config-center\\n"
   printf "__AIWB_AGENT_INSTALL_RESULT__unchanged\\n"
@@ -2336,74 +3831,250 @@ if [ -x "$AIWB_AGENT_HOME/aiwbctl" ] &&
   exit $?
 fi
 
-if [ -z "$AIWB_AGENT_SCRIPT_URL" ] || ! aiwb_download_url "$AIWB_AGENT_SCRIPT_URL" "$AIWB_AGENT_DOWNLOAD_TMP"; then
+AIWB_DIRECT_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.url 2>/dev/null || true)"
+AIWB_DIRECT_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.sha256 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+AIWB_UPDATER_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.url 2>/dev/null || true)"
+AIWB_UPDATER_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.sha256 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+AIWB_AGENT_EXPECTED_SHA="$(printf '%s' "$AIWB_AGENT_EXPECTED_SHA" | tr '[:upper:]' '[:lower:]')"
+
+if [ -z "$AIWB_AGENT_SCRIPT_URL" ] || [ -z "$AIWB_DIRECT_URL" ] || [ -z "$AIWB_UPDATER_URL" ] ||
+   ! printf '%s' "$AIWB_AGENT_EXPECTED_SHA" | grep -Eq '^[0-9a-f]{64}$' ||
+   ! printf '%s' "$AIWB_DIRECT_SHA" | grep -Eq '^[0-9a-f]{64}$' ||
+   ! printf '%s' "$AIWB_UPDATER_SHA" | grep -Eq '^[0-9a-f]{64}$'; then
   printf '__AIWB_AGENT_STATUS__error\\n'
-  printf '__AIWB_AGENT_ERROR__配置中心 Agent 下载失败，未修改服务器上的现有 Agent。\\n'
-  rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  printf '__AIWB_AGENT_ERROR__配置中心 Agent 清单缺少三个完整且可校验的制品，现有 Agent 未被替换。\\n'
   exit 5
 fi
 
-AIWB_AGENT_SHA_OK="1"
-if [ -n "$AIWB_AGENT_EXPECTED_SHA" ] && command -v sha256sum >/dev/null 2>&1; then
-  AIWB_AGENT_ACTUAL_SHA="$(sha256sum "$AIWB_AGENT_DOWNLOAD_TMP" | awk '{print $1}')"
-  [ "$AIWB_AGENT_ACTUAL_SHA" = "$AIWB_AGENT_EXPECTED_SHA" ] || AIWB_AGENT_SHA_OK=""
-elif [ -n "$AIWB_AGENT_EXPECTED_SHA" ] && command -v shasum >/dev/null 2>&1; then
-  AIWB_AGENT_ACTUAL_SHA="$(shasum -a 256 "$AIWB_AGENT_DOWNLOAD_TMP" | awk '{print $1}')"
-  [ "$AIWB_AGENT_ACTUAL_SHA" = "$AIWB_AGENT_EXPECTED_SHA" ] || AIWB_AGENT_SHA_OK=""
+AIWB_ACTIVE_COUNT="$(aiwb_active_task_count)"
+if [ "$AIWB_ACTIVE_COUNT" -gt 0 ] 2>/dev/null; then
+  aiwb_report_active_task_deferred "$AIWB_ACTIVE_COUNT"
+  exit 20
 fi
-if [ -z "$AIWB_AGENT_SHA_OK" ]; then
+
+aiwb_stage_artifact() {
+  AIWB_STAGE_URL="$1"
+  AIWB_STAGE_SHA="$2"
+  AIWB_STAGE_TARGET="$3"
+  rm -f "$AIWB_STAGE_TARGET"
+  aiwb_download_url "$AIWB_STAGE_URL" "$AIWB_STAGE_TARGET" || return 1
+  aiwb_file_sha_matches "$AIWB_STAGE_TARGET" "$AIWB_STAGE_SHA" || { rm -f "$AIWB_STAGE_TARGET"; return 1; }
+  chmod 700 "$AIWB_STAGE_TARGET" || { rm -f "$AIWB_STAGE_TARGET"; return 1; }
+}
+
+if ! aiwb_stage_artifact "$AIWB_AGENT_SCRIPT_URL" "$AIWB_AGENT_EXPECTED_SHA" "$AIWB_AGENT_DOWNLOAD_TMP"; then
   printf '__AIWB_AGENT_STATUS__error\\n'
-  printf '__AIWB_AGENT_ERROR__云端 Agent 校验失败，未替换服务器上的现有 Agent。\\n'
-  rm -f "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+  printf '__AIWB_AGENT_ERROR__配置中心 Agent 下载或校验失败，现有 Agent 未被替换。\\n'
   exit 6
 fi
+if ! aiwb_stage_artifact "$AIWB_DIRECT_URL" "$AIWB_DIRECT_SHA" "$AIWB_DIRECT_STAGE" ||
+   ! aiwb_stage_artifact "$AIWB_UPDATER_URL" "$AIWB_UPDATER_SHA" "$AIWB_UPDATER_STAGE"; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent runtime 下载或校验失败，现有 Agent 未被替换。\\n'
+  exit 7
+fi
 
-cp "$AIWB_AGENT_DOWNLOAD_TMP" "$AIWB_AGENT_HOME/aiwbctl"
-chmod 700 "$AIWB_AGENT_HOME/aiwbctl"
-AIWB_AGENT_INSTALL_SOURCE="config-center"
+if ! "$AIWB_AGENT_NODE" - "$AIWB_UPDATER_CONFIG_STAGE" "$AIWB_AGENT_MANIFEST_URL" ${shQuote(workbenchAgentControlEndpoint)} ${shQuote(agentAdvertisedEndpoint)} <<'NODE'
+const fs = require("fs");
+const [, , target, manifestUrl, controlEndpoint, advertisedEndpoint] = process.argv;
+fs.writeFileSync(target, JSON.stringify({ manifestUrl, controlEndpoint, advertisedEndpoint }) + "\\n", { mode: 0o600 });
+NODE
+then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent updater 配置生成失败，现有 Agent 未被替换。\\n'
+  exit 8
+fi
+if [ ! -s "$AIWB_AGENT_HOME/http.json" ]; then
+  printf '%s\n' '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}' > "$AIWB_HTTP_CONFIG_STAGE"
+else
+  if ! "$AIWB_AGENT_NODE" - "$AIWB_AGENT_HOME/http.json" "$AIWB_HTTP_CONFIG_STAGE" <<'NODE'
+const fs = require("fs");
+const source = process.argv[2];
+const target = process.argv[3];
+const config = JSON.parse(fs.readFileSync(source, "utf8"));
+config.securityVersion = Math.max(1, Number(config.securityVersion) || 1);
+config.listenHost = "0.0.0.0";
+config.port = Number(config.port) || 8787;
+if (!config.tls) config.tls = true;
+fs.writeFileSync(target, JSON.stringify(config, null, 2) + "\\n", { mode: 0o600 });
+NODE
+  then
+    printf '__AIWB_AGENT_STATUS__error\\n'
+    printf '__AIWB_AGENT_ERROR__Agent HTTPS 配置无效，现有 Agent 未被替换。\\n'
+    exit 8
+  fi
+fi
+chmod 600 "$AIWB_UPDATER_CONFIG_STAGE" "$AIWB_HTTP_CONFIG_STAGE"
 
-AIWB_DIRECT_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.url 2>/dev/null || true)"
-AIWB_DIRECT_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" directRuntime.sha256 2>/dev/null || true)"
-AIWB_UPDATER_URL="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.url 2>/dev/null || true)"
-AIWB_UPDATER_SHA="$(aiwb_json_value "$AIWB_AGENT_MANIFEST_TMP" updaterRuntime.sha256 2>/dev/null || true)"
-aiwb_install_runtime() {
-  AIWB_RUNTIME_URL="$1"
-  AIWB_RUNTIME_SHA="$2"
-  AIWB_RUNTIME_TARGET="$3"
-  [ -n "$AIWB_RUNTIME_URL" ] || return 0
-  AIWB_RUNTIME_TMP="$AIWB_RUNTIME_TARGET.download.$$"
-  if ! aiwb_download_url "$AIWB_RUNTIME_URL" "$AIWB_RUNTIME_TMP"; then
-    rm -f "$AIWB_RUNTIME_TMP"
-    return 1
-  fi
-  if [ -n "$AIWB_RUNTIME_SHA" ] && command -v sha256sum >/dev/null 2>&1; then
-    [ "$(sha256sum "$AIWB_RUNTIME_TMP" | awk '{print $1}')" = "$AIWB_RUNTIME_SHA" ] || { rm -f "$AIWB_RUNTIME_TMP"; return 1; }
-  fi
-  mv "$AIWB_RUNTIME_TMP" "$AIWB_RUNTIME_TARGET"
-  chmod 700 "$AIWB_RUNTIME_TARGET"
+if ! aiwb_acquire_install_tick_lock; then
+  printf '__AIWB_AGENT_STATUS__deferred\\n'
+  printf '__AIWB_AGENT_INSTALL_SOURCE__config-center\\n'
+  printf '__AIWB_AGENT_INSTALL_RESULT__deferred\\n'
+  printf '__AIWB_AGENT_INSTALL_DEFER_REASON__task_lock_busy\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 任务启动锁正忙，升级未修改现有文件；请稍后重试。\\n'
+  exit 21
+fi
+
+if ! aiwb_publish_install_fence; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 升级围栏创建失败，现有文件未被修改；请稍后重试。\\n'
+  exit 22
+fi
+
+# Cover the old-generation window between uploading command.b64 and publishing
+# preparing/creator.pid. Requests from v55 see the fence and fail retryably;
+# v54 creators are detected by their live command line in the late scan.
+sleep 0.25
+aiwb_migrate_macos_legacy_tasks
+
+# Recheck while holding the same lock used by task launch. No old-generation
+# creator can cross this boundary after the drain and before replacement.
+AIWB_ACTIVE_COUNT="$(aiwb_active_task_count)"
+if [ "$AIWB_ACTIVE_COUNT" -gt 0 ] 2>/dev/null; then
+  aiwb_report_active_task_deferred "$AIWB_ACTIVE_COUNT"
+  exit 20
+fi
+
+if ! {
+  printf 'format=1\\n'
+  printf 'state=committed\\n'
+  printf 'epoch=%s\\n' "$AIWB_INSTALL_FENCE_EPOCH"
+  printf 'version=%s\\n' "$AIWB_AGENT_REMOTE_VERSION"
+  printf 'control_sha256=%s\\n' "$AIWB_AGENT_EXPECTED_SHA"
+  printf 'http_sha256=%s\\n' "$AIWB_DIRECT_SHA"
+  printf 'updater_sha256=%s\\n' "$AIWB_UPDATER_SHA"
+} > "$AIWB_GENERATION_STAGE"; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 代际标记生成失败，现有文件未被修改。\\n'
+  exit 8
+fi
+chmod 600 "$AIWB_GENERATION_STAGE"
+
+AIWB_CONTROL_TARGET="$AIWB_AGENT_HOME/aiwbctl"
+AIWB_DIRECT_TARGET="$AIWB_AGENT_HOME/aiwb-agent-http.mjs"
+AIWB_UPDATER_TARGET="$AIWB_AGENT_HOME/aiwb-agent-updater.mjs"
+AIWB_UPDATER_CONFIG_TARGET="$AIWB_AGENT_HOME/updater.json"
+AIWB_HTTP_CONFIG_TARGET="$AIWB_AGENT_HOME/http.json"
+AIWB_GENERATION_TARGET="$AIWB_AGENT_RUNTIME_GENERATION"
+AIWB_CONTROL_BACKUP="$AIWB_CONTROL_TARGET.backup.$$"
+AIWB_DIRECT_BACKUP="$AIWB_DIRECT_TARGET.backup.$$"
+AIWB_UPDATER_BACKUP="$AIWB_UPDATER_TARGET.backup.$$"
+AIWB_UPDATER_CONFIG_BACKUP="$AIWB_UPDATER_CONFIG_TARGET.backup.$$"
+AIWB_HTTP_CONFIG_BACKUP="$AIWB_HTTP_CONFIG_TARGET.backup.$$"
+AIWB_GENERATION_BACKUP="$AIWB_GENERATION_TARGET.backup.$$"
+AIWB_CONTROL_HAD="0"
+AIWB_DIRECT_HAD="0"
+AIWB_UPDATER_HAD="0"
+AIWB_UPDATER_CONFIG_HAD="0"
+AIWB_HTTP_CONFIG_HAD="0"
+AIWB_GENERATION_HAD="0"
+[ -e "$AIWB_CONTROL_TARGET" ] && AIWB_CONTROL_HAD="1"
+[ -e "$AIWB_DIRECT_TARGET" ] && AIWB_DIRECT_HAD="1"
+[ -e "$AIWB_UPDATER_TARGET" ] && AIWB_UPDATER_HAD="1"
+[ -e "$AIWB_UPDATER_CONFIG_TARGET" ] && AIWB_UPDATER_CONFIG_HAD="1"
+[ -e "$AIWB_HTTP_CONFIG_TARGET" ] && AIWB_HTTP_CONFIG_HAD="1"
+[ -e "$AIWB_GENERATION_TARGET" ] && AIWB_GENERATION_HAD="1"
+
+aiwb_backup_target() {
+  AIWB_BACKUP_TARGET="$1"
+  AIWB_BACKUP_PATH="$2"
+  [ ! -e "$AIWB_BACKUP_TARGET" ] || { [ -f "$AIWB_BACKUP_TARGET" ] && cp -p "$AIWB_BACKUP_TARGET" "$AIWB_BACKUP_PATH"; }
 }
-aiwb_install_runtime "$AIWB_DIRECT_URL" "$AIWB_DIRECT_SHA" "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" || true
-aiwb_install_runtime "$AIWB_UPDATER_URL" "$AIWB_UPDATER_SHA" "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" || true
-cat > "$AIWB_AGENT_HOME/updater.json" <<AIWB_UPDATER_CONFIG
-{"manifestUrl":"$AIWB_AGENT_MANIFEST_URL","controlEndpoint":"${workbenchAgentControlEndpoint}","advertisedEndpoint":${JSON.stringify(agentAdvertisedEndpoint)}}
-AIWB_UPDATER_CONFIG
-if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" ]; then
-  if [ ! -s "$AIWB_AGENT_HOME/http.json" ]; then
-    printf '%s\n' '{"securityVersion":1,"listenHost":"0.0.0.0","port":8787,"tls":true}' > "$AIWB_AGENT_HOME/http.json"
-    chmod 600 "$AIWB_AGENT_HOME/http.json"
+
+aiwb_restore_target() {
+  AIWB_RESTORE_TARGET="$1"
+  AIWB_RESTORE_BACKUP="$2"
+  AIWB_RESTORE_HAD="$3"
+  if [ "$AIWB_RESTORE_HAD" = "1" ]; then
+    [ -f "$AIWB_RESTORE_BACKUP" ] || return 1
+    rm -f "$AIWB_RESTORE_TARGET" || return 1
+    mv "$AIWB_RESTORE_BACKUP" "$AIWB_RESTORE_TARGET" 2>/dev/null ||
+      cp -p "$AIWB_RESTORE_BACKUP" "$AIWB_RESTORE_TARGET"
+    return $?
   fi
-  pkill -f "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" >/dev/null 2>&1 || true
-  nohup node "$AIWB_AGENT_HOME/aiwb-agent-http.mjs" >> "$AIWB_AGENT_HOME/http.log" 2>&1 &
-fi
-if command -v node >/dev/null 2>&1 && [ -x "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" ]; then
-  if ! pgrep -f "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" >/dev/null 2>&1; then
-    nohup node "$AIWB_AGENT_HOME/aiwb-agent-updater.mjs" >> "$AIWB_AGENT_HOME/updater.log" 2>&1 &
+  rm -f "$AIWB_RESTORE_TARGET"
+}
+
+aiwb_remove_backups() {
+  rm -f "$AIWB_CONTROL_BACKUP" "$AIWB_DIRECT_BACKUP" "$AIWB_UPDATER_BACKUP" \
+    "$AIWB_UPDATER_CONFIG_BACKUP" "$AIWB_HTTP_CONFIG_BACKUP" "$AIWB_GENERATION_BACKUP" 2>/dev/null || true
+}
+
+aiwb_rollback_transaction() {
+  AIWB_ROLLBACK_OK="1"
+  aiwb_restore_target "$AIWB_CONTROL_TARGET" "$AIWB_CONTROL_BACKUP" "$AIWB_CONTROL_HAD" || AIWB_ROLLBACK_OK=""
+  aiwb_restore_target "$AIWB_DIRECT_TARGET" "$AIWB_DIRECT_BACKUP" "$AIWB_DIRECT_HAD" || AIWB_ROLLBACK_OK=""
+  aiwb_restore_target "$AIWB_UPDATER_TARGET" "$AIWB_UPDATER_BACKUP" "$AIWB_UPDATER_HAD" || AIWB_ROLLBACK_OK=""
+  aiwb_restore_target "$AIWB_UPDATER_CONFIG_TARGET" "$AIWB_UPDATER_CONFIG_BACKUP" "$AIWB_UPDATER_CONFIG_HAD" || AIWB_ROLLBACK_OK=""
+  aiwb_restore_target "$AIWB_HTTP_CONFIG_TARGET" "$AIWB_HTTP_CONFIG_BACKUP" "$AIWB_HTTP_CONFIG_HAD" || AIWB_ROLLBACK_OK=""
+  aiwb_restore_target "$AIWB_GENERATION_TARGET" "$AIWB_GENERATION_BACKUP" "$AIWB_GENERATION_HAD" || AIWB_ROLLBACK_OK=""
+  if [ -n "$AIWB_ROLLBACK_OK" ]; then
+    printf '__AIWB_AGENT_INSTALL_ROLLBACK__restored\\n'
+  else
+    printf '__AIWB_AGENT_INSTALL_ROLLBACK__failed\\n'
   fi
+  aiwb_remove_backups
+}
+
+aiwb_recover_previous_supervisor() {
+  if [ -x "$AIWB_CONTROL_TARGET" ]; then
+    "$AIWB_CONTROL_TARGET" install-service >> "$AIWB_AGENT_HOME/daemon.log" 2>&1 || true
+  fi
+}
+
+if ! aiwb_backup_target "$AIWB_CONTROL_TARGET" "$AIWB_CONTROL_BACKUP" ||
+   ! aiwb_backup_target "$AIWB_DIRECT_TARGET" "$AIWB_DIRECT_BACKUP" ||
+   ! aiwb_backup_target "$AIWB_UPDATER_TARGET" "$AIWB_UPDATER_BACKUP" ||
+   ! aiwb_backup_target "$AIWB_UPDATER_CONFIG_TARGET" "$AIWB_UPDATER_CONFIG_BACKUP" ||
+   ! aiwb_backup_target "$AIWB_HTTP_CONFIG_TARGET" "$AIWB_HTTP_CONFIG_BACKUP" ||
+   ! aiwb_backup_target "$AIWB_GENERATION_TARGET" "$AIWB_GENERATION_BACKUP"; then
+  aiwb_remove_backups
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 旧版本备份失败，现有 Agent 未被替换。\\n'
+  exit 9
 fi
 
-rm -f "$AIWB_AGENT_CONTROL_TMP" "$AIWB_AGENT_MANIFEST_TMP" "$AIWB_AGENT_DOWNLOAD_TMP"
+AIWB_REPLACE_FAILED=""
+mv "$AIWB_AGENT_DOWNLOAD_TMP" "$AIWB_CONTROL_TARGET" || AIWB_REPLACE_FAILED="1"
+if [ -z "$AIWB_REPLACE_FAILED" ]; then mv "$AIWB_DIRECT_STAGE" "$AIWB_DIRECT_TARGET" || AIWB_REPLACE_FAILED="1"; fi
+if [ -z "$AIWB_REPLACE_FAILED" ]; then mv "$AIWB_UPDATER_STAGE" "$AIWB_UPDATER_TARGET" || AIWB_REPLACE_FAILED="1"; fi
+if [ -z "$AIWB_REPLACE_FAILED" ]; then mv "$AIWB_UPDATER_CONFIG_STAGE" "$AIWB_UPDATER_CONFIG_TARGET" || AIWB_REPLACE_FAILED="1"; fi
+if [ -z "$AIWB_REPLACE_FAILED" ]; then mv "$AIWB_HTTP_CONFIG_STAGE" "$AIWB_HTTP_CONFIG_TARGET" || AIWB_REPLACE_FAILED="1"; fi
+if [ -z "$AIWB_REPLACE_FAILED" ]; then mv "$AIWB_GENERATION_STAGE" "$AIWB_GENERATION_TARGET" || AIWB_REPLACE_FAILED="1"; fi
+if [ -n "$AIWB_REPLACE_FAILED" ]; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 文件替换失败，正在恢复原有版本。\\n'
+  aiwb_rollback_transaction
+  aiwb_recover_previous_supervisor
+  exit 10
+fi
+if ! chmod 700 "$AIWB_CONTROL_TARGET" "$AIWB_DIRECT_TARGET" "$AIWB_UPDATER_TARGET" ||
+   ! chmod 600 "$AIWB_UPDATER_CONFIG_TARGET" "$AIWB_HTTP_CONFIG_TARGET" "$AIWB_GENERATION_TARGET"; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent 文件权限提交失败，正在恢复原有版本。\\n'
+  aiwb_rollback_transaction
+  aiwb_recover_previous_supervisor
+  exit 10
+fi
+
+# The six-file generation is now committed atomically under tick.lock. Drop
+# only our matching fence before starting the supervisor so its health proof
+# can observe the committed generation. Creators still cannot launch until the
+# installer releases tick.lock and will reject if a rollback changes SHA/token.
+aiwb_release_install_fence
+
+if ! "$AIWB_CONTROL_TARGET" install-service; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR__Agent supervisor 启动失败，正在恢复原有版本。\\n'
+  aiwb_rollback_transaction
+  aiwb_recover_previous_supervisor
+  exit 11
+fi
+aiwb_remove_backups
+aiwb_release_install_tick_lock
 printf "__AIWB_AGENT_INSTALL_SOURCE__%s\\n" "$AIWB_AGENT_INSTALL_SOURCE"
-  "$AIWB_AGENT_HOME/aiwbctl" install-service 2>/dev/null || "$AIWB_AGENT_HOME/aiwbctl" status
+printf '__AIWB_AGENT_INSTALL_RESULT__updated\\n'
+"$AIWB_CONTROL_TARGET" status
 `);
 }
 
@@ -2604,10 +4275,14 @@ if [ ! -s "$AIWB_CONFIG" ]; then
   printf '__AIWB_AGENT_DIRECT_STATUS__missing\\n'
   exit 0
 fi
+AIWB_CONFIG_B64=$(base64 < "$AIWB_CONFIG" 2>/dev/null | tr -d '\\n')
+if [ -z "$AIWB_CONFIG_B64" ]; then
+  printf '__AIWB_AGENT_DIRECT_STATUS__error\\n'
+  printf '__AIWB_AGENT_DIRECT_ERROR__无法编码 Agent 直连配置。\\n'
+  exit 3
+fi
 printf '__AIWB_AGENT_DIRECT_STATUS__ready\\n'
-printf '__AIWB_AGENT_DIRECT_CONFIG_B64__'
-base64 "$AIWB_CONFIG" 2>/dev/null | tr -d '\\n' || true
-printf '\\n'
+printf '__AIWB_AGENT_DIRECT_CONFIG_B64__%s\\n' "$AIWB_CONFIG_B64"
 `);
 }
 
@@ -2644,7 +4319,7 @@ if [ -d "$AIWB_TASK_HOME" ]; then
       [ -d "$AIWB_TASK_DIR" ] || continue
       AIWB_TASK_ID="$(basename "$AIWB_TASK_DIR")"
       AIWB_TASK_STATUS="$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf unknown)"
-      AIWB_TASK_MTIME="$(stat -c %Y "$AIWB_TASK_DIR" 2>/dev/null || date +%s)"
+      AIWB_TASK_MTIME="$(stat -c %Y "$AIWB_TASK_DIR" 2>/dev/null || stat -f %m "$AIWB_TASK_DIR" 2>/dev/null || date +%s)"
       case "$AIWB_TASK_STATUS" in
         queued|preparing|running|busy) AIWB_TASK_PRIORITY="0" ;;
         error|cancelled) AIWB_TASK_PRIORITY="1" ;;
@@ -2693,7 +4368,11 @@ printf "__AIWB_AGENT_TASK_LIST_END__\\n"
 `);
 }
 
-export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metadata = {}) {
+export function workbenchAgentTaskCreateMode(profile) {
+  return normalizeServerPlatform(profile?.platform) === "macos" ? "create-now" : "create";
+}
+
+export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metadata = {}, options = {}) {
   if (isWindowsProfile(profile)) {
     const conversationId = String(metadata.conversationId || "").trim();
     const conversationName = String(metadata.name || "").trim();
@@ -2729,6 +4408,8 @@ export function buildWorkbenchAgentCreateCommand(profile, taskId, command, metad
     return buildWindowsAgentControlCommand(profile, ["create", taskId], `${taskWrites}\n`);
   }
   const encodedCommand = toBase64Utf8(command);
+  const requestedCreateMode = String(options.createMode || metadata.createMode || "create").trim();
+  const createMode = requestedCreateMode === "create-now" ? "create-now" : "create";
   const conversationId = String(metadata.conversationId || "").trim();
   const conversationName = String(metadata.name || "").trim();
   const agentId = String(metadata.agentId || profile.agentId || "").trim();
@@ -2786,7 +4467,7 @@ AIWB_PUSH_NOTIFY_TOKEN
 cat > "$AIWB_TASK_DIR/prompt.txt" <<'AIWB_CONVERSATION_PROMPT'
 ${promptText}
 AIWB_CONVERSATION_PROMPT
-"$AIWB_AGENT_CTL" create "$AIWB_TASK_ID"
+"$AIWB_AGENT_CTL" ${createMode} "$AIWB_TASK_ID"
 `);
 }
 
@@ -2885,7 +4566,9 @@ resolve_aiwb_command() {
       "/bin/$AIWB_CANDIDATE_NAME" \\
       "/opt/homebrew/bin/$AIWB_CANDIDATE_NAME" \\
       "/Applications/ChatGPT.app/Contents/Resources/$AIWB_CANDIDATE_NAME" \\
+      "/Applications/Codex.app/Contents/Resources/$AIWB_CANDIDATE_NAME" \\
       "$HOME/Applications/ChatGPT.app/Contents/Resources/$AIWB_CANDIDATE_NAME" \\
+      "$HOME/Applications/Codex.app/Contents/Resources/$AIWB_CANDIDATE_NAME" \\
       "$HOME/.local/bin/$AIWB_CANDIDATE_NAME" \\
       "$HOME/.npm-global/bin/$AIWB_CANDIDATE_NAME" \\
       "$HOME/.yarn/bin/$AIWB_CANDIDATE_NAME" \\
@@ -2915,6 +4598,12 @@ AIWB_CODEX_RUN="$AIWB_CODEX"
 [ -n "$AIWB_CODEX_RUN" ] || AIWB_CODEX_RUN=${shQuote(codexProbe)}
 AIWB_CLAUDE_RUN="$AIWB_CLAUDE"
 [ -n "$AIWB_CLAUDE_RUN" ] || AIWB_CLAUDE_RUN=${shQuote(claudeProbe)}
+AIWB_PLATFORM=$(uname -s 2>/dev/null || printf unknown)
+case "$AIWB_PLATFORM" in
+  Darwin) AIWB_PLATFORM=macos ;;
+  Linux) AIWB_PLATFORM=linux ;;
+esac
+printf '__AIWB_PLATFORM__%s\\n' "$AIWB_PLATFORM"
 printf '__AIWB_HOST__%s\\n' "$(hostname)"
 printf '__AIWB_USER__%s\\n' "$(whoami)"
 printf '__AIWB_PWD__%s\\n' "$(pwd)"
@@ -2972,7 +4661,7 @@ printf '__AIWB_HOST_UPTIME_SECONDS__%s\\n' "$(awk '{ printf "%d", $1 }' /proc/up
 printf '__AIWB_HOST_PROCESS_COUNT__%s\\n' "$(ps -e 2>/dev/null | wc -l | tr -d '[:space:]' || true)"
 if [ -x "$HOME/.ai-workbench/agent/aiwbctl" ]; then
   printf '__AIWB_AGENT__available\\n'
-  "$HOME/.ai-workbench/agent/aiwbctl" status 2>/dev/null | grep '^__AIWB_AGENT_\\(VERSION\\|SERVICE_STATUS\\|DAEMON_STATUS\\|DAEMON_HEARTBEAT\\|TASKS_\\|HOST_\\)' || true
+  "$HOME/.ai-workbench/agent/aiwbctl" status 2>/dev/null | grep '^__AIWB_AGENT_\\(VERSION\\|GENERATION_READY\\|SERVICE_STATUS\\|SERVICE_PROCESS_STATUS\\|DAEMON_STATUS\\|DAEMON_HEARTBEAT\\|HTTP_STATUS\\|UPDATER_STATUS\\|TASKS_\\|HOST_\\)' || true
 else
   printf '__AIWB_AGENT__missing\\n'
 fi
@@ -3031,6 +4720,7 @@ $AIWB_CODEX_VERSION = ""
 $AIWB_CLAUDE_VERSION = ""
 try { if ($AIWB_CODEX) { $AIWB_CODEX_VERSION = (& $AIWB_CODEX --version 2>&1 | Select-Object -First 1) } } catch {}
 try { if ($AIWB_CLAUDE) { $AIWB_CLAUDE_VERSION = (& $AIWB_CLAUDE --version 2>&1 | Select-Object -First 1) } } catch {}
+Write-Output "__AIWB_PLATFORM__windows"
 Write-Output ("__AIWB_HOST__" + [System.Net.Dns]::GetHostName())
 Write-Output ("__AIWB_USER__" + [System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
 Write-Output ("__AIWB_PWD__" + (Get-Location).Path)
@@ -3664,9 +5354,13 @@ export function parseWorkbenchAgentOutput(output) {
   return {
     status: marker("STATUS"),
     version: marker("VERSION"),
+    generationReady: marker("GENERATION_READY"),
     home: marker("HOME"),
     serviceStatus: marker("SERVICE_STATUS"),
+    serviceProcessStatus: marker("SERVICE_PROCESS_STATUS"),
     daemonStatus: marker("DAEMON_STATUS"),
+    httpStatus: marker("HTTP_STATUS"),
+    updaterStatus: marker("UPDATER_STATUS"),
     daemonHeartbeat: marker("DAEMON_HEARTBEAT"),
     queuedTasks: marker("TASKS_QUEUED"),
     runningTasks: marker("TASKS_RUNNING"),
@@ -3707,8 +5401,12 @@ export function parseWorkbenchAgentOutput(output) {
     attempts: marker("TASK_ATTEMPTS"),
     startedAt: marker("TASK_STARTED_AT"),
     runnerStartedAt: marker("TASK_RUNNER_STARTED_AT"),
+    commandStartedAt: marker("TASK_COMMAND_STARTED_AT"),
+    heartbeatAt: marker("TASK_HEARTBEAT_AT"),
     finishedAt: marker("TASK_FINISHED_AT"),
     eventFingerprint: marker("EVENT_FINGERPRINT"),
+    errorCode: marker("ERROR_CODE"),
+    retryable: marker("RETRYABLE"),
     error: marker("ERROR"),
     blockedByTaskId: marker("BLOCKED_BY_TASK_ID"),
     blockedByConversationId: marker("BLOCKED_BY_CONVERSATION_ID"),
@@ -3856,8 +5554,12 @@ export function healthFromWorkbenchAgentStatus(parsed = {}) {
   const health = {
     agent: parsed.status === "ready" || parsed.version ? "available" : "",
     agent_version: parsed.version || "",
+    agent_generation_ready: parsed.generationReady || "",
     agent_service_status: parsed.serviceStatus || "",
+    agent_service_process_status: parsed.serviceProcessStatus || "",
     agent_daemon_status: parsed.daemonStatus || "",
+    agent_http_status: parsed.httpStatus || "",
+    agent_updater_status: parsed.updaterStatus || "",
     agent_daemon_heartbeat: parsed.daemonHeartbeat || "",
     agent_tasks_queued: parsed.queuedTasks || "",
     agent_tasks_running: parsed.runningTasks || "",
@@ -3903,7 +5605,16 @@ export function healthFromWorkbenchAgentStatus(parsed = {}) {
 }
 
 export function workbenchAgentAvailableFromOutput(output) {
-  return parseWorkbenchAgentOutput(output).status === "ready";
+  const parsed = parseWorkbenchAgentOutput(output);
+  if (parsed.status !== "ready") return false;
+  if (workbenchAgentVersionNumber(parsed.version) < 53) return true;
+  const componentsReady =
+    parsed.serviceProcessStatus === "running"
+    && parsed.daemonStatus === "running"
+    && parsed.httpStatus === "running"
+    && parsed.updaterStatus === "running";
+  if (!componentsReady) return false;
+  return workbenchAgentVersionNumber(parsed.version) < 54 || parsed.generationReady === "1";
 }
 
 export function workbenchAgentVersionNumber(value) {

@@ -18,6 +18,7 @@ const {
   assetBase,
   assetPath,
   automaticTaskWakePhrases,
+  base64ToBytes,
   bashCommand,
   browserDiagnosticLogStorageKey,
   buildClaudePrintCommand,
@@ -298,9 +299,7 @@ function useFileObjectUrl(file) {
 
     let objectUrl = "";
     try {
-      const binary = window.atob(file.base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      const bytes = base64ToBytes(file.base64, "文件预览内容");
       const fallbackMime = previewMimeFromExtension(file.extension);
       const mime = file.kind === "image" && !String(file.mime || "").startsWith("image/") ? fallbackMime : file.mime || fallbackMime;
       objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
@@ -339,13 +338,12 @@ function TransferProgress({ state = "loading", progress, label }) {
 }
 
 export function decodeBase64Utf8(base64) {
-  if (!base64 || typeof window === "undefined" || !window.atob) return "";
-  const binary = window.atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
+  if (!base64) return "";
+  try {
+    return new TextDecoder("utf-8", { fatal: false }).decode(base64ToBytes(base64, "文本预览内容"));
+  } catch {
+    return "";
   }
-  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 }
 
 export function parseCsvPreview(text, maxRows = 80, maxColumns = 14) {

@@ -1,0 +1,19 @@
+{
+  "kind": "ai-workbench-agent",
+  "platform": "windows",
+  "version": "54",
+  "scriptUrl": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v54/windows/aiwb-agent.mjs",
+  "scriptKey": "agent/v54/windows/aiwb-agent.mjs",
+  "sha256": "6aeb7d5acccac69f35e9bb31eb5ea77dc36079154662e8f0d713a76d23d8122d",
+  "runtime": "windows-node",
+  "source": "config-center",
+  "publishedAt": "2026-08-05T15:41:08.108Z",
+  "directRuntime": {
+    "url": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v54/common/aiwb-agent-http.mjs",
+    "sha256": "964558502054d4404dfe11ffa0435bc6e5c144dd91637543b2ba8da46f002e4b"
+  },
+  "updaterRuntime": {
+    "url": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v54/common/aiwb-agent-updater.mjs",
+    "sha256": "408b04eb5643ee7acb10081d9ea649f3a7d15692506ea861884556a27d4b9c20"
+  }
+}

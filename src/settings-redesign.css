@@ -953,6 +953,136 @@
   display: none;
 }
 
+:is(.app-shell, .native-app-shell) .environment-variable-editor {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 2px 13px 14px;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-list {
+  overflow: hidden;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--settings-control) 42%, transparent);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) 20px minmax(0, 1.2fr) 32px;
+  align-items: center;
+  min-height: 46px;
+  border-bottom: 0.5px solid var(--settings-separator);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row:last-child {
+  border-bottom: 0;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row input {
+  min-width: 0;
+  height: 44px;
+  padding: 0 11px;
+  border: 0;
+  outline: 0;
+  color: var(--settings-text);
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row input::placeholder {
+  color: var(--settings-secondary);
+  font-family: inherit;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row input:focus {
+  background: color-mix(in srgb, var(--settings-accent) 7%, transparent);
+  box-shadow: inset 0 -2px color-mix(in srgb, var(--settings-accent) 54%, transparent);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-equals {
+  color: var(--settings-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--settings-secondary);
+  background: transparent;
+  transition: color 160ms ease, background 160ms ease, transform 120ms ease;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-remove:hover {
+  color: var(--settings-danger, #c53d35);
+  background: color-mix(in srgb, var(--settings-danger, #c53d35) 10%, transparent);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-remove:active,
+:is(.app-shell, .native-app-shell) .environment-variable-add:active {
+  transform: scale(0.97);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row > small {
+  grid-column: 1 / -1;
+  padding: 0 11px 8px;
+  color: var(--settings-danger, #c53d35);
+  font-size: 11px;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-row.has-error {
+  background: color-mix(in srgb, var(--settings-danger, #c53d35) 5%, transparent);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 78px;
+  border: 0.5px dashed var(--settings-separator);
+  border-radius: 10px;
+  color: var(--settings-secondary);
+  font-size: 13px;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0.5px solid var(--settings-separator);
+  border-radius: 8px;
+  color: var(--settings-text);
+  background: color-mix(in srgb, var(--settings-control) 54%, transparent);
+  font-size: 12px;
+  font-weight: 650;
+  transition: background 160ms ease, transform 120ms ease;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-add:hover {
+  background: color-mix(in srgb, var(--settings-control) 76%, transparent);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-hint {
+  margin: 0;
+  color: var(--settings-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .app-shell .settings-page-content .git-operation-settings .settings-section-group > .config-field {
   border-bottom: 0.5px solid var(--settings-separator);
 }

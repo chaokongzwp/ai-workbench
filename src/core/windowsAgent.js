@@ -11,9 +11,19 @@ const HOME = os.homedir();
 const ROOT = path.join(HOME, ".ai-workbench", "agent");
 const TASKS = path.join(ROOT, "tasks");
 const CONVERSATIONS = path.join(ROOT, "conversations");
+const CONTROL_FILE = path.join(ROOT, "aiwb-agent.mjs");
+const SERVICE_PID_FILE = path.join(ROOT, "service.pid");
 const PID_FILE = path.join(ROOT, "daemon.pid");
+const HTTP_PID_FILE = path.join(ROOT, "http.pid");
+const UPDATER_PID_FILE = path.join(ROOT, "updater.pid");
+const SERVICE_RUNTIME_SHA_FILE = path.join(ROOT, "service.runtime.sha256");
+const RUNTIME_GENERATION_FILE = path.join(ROOT, "runtime.generation");
+const RUNTIME_UPDATE_FENCE_FILE = path.join(ROOT, "runtime-update.fence");
 const HEARTBEAT_FILE = path.join(ROOT, "daemon.heartbeat");
 const LOG_FILE = path.join(ROOT, "daemon.log");
+const TICK_LOCK = path.join(ROOT, "tick.lock");
+const TICK_LOCK_STALE_MILLISECONDS = 30000;
+const UPDATE_HANDOFF_TASK = "AI Workbench Agent Update Handoff";
 const MAX_CONCURRENCY = 4;
 const notifyingTasks = new Set();
 
@@ -26,6 +36,12 @@ process.env.PATH = [NODE_BIN_DIR, USER_NPM_BIN_DIR, EXISTING_PATH].filter(Boolea
 process.env.Path = process.env.PATH;
 
 for (const directory of [ROOT, TASKS, CONVERSATIONS]) fs.mkdirSync(directory, { recursive: true });
+
+// Cache the generation observed when this Node process starts. Installed files
+// can be replaced while an old daemon waits for tick.lock; that old process
+// must never launch a task after a newer generation commits.
+const PROCESS_CONTROL_SHA256 = fileSha256(CONTROL_FILE).toLowerCase();
+const PROCESS_GENERATION_RECORD = readTrim(RUNTIME_GENERATION_FILE);
 
 function now() {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -95,20 +111,327 @@ function isAlive(pid) {
 }
 
 function daemonAlive() {
-  return isAlive(readTrim(PID_FILE));
+  return processMatchesComponent(readTrim(PID_FILE), "daemon");
+}
+
+function normalizeProcessPath(value) {
+  const raw = String(value || "").trim().replace(/^"(.*)"$/, "$1");
+  if (!raw) return "";
+  try { return path.resolve(raw).replace(/\//g, "\\").toLowerCase(); } catch { return raw.replace(/\//g, "\\").toLowerCase(); }
+}
+
+function commandLineHasToken(commandLine, token, normalizePath = false) {
+  let source = String(commandLine || "").trim();
+  let expected = String(token || "").trim();
+  if (!source || !expected) return false;
+  if (normalizePath) {
+    source = source.replace(/\//g, "\\");
+    expected = expected.replace(/\//g, "\\");
+  }
+  const escaped = expected.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+  return new RegExp('(?:^|[\\s"])' + escaped + '(?=$|[\\s"])', "i").test(source);
+}
+
+function processDescriptors(pids) {
+  const values = [...new Set(pids.map(Number).filter((value) => Number.isFinite(value) && value > 0 && isAlive(value)))];
+  const descriptors = new Map(values.map((value) => [String(value), null]));
+  if (!values.length) return descriptors;
+  const filter = values.map((value) => "ProcessId = " + value).join(" OR ");
+  const script = '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); '
+    + '$items = Get-CimInstance Win32_Process -Filter "' + filter + '" -ErrorAction Stop; '
+    + "ConvertTo-Json -InputObject @($items | ForEach-Object { [pscustomobject]@{ ProcessId = $_.ProcessId; ExecutablePath = $_.ExecutablePath; CommandLine = $_.CommandLine } }) -Compress";
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    { encoding: "utf8", windowsHide: true, timeout: 5000 },
+  );
+  if (result.status !== 0 || !String(result.stdout || "").trim()) return descriptors;
+  try {
+    const parsed = JSON.parse(String(result.stdout).trim());
+    for (const item of Array.isArray(parsed) ? parsed : [parsed]) {
+      const key = String(Number(item?.ProcessId));
+      if (!descriptors.has(key)) continue;
+      descriptors.set(key, {
+        executablePath: String(item?.ExecutablePath || "").trim(),
+        commandLine: String(item?.CommandLine || "").trim(),
+      });
+    }
+  } catch {}
+  return descriptors;
+}
+
+function processDescriptor(pid) {
+  return processDescriptors([pid]).get(String(Number(pid))) || null;
+}
+
+function descriptorMatchesComponent(descriptor, component) {
+  if (!descriptor || normalizeProcessPath(descriptor.executablePath) !== normalizeProcessPath(process.execPath)) return false;
+  const commandLine = descriptor.commandLine;
+  const httpPath = path.join(ROOT, "aiwb-agent-http.mjs");
+  const updaterPath = path.join(ROOT, "aiwb-agent-updater.mjs");
+  if (component === "service") {
+    return commandLineHasToken(commandLine, CONTROL_FILE, true) && commandLineHasToken(commandLine, "service-run");
+  }
+  if (component === "daemon") {
+    return commandLineHasToken(commandLine, CONTROL_FILE, true)
+      && (commandLineHasToken(commandLine, "daemon") || commandLineHasToken(commandLine, "service-run"));
+  }
+  if (component === "http") return commandLineHasToken(commandLine, httpPath, true);
+  if (component === "updater") return commandLineHasToken(commandLine, updaterPath, true);
+  return false;
+}
+
+function processMatchesComponent(pid, component, descriptorCache = null) {
+  const key = String(Number(pid));
+  let descriptor;
+  if (descriptorCache?.has(key)) descriptor = descriptorCache.get(key);
+  else {
+    descriptor = processDescriptor(pid);
+    descriptorCache?.set(key, descriptor);
+  }
+  return descriptorMatchesComponent(descriptor, component);
+}
+
+function processMatchesTaskRunner(pid, id) {
+  const descriptor = processDescriptor(pid);
+  return Boolean(descriptor)
+    && normalizeProcessPath(descriptor.executablePath) === normalizeProcessPath(process.execPath)
+    && commandLineHasToken(descriptor.commandLine, CONTROL_FILE, true)
+    && commandLineHasToken(descriptor?.commandLine, "runner")
+    && commandLineHasToken(descriptor?.commandLine, safeId(id));
+}
+
+function stopTaskRunner(id) {
+  const file = path.join(taskDir(id), "pid");
+  const pid = readTrim(file);
+  if (!processMatchesTaskRunner(pid, id)) return false;
+  spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+  return true;
+}
+
+function stopPidFile(file, component) {
+  const pid = readTrim(file);
+  if (!processMatchesComponent(pid, component)) {
+    if (pid && readTrim(file) === String(pid)) write(file, "");
+    return false;
+  }
+  const result = spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+  if (result.status !== 0) {
+    // Re-check after taskkill: a failed kill and immediate PID reuse must not
+    // turn the fallback into a signal for an unrelated process.
+    if (processMatchesComponent(pid, component)) {
+      try { process.kill(Number(pid)); } catch {}
+    }
+  }
+  if (readTrim(file) === String(pid)) write(file, "");
+  return true;
 }
 
 function stopDaemon() {
-  const pid = readTrim(PID_FILE);
-  if (isAlive(pid)) {
-    try { process.kill(Number(pid)); } catch {}
-  }
-  write(PID_FILE, "");
+  stopPidFile(SERVICE_PID_FILE, "service");
+  stopPidFile(PID_FILE, "daemon");
+  stopPidFile(HTTP_PID_FILE, "http");
+  stopPidFile(UPDATER_PID_FILE, "updater");
   write(HEARTBEAT_FILE, "");
 }
 
-function daemonStatus() {
-  return daemonAlive() ? "running" : "stopped";
+function tickLockAgeMilliseconds() {
+  const startedAt = Date.parse(readTrim(path.join(TICK_LOCK, "started_at")));
+  if (Number.isFinite(startedAt)) return Math.max(0, Date.now() - startedAt);
+  try { return Math.max(0, Date.now() - fs.statSync(TICK_LOCK).mtimeMs); } catch { return Number.POSITIVE_INFINITY; }
+}
+
+function clearStaleTickLock() {
+  if (!fs.existsSync(TICK_LOCK) || tickLockAgeMilliseconds() < TICK_LOCK_STALE_MILLISECONDS) return false;
+  const ownerPid = Number(readTrim(path.join(TICK_LOCK, "owner.pid")));
+  if (isAlive(ownerPid)) return false;
+  const quarantine = TICK_LOCK + ".stale-" + process.pid + "-" + crypto.randomBytes(6).toString("hex");
+  try {
+    fs.renameSync(TICK_LOCK, quarantine);
+  } catch {
+    return false;
+  }
+  try { fs.rmSync(quarantine, { recursive: true, force: true }); } catch {}
+  return true;
+}
+
+function acquireTickLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = process.pid + "-" + Date.now() + "-" + crypto.randomBytes(8).toString("hex");
+    try {
+      fs.mkdirSync(TICK_LOCK);
+      fs.writeFileSync(path.join(TICK_LOCK, "owner.pid"), String(process.pid), { encoding: "utf8", flag: "wx" });
+      fs.writeFileSync(path.join(TICK_LOCK, "owner.token"), token, { encoding: "utf8", flag: "wx" });
+      fs.writeFileSync(path.join(TICK_LOCK, "started_at"), now(), { encoding: "utf8", flag: "wx" });
+      return token;
+    } catch (error) {
+      if (readTrim(path.join(TICK_LOCK, "owner.token")) === token) releaseTickLock(token);
+      else if (error?.code !== "EEXIST") {
+        try { fs.rmdirSync(TICK_LOCK); } catch {}
+      }
+      if (!clearStaleTickLock()) return "";
+    }
+  }
+  return "";
+}
+
+function waitForTickLock(timeoutMilliseconds = 5000) {
+  const deadline = Date.now() + Math.max(100, Number(timeoutMilliseconds) || 5000);
+  while (Date.now() < deadline) {
+    const token = acquireTickLock();
+    if (token) return token;
+    sleepSync(20);
+  }
+  return "";
+}
+
+function tickLockOwned(token) {
+  return Boolean(token)
+    && readTrim(path.join(TICK_LOCK, "owner.pid")) === String(process.pid)
+    && readTrim(path.join(TICK_LOCK, "owner.token")) === token;
+}
+
+function releaseTickLock(token) {
+  if (!tickLockOwned(token)) return false;
+  for (const name of ["owner.pid", "owner.token", "started_at"]) {
+    try { fs.unlinkSync(path.join(TICK_LOCK, name)); } catch {}
+  }
+  try { fs.rmdirSync(TICK_LOCK); return true; } catch { return false; }
+}
+
+function componentPidFileReady(file, component, descriptorCache = null) {
+  return processMatchesComponent(readTrim(file), component, descriptorCache);
+}
+
+function fileSha256(file) {
+  try { return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"); } catch { return ""; }
+}
+
+function runtimeGenerationReady(runtimeName, markerName) {
+  const runtimeSha = fileSha256(path.join(ROOT, runtimeName));
+  return Boolean(runtimeSha) && readTrim(path.join(ROOT, markerName)).toLowerCase() === runtimeSha;
+}
+
+function parseGenerationRecord(content) {
+  const result = {};
+  for (const line of String(content || "").split(/\r?\n/)) {
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+    result[line.slice(0, separator)] = line.slice(separator + 1);
+  }
+  return result;
+}
+
+function runtimeUpdateInProgress() {
+  return fs.existsSync(RUNTIME_UPDATE_FENCE_FILE);
+}
+
+function committedGenerationMatchesCurrent(content = readTrim(RUNTIME_GENERATION_FILE)) {
+  if (runtimeUpdateInProgress()) return false;
+  const record = parseGenerationRecord(content);
+  const controlSha = fileSha256(CONTROL_FILE).toLowerCase();
+  const httpSha = fileSha256(path.join(ROOT, "aiwb-agent-http.mjs")).toLowerCase();
+  const updaterSha = fileSha256(path.join(ROOT, "aiwb-agent-updater.mjs")).toLowerCase();
+  return record.format === "1"
+    && record.state === "committed"
+    && Boolean(record.epoch)
+    && record.version === String(VERSION).replace(/^v/i, "")
+    && Boolean(controlSha)
+    && Boolean(httpSha)
+    && Boolean(updaterSha)
+    && record.control_sha256 === controlSha
+    && record.http_sha256 === httpSha
+    && record.updater_sha256 === updaterSha;
+}
+
+function processGenerationIsCurrent() {
+  return Boolean(PROCESS_CONTROL_SHA256)
+    && Boolean(PROCESS_GENERATION_RECORD)
+    && !runtimeUpdateInProgress()
+    && fileSha256(CONTROL_FILE).toLowerCase() === PROCESS_CONTROL_SHA256
+    && readTrim(RUNTIME_GENERATION_FILE) === PROCESS_GENERATION_RECORD
+    && committedGenerationMatchesCurrent(PROCESS_GENERATION_RECORD);
+}
+
+function printGenerationChanged() {
+  console.log("__AIWB_AGENT_STATUS__error");
+  console.log("__AIWB_AGENT_ERROR_CODE__generation_changed");
+  console.log("__AIWB_AGENT_RETRYABLE__1");
+  console.log("__AIWB_AGENT_ERROR__Agent 正在升级或已切换到新版本，本次旧版本任务未启动；请重试。");
+}
+
+function rejectTaskForGenerationChange(id, reason) {
+  const directory = taskDir(id);
+  append(path.join(directory, "bootstrap.log"), [
+    "AI Workbench Agent: task was not started because the runtime generation changed.",
+    "reason: " + reason,
+    "checked_at: " + now(),
+    "",
+  ].join("\n"));
+  write(path.join(directory, "retryable_error_code"), "generation_changed");
+  setStatus(id, "error", "76");
+}
+
+function heartbeatReady(maximumAgeMilliseconds = 15000) {
+  const timestamp = Date.parse(readTrim(HEARTBEAT_FILE));
+  const age = Date.now() - timestamp;
+  return Number.isFinite(timestamp) && age >= -5000 && age <= maximumAgeMilliseconds;
+}
+
+function runtimeSnapshot() {
+  const servicePid = readTrim(SERVICE_PID_FILE);
+  const daemonPid = readTrim(PID_FILE);
+  const httpPid = readTrim(HTTP_PID_FILE);
+  const updaterPid = readTrim(UPDATER_PID_FILE);
+  const descriptorCache = processDescriptors([servicePid, daemonPid, httpPid, updaterPid]);
+  const serviceReady = componentPidFileReady(SERVICE_PID_FILE, "service", descriptorCache);
+  const daemonReady = componentPidFileReady(PID_FILE, "daemon", descriptorCache);
+  return {
+    servicePid,
+    daemonPid,
+    serviceReady,
+    daemonReady,
+    httpReady: componentPidFileReady(HTTP_PID_FILE, "http", descriptorCache),
+    updaterReady: componentPidFileReady(UPDATER_PID_FILE, "updater", descriptorCache),
+  };
+}
+
+function runtimeReady(snapshot = runtimeSnapshot()) {
+  const controlSha = fileSha256(CONTROL_FILE).toLowerCase();
+  return committedGenerationMatchesCurrent()
+    && Boolean(controlSha)
+    && snapshot.serviceReady
+    && snapshot.daemonReady
+    && snapshot.servicePid === snapshot.daemonPid
+    && readTrim(SERVICE_RUNTIME_SHA_FILE).toLowerCase() === controlSha
+    && heartbeatReady()
+    && snapshot.httpReady
+    && runtimeGenerationReady("aiwb-agent-http.mjs", "http.runtime.sha256")
+    && snapshot.updaterReady
+    && runtimeGenerationReady("aiwb-agent-updater.mjs", "updater.runtime.sha256");
+}
+
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(1, Number(milliseconds) || 1));
+}
+
+function waitForRuntimeReady(timeoutMilliseconds = 15000) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMilliseconds) || 15000);
+  while (Date.now() < deadline) {
+    if (runtimeReady()) return true;
+    sleepSync(200);
+  }
+  return runtimeReady();
+}
+
+function emitRuntimeStatuses() {
+  const snapshot = runtimeSnapshot();
+  console.log("__AIWB_AGENT_SERVICE_PROCESS_STATUS__" + (snapshot.serviceReady ? "running" : "stopped"));
+  console.log("__AIWB_AGENT_DAEMON_STATUS__" + (snapshot.daemonReady ? "running" : "stopped"));
+  console.log("__AIWB_AGENT_DAEMON_HEARTBEAT__" + readTrim(HEARTBEAT_FILE));
+  console.log("__AIWB_AGENT_HTTP_STATUS__" + (snapshot.httpReady ? "running" : "stopped"));
+  console.log("__AIWB_AGENT_UPDATER_STATUS__" + (snapshot.updaterReady ? "running" : "stopped"));
+  console.log("__AIWB_AGENT_GENERATION_READY__" + (runtimeReady(snapshot) ? "1" : "0"));
 }
 
 function log(message) {
@@ -382,14 +705,18 @@ function emitTask(id) {
   console.log("__AIWB_AGENT_VERSION__" + VERSION);
   console.log("__AIWB_AGENT_HOME__" + ROOT);
   console.log("__AIWB_AGENT_SERVICE_STATUS__windows-task-scheduler");
-  console.log("__AIWB_AGENT_DAEMON_STATUS__" + daemonStatus());
-  console.log("__AIWB_AGENT_DAEMON_HEARTBEAT__" + readTrim(HEARTBEAT_FILE));
+  emitRuntimeStatuses();
   console.log("__AIWB_AGENT_TASK_ID__" + id);
   console.log("__AIWB_AGENT_TASK_CONVERSATION_ID__" + readTrim(path.join(directory, "conversation_id")));
   console.log("__AIWB_AGENT_TASK_TURN_ID__" + readTrim(path.join(directory, "turn_id")));
   console.log("__AIWB_AGENT_TASK_REQUEST_MESSAGE_ID__" + readTrim(path.join(directory, "request_message_id")));
   console.log("__AIWB_AGENT_TASK_RESPONSE_MESSAGE_ID__" + readTrim(path.join(directory, "response_message_id")));
   console.log("__AIWB_AGENT_TASK_STATUS__" + status);
+  const retryableErrorCode = readTrim(path.join(directory, "retryable_error_code"));
+  if (retryableErrorCode) {
+    console.log("__AIWB_AGENT_ERROR_CODE__" + retryableErrorCode);
+    console.log("__AIWB_AGENT_RETRYABLE__1");
+  }
   console.log("__AIWB_AGENT_TASK_EXIT_CODE__" + readTrim(path.join(directory, "exit_code")));
   console.log("__AIWB_AGENT_TASK_PID__" + readTrim(path.join(directory, "pid")));
   console.log("__AIWB_AGENT_TASK_ATTEMPTS__" + readTrim(path.join(directory, "attempts")));
@@ -418,8 +745,7 @@ function emitHealth() {
   console.log("__AIWB_AGENT_VERSION__" + VERSION);
   console.log("__AIWB_AGENT_HOME__" + ROOT);
   console.log("__AIWB_AGENT_SERVICE_STATUS__windows-task-scheduler");
-  console.log("__AIWB_AGENT_DAEMON_STATUS__" + daemonStatus());
-  console.log("__AIWB_AGENT_DAEMON_HEARTBEAT__" + readTrim(HEARTBEAT_FILE));
+  emitRuntimeStatuses();
   console.log("__AIWB_AGENT_TASKS_QUEUED__" + taskIds().filter((id) => taskStatus(id) === "queued").length);
   console.log("__AIWB_AGENT_TASKS_RUNNING__" + taskIds().filter((id) => taskStatus(id) === "running").length);
   console.log("__AIWB_AGENT_TASKS_DONE__" + taskIds().filter((id) => taskStatus(id) === "done").length);
@@ -787,17 +1113,27 @@ async function runTask(id) {
   }
 }
 
-function launchTask(id) {
+function launchTask(id, tickLockToken) {
+  if (!tickLockOwned(tickLockToken)) {
+    log("refused task launch without tick lock task=" + id);
+    return false;
+  }
+  if (!processGenerationIsCurrent()) {
+    rejectTaskForGenerationChange(id, "generation_changed_after_tick_lock");
+    log("rejected stale-generation task launch task=" + id);
+    return false;
+  }
   const directory = taskDir(id);
   const attempts = Number(readTrim(path.join(directory, "attempts"), "0")) + 1;
   write(path.join(directory, "attempts"), attempts);
   write(path.join(directory, "started_at"), now());
   write(path.join(directory, "status"), "running");
-  const child = spawn(process.execPath, [process.argv[1], "runner", id], { detached: true, stdio: "ignore", windowsHide: true });
+  const child = spawn(process.execPath, [CONTROL_FILE, "runner", id], { detached: true, stdio: "ignore", windowsHide: true });
   write(path.join(directory, "pid"), child.pid || "");
   child.unref();
   updateConversation(id);
   log("launched task=" + id + " pid=" + child.pid);
+  return Boolean(child.pid);
 }
 
 function markStale(id) {
@@ -810,17 +1146,20 @@ function markStale(id) {
 }
 
 function tick() {
-  for (const id of taskIds()) {
-    markStale(id);
-    scheduleTerminalNotification(id);
-  }
-  let running = taskIds().filter((id) => taskStatus(id) === "running" && isAlive(readTrim(path.join(taskDir(id), "pid")))).length;
-  for (const id of taskIds()) {
-    if (running >= MAX_CONCURRENCY) break;
-    if (taskStatus(id) === "queued") {
-      launchTask(id);
-      running += 1;
+  const tickLockToken = acquireTickLock();
+  if (!tickLockToken) return;
+  try {
+    for (const id of taskIds()) {
+      markStale(id);
+      scheduleTerminalNotification(id);
     }
+    let running = taskIds().filter((id) => taskStatus(id) === "running" && isAlive(readTrim(path.join(taskDir(id), "pid")))).length;
+    for (const id of taskIds()) {
+      if (running >= MAX_CONCURRENCY) break;
+      if (taskStatus(id) === "queued" && launchTask(id, tickLockToken)) running += 1;
+    }
+  } finally {
+    releaseTickLock(tickLockToken);
   }
 }
 
@@ -850,6 +1189,8 @@ async function daemon() {
 }
 
 async function serviceRun() {
+  write(SERVICE_PID_FILE, process.pid);
+  write(SERVICE_RUNTIME_SHA_FILE, PROCESS_CONTROL_SHA256);
   const managed = new Map();
   const startManaged = (name, scriptPath) => {
     if (!fs.existsSync(scriptPath) || managed.get(name)) return;
@@ -871,24 +1212,72 @@ async function serviceRun() {
   } finally {
     clearInterval(timer);
     for (const child of managed.values()) child.kill();
+    if (readTrim(SERVICE_PID_FILE) === String(process.pid)) {
+      write(SERVICE_PID_FILE, "");
+      write(SERVICE_RUNTIME_SHA_FILE, "");
+    }
   }
+}
+
+function scheduleInstallService() {
+  const runAt = new Date(Date.now() + 60_000);
+  const two = (value) => String(value).padStart(2, "0");
+  const startDate = two(runAt.getMonth() + 1) + "/" + two(runAt.getDate()) + "/" + runAt.getFullYear();
+  const startTime = two(runAt.getHours()) + ":" + two(runAt.getMinutes());
+  const command = '"' + process.execPath + '" "' + CONTROL_FILE + '" install-service-handoff';
+  spawnSync("schtasks.exe", ["/Delete", "/TN", UPDATE_HANDOFF_TASK, "/F"], { windowsHide: true, stdio: "ignore" });
+  const created = spawnSync("schtasks.exe", [
+    "/Create", "/TN", UPDATE_HANDOFF_TASK, "/SC", "ONCE", "/SD", startDate, "/ST", startTime,
+    "/TR", command, "/F",
+  ], { encoding: "utf8", windowsHide: true });
+  const started = created.status === 0
+    ? spawnSync("schtasks.exe", ["/Run", "/TN", UPDATE_HANDOFF_TASK], { encoding: "utf8", windowsHide: true })
+    : { status: 1, stderr: created.stderr };
+  const accepted = created.status === 0 && started.status === 0;
+  console.log("__AIWB_AGENT_STATUS__" + (accepted ? "handoff-scheduled" : "error"));
+  console.log("__AIWB_AGENT_VERSION__" + VERSION);
+  if (!accepted) {
+    console.log("__AIWB_AGENT_ERROR__Windows Agent 升级交接任务启动失败。");
+    const detail = String(started.stderr || created.stderr || "").trim();
+    if (detail) console.log(detail);
+    process.exitCode = 3;
+  }
+}
+
+function installServiceHandoff() {
+  let ready = false;
+  try {
+    ready = installService();
+  } finally {
+    spawnSync("schtasks.exe", ["/Delete", "/TN", UPDATE_HANDOFF_TASK, "/F"], { windowsHide: true, stdio: "ignore" });
+  }
+  if (!ready) process.exitCode = 3;
+  return ready;
 }
 
 function installService() {
   const taskName = "AI Workbench Agent";
   spawnSync("schtasks.exe", ["/End", "/TN", taskName], { encoding: "utf8", windowsHide: true });
   stopDaemon();
-  const command = '"' + process.execPath + '" "' + process.argv[1] + '" service-run';
+  const command = '"' + process.execPath + '" "' + CONTROL_FILE + '" service-run';
   const result = spawnSync("schtasks.exe", ["/Create", "/TN", taskName, "/SC", "ONLOGON", "/TR", command, "/F"], { encoding: "utf8", windowsHide: true });
   if (result.status === 0) {
-    spawnSync("schtasks.exe", ["/Run", "/TN", taskName], { encoding: "utf8", windowsHide: true });
+    const started = spawnSync("schtasks.exe", ["/Run", "/TN", taskName], { encoding: "utf8", windowsHide: true });
+    if (started.status !== 0) ensureDaemon();
   } else {
     ensureDaemon();
   }
-  console.log("__AIWB_AGENT_STATUS__ready");
+  const ready = waitForRuntimeReady();
+  console.log("__AIWB_AGENT_STATUS__" + (ready ? "ready" : "error"));
   console.log("__AIWB_AGENT_VERSION__" + VERSION);
   console.log("__AIWB_AGENT_SERVICE_STATUS__" + (result.status === 0 ? "installed" : "user-fallback"));
+  emitRuntimeStatuses();
+  if (!ready) {
+    console.log("__AIWB_AGENT_ERROR__Windows Agent supervisor 启动失败，daemon、HTTPS 或自动升级组件未全部就绪。");
+    process.exitCode = 3;
+  }
   if (result.status !== 0 && result.stderr) console.log(result.stderr.trim());
+  return ready;
 }
 
 function uninstallService() {
@@ -897,8 +1286,7 @@ function uninstallService() {
   spawnSync("schtasks.exe", ["/Delete", "/TN", taskName, "/F"], { encoding: "utf8", windowsHide: true });
   stopDaemon();
   for (const id of taskIds()) {
-    const pid = readTrim(path.join(taskDir(id), "pid"));
-    if (pid && isAlive(pid)) spawnSync("taskkill.exe", ["/PID", pid, "/T", "/F"], { windowsHide: true });
+    stopTaskRunner(id);
   }
   const cleanup = "Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath " + quotePowerShell(ROOT) + " -Recurse -Force -ErrorAction SilentlyContinue";
   try {
@@ -934,6 +1322,12 @@ function clearCache() {
 
 function createTask(id) {
   const directory = taskDir(id);
+  if (runtimeUpdateInProgress()) {
+    rejectTaskForGenerationChange(id, "runtime_update_in_progress");
+    printGenerationChanged();
+    process.exitCode = 44;
+    return;
+  }
   const conversationId = readTrim(path.join(directory, "conversation_id"));
   const blocker = activeTaskForConversation(conversationId, id);
   if (blocker) {
@@ -954,16 +1348,37 @@ function createTask(id) {
   }
   write(path.join(directory, "queued_at"), now());
   write(path.join(directory, "created_at"), readTrim(path.join(directory, "created_at"), now()));
-  write(path.join(directory, "status"), "queued");
+  write(path.join(directory, "creator.pid"), process.pid);
+  write(path.join(directory, "creator.version"), VERSION);
+  write(path.join(directory, "creator.control.sha256"), PROCESS_CONTROL_SHA256);
+  write(path.join(directory, "creator.generation"), PROCESS_GENERATION_RECORD);
+  write(path.join(directory, "status"), "preparing");
   write(path.join(directory, "exit_code"), "");
+  const tickLockToken = waitForTickLock();
+  if (!tickLockToken) {
+    rejectTaskForGenerationChange(id, "task_lock_generation_check_timeout");
+    printGenerationChanged();
+    process.exitCode = 44;
+    return;
+  }
+  try {
+    if (!processGenerationIsCurrent()) {
+      rejectTaskForGenerationChange(id, "generation_changed_after_tick_lock");
+      printGenerationChanged();
+      process.exitCode = 44;
+      return;
+    }
+    write(path.join(directory, "status"), "queued");
+  } finally {
+    releaseTickLock(tickLockToken);
+  }
   ensureDaemon();
   emitTask(id);
 }
 
 function cancelTask(id) {
   const directory = taskDir(id);
-  const pid = readTrim(path.join(directory, "pid"));
-  if (pid && isAlive(pid)) spawnSync("taskkill.exe", ["/PID", pid, "/T", "/F"], { windowsHide: true });
+  stopTaskRunner(id);
   append(path.join(directory, "bootstrap.log"), "AI Workbench Agent: task cancelled by user.\n");
   setStatus(id, "cancelled", "130");
   emitTask(id);
@@ -1075,6 +1490,8 @@ async function main() {
     return;
   }
   if (command === "install-service") return installService();
+  if (command === "schedule-install-service") return scheduleInstallService();
+  if (command === "install-service-handoff") return installServiceHandoff();
   if (command === "uninstall-service") return uninstallService();
   if (command === "clear-cache") return clearCache();
   if (command === "status") return args[0] ? emitTask(args[0]) : (ensureDaemon(), emitHealth());

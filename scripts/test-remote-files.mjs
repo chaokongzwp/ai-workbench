@@ -1,10 +1,48 @@
 import assert from "node:assert/strict";
 import { powershellCommand } from "../src/core/foundation.js";
 import {
+  buildRemoteFileReadCommand,
+  parseRemoteFilePayload,
   buildRemoteImageUploadCommand,
   parseRemoteImageUploadPayload,
   sanitizeUploadName,
 } from "../src/core/remoteFiles.js";
+import { normalizeBase64Payload } from "../src/core/foundation.js";
+
+assert.equal(normalizeBase64Payload("data:text/plain;base64,5rWL6K-V"), "5rWL6K+V");
+assert.equal(normalizeBase64Payload("YQ"), "YQ==");
+assert.throws(() => normalizeBase64Payload("abc$"), /不是有效的 Base64/);
+
+const parsedFile = parseRemoteFilePayload([
+  "__AIWB_FILE_START__",
+  "__AIWB_FILE_NAME__test.txt",
+  "__AIWB_FILE_PATH__/tmp/test.txt",
+  "__AIWB_FILE_MIME__text/plain",
+  "__AIWB_FILE_SIZE__6",
+  "__AIWB_FILE_DATA__",
+  "5rWL6K+V",
+  "__AIWB_FILE_END__",
+].join("\n"));
+assert.equal(Buffer.from(parsedFile.base64, "base64").toString("utf8"), "测试");
+assert.throws(
+  () => parseRemoteFilePayload([
+    "__AIWB_FILE_START__",
+    "__AIWB_FILE_NAME__broken.txt",
+    "__AIWB_FILE_PATH__/tmp/broken.txt",
+    "__AIWB_FILE_SIZE__6",
+    "__AIWB_FILE_DATA__",
+    "5rWL",
+    "__AIWB_FILE_END__",
+  ].join("\n")),
+  /传输不完整/,
+);
+
+const macFileRead = buildRemoteFileReadCommand(
+  { platform: "macos", workdir: "/Users/a0/Documents/x" },
+  "/Users/a0/Documents/x/preview.png",
+);
+assert.match(macFileRead, /base64 < "\$AIWB_PATH"/);
+assert.doesNotMatch(macFileRead, /base64 "\$AIWB_PATH"/);
 
 assert.equal(
   sanitizeUploadName("支付流程 异常截图（终稿）.png"),

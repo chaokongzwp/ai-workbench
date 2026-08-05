@@ -1,0 +1,19 @@
+{
+  "kind": "ai-workbench-agent",
+  "platform": "linux",
+  "version": "54",
+  "scriptUrl": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v54/linux/aiwbctl",
+  "scriptKey": "agent/v54/linux/aiwbctl",
+  "sha256": "10d0e08489628053d6574e872c23c52d518d6983c9f7bf6f140eef2ca652cdf5",
+  "runtime": "linux-shell",
+  "source": "config-center",
+  "publishedAt": "2026-08-05T15:41:08.108Z",
+  "directRuntime": {
+    "url": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v54/common/aiwb-agent-http.mjs",
+    "sha256": "964558502054d4404dfe11ffa0435bc6e5c144dd91637543b2ba8da46f002e4b"
+  },
+  "updaterRuntime": {
+    "url": "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control/releases/v54/common/aiwb-agent-updater.mjs",
+    "sha256": "408b04eb5643ee7acb10081d9ea649f3a7d15692506ea861884556a27d4b9c20"
+  }
+}

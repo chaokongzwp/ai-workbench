@@ -16,6 +16,7 @@ import {
   Key,
   Microphone,
   Palette,
+  Plus,
   Robot,
   ShareNetwork,
   ShieldCheck,
@@ -150,7 +151,7 @@ const {
   lastSpeakableMessageForServer,
   latestServerMessageSummary,
   latestWorkbenchAgentVersion,
-  workbenchAgentGithubManifestUrl,
+  workbenchAgentControlLatestUrl,
   legacyDefaultWakeWordPhrases,
   legacyDefaultWorkdirs,
   loadBrowserDiagnosticLogs,
@@ -206,6 +207,7 @@ const {
   parsePlaybackCommandIndex,
   parseRemoteFilePayload,
   parseRemoteImageUploadPayload,
+  parseSessionEnvironmentVariables,
   parseSessionSelectionKey,
   parseSessionSwitchIndex,
   parseSmallChineseNumber,
@@ -221,7 +223,7 @@ const {
   previewKindFromExtension,
   previewLabelFromKind,
   previewMimeFromExtension,
-  profileConnectionKey,
+  agentInstallationKey,
   profileIssue,
   profileReady,
   profileWithDetectedTools,
@@ -754,9 +756,9 @@ export function SettingsPanel({
   const addingSessions = mode === "add";
   const editingSession = mode === "edit";
   const globalSettings = mode === "global";
-  const draftConnectionKey = profileConnectionKey(draftProfile);
+  const draftConnectionKey = agentInstallationKey(draftProfile);
   const sameMachineDiagnostics = (servers || [])
-    .filter((server) => profileConnectionKey(server.profile) === draftConnectionKey)
+    .filter((server) => agentInstallationKey(server.profile) === draftConnectionKey)
     .map((server) => server.diagnostics || {});
   const availableMachineDiagnostics = sameMachineDiagnostics.find(
     (diagnostics) => diagnostics.agent === "available" || diagnostics.agent_version,
@@ -1063,7 +1065,7 @@ export function SettingsPanel({
     ) {
       return;
     }
-    const checkKey = `${editingServer.id}:${profileConnectionKey(draftProfile)}`;
+    const checkKey = `${editingServer.id}:${agentInstallationKey(draftProfile)}`;
     if (gitSshKeyCheckedForRef.current === checkKey) return;
     gitSshKeyCheckedForRef.current = checkKey;
     void handleGitSshKeyCheck(false);
@@ -1094,13 +1096,13 @@ export function SettingsPanel({
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 5_000);
 
-    void fetch(workbenchAgentGithubManifestUrl, {
+    void fetch(workbenchAgentControlLatestUrl, {
       cache: "no-store",
       signal: controller.signal,
     })
       .then((response) => (response.ok ? response.json() : null))
       .then((manifest) => {
-        const version = String(manifest?.version || "").trim();
+        const version = String(manifest?.agent?.version || manifest?.version || "").trim();
         if (workbenchAgentVersionNumber(version) > 0) setPublishedAgentVersion(version);
       })
       .catch(() => {
@@ -1142,20 +1144,19 @@ export function SettingsPanel({
       blurTimer = 0;
     };
 
-    const syncViewport = (keyboardVisible) => {
-      const viewport = window.visualViewport;
-      const layoutHeight = Math.round(window.innerHeight || document.documentElement.clientHeight || viewport?.height || 0);
-      const visualHeight = Math.round(viewport?.height || layoutHeight);
-      const width = Math.round(window.innerWidth || document.documentElement.clientWidth || viewport?.width || 0);
-      const height = keyboardVisible ? Math.min(layoutHeight, visualHeight) : layoutHeight;
-      if (height > 0) root.style.setProperty("--app-viewport-height", `${height}px`);
-      if (width > 0) root.style.setProperty("--app-viewport-width", `${width}px`);
+    const resetPageOffset = () => {
+      root.scrollLeft = 0;
+      root.scrollTop = 0;
+      if (body) {
+        body.scrollLeft = 0;
+        body.scrollTop = 0;
+      }
       if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
     };
 
     const keepFocusedFieldVisible = (field) => {
       if (!field || !scrollBody.contains(document.activeElement)) return;
-      syncViewport(true);
+      resetPageOffset();
       const target = field.closest(".config-field, .wake-word-field, .settings-action-row") || field;
       const viewport = window.visualViewport;
       const visibleBottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight || 0) - 16;
@@ -1167,7 +1168,7 @@ export function SettingsPanel({
       } else if (fieldRect.top < headerBottom) {
         scrollBody.scrollTop -= headerBottom - fieldRect.top;
       }
-      if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+      resetPageOffset();
     };
 
     const handleFocusIn = (event) => {
@@ -1186,7 +1187,7 @@ export function SettingsPanel({
         if (scrollBody.contains(document.activeElement)) return;
         root.classList.remove("aiwb-keyboard-focus");
         body?.classList.remove("aiwb-keyboard-focus");
-        syncViewport(false);
+        resetPageOffset();
       }, 80);
     };
 
@@ -1206,6 +1207,7 @@ export function SettingsPanel({
     "session-general": "连接配置",
     "session-connection": "连接信息",
     "session-development": "开发环境",
+    "session-environment": "环境变量",
     "session-execution": "执行方式",
     "session-actions": "会话操作",
     "session-login": "AI 工具登录",
@@ -1234,6 +1236,7 @@ export function SettingsPanel({
     appearanceModeOptions.find((option) => option.id === normalizeAppearanceMode(draftProfile.appearanceMode))?.label || "跟随系统";
   const currentAgent = agentById(draftProfile.agentId || defaultProfile.agentId);
   const currentModel = agentModelLabel(draftProfile.agentId || defaultProfile.agentId, draftProfile.aiModel || "") || "默认模型";
+  const sessionEnvironment = parseSessionEnvironmentVariables(draftProfile.environmentVariables);
   const identityEditable = editingServer?.pendingIdentityEdit === true;
   const selectedSessionCount = Array.isArray(settingsSelectedSessions) ? settingsSelectedSessions.length : 0;
   const totalMessageCount = useMemo(
@@ -1250,6 +1253,7 @@ export function SettingsPanel({
   );
   const settingsPageNeedsSave = [
     "session-general",
+    "session-environment",
     "global-appearance",
     "global-permissions",
     "global-typography",
@@ -1493,6 +1497,13 @@ export function SettingsPanel({
                 detail={gitAvailable ? gitVersion || "Git 已安装" : "Git 未检测"}
                 value={draftProfile.workdir ? "已配置" : "未配置"}
                 onClick={() => setSettingsPage("session-development")}
+              />
+              <SettingsMenuRow
+                icon={Terminal}
+                title="环境变量"
+                detail="仅注入当前会话的 Codex、Claude 任务"
+                value={sessionEnvironment.entries.length ? `${sessionEnvironment.entries.length} 个` : "未配置"}
+                onClick={() => setSettingsPage("session-environment")}
               />
             </SettingsSection>
             <SettingsSection title="管理">
@@ -2016,6 +2027,25 @@ export function SettingsPanel({
                 </button>
               </SettingsButtonRow>
               {gitStatus ? <p className={`settings-inline-status ${gitStatus.tone || ""}`}>{gitStatus.message}</p> : null}
+            </SettingsSection>
+          </div>
+        ) : null}
+
+        {editingSession && settingsPage === "session-environment" ? (
+          <div className="settings-page-content">
+            <SettingsSection
+              title="会话环境变量"
+              footer="变量随当前会话保存，只注入该会话启动的 Codex、Claude 进程及其子进程，不修改服务器全局环境。"
+            >
+              <EnvironmentVariablesEditor
+                value={draftProfile.environmentVariables || ""}
+                onChange={(value) => updateField("environmentVariables", value)}
+              />
+              {sessionEnvironment.errors.length ? (
+                <div className="settings-inline-notice warning" role="alert">
+                  <span>{sessionEnvironment.errors.join(" ")}</span>
+                </div>
+              ) : null}
             </SettingsSection>
           </div>
         ) : null}
@@ -2661,7 +2691,12 @@ export function SettingsPanel({
                 添加 {selectedSessionCount} 个会话
               </button>
             ) : (
-              <button type="button" className="send-button" onClick={() => onSave?.()} disabled={busy}>
+              <button
+                type="button"
+                className="send-button"
+                onClick={() => onSave?.()}
+                disabled={busy || (settingsPage === "session-environment" && sessionEnvironment.errors.length > 0)}
+              >
                 保存更改
               </button>
             )}
@@ -3153,6 +3188,117 @@ export function WakeWordEditor({
         <small>{hint}</small>
       </div>
     </label>
+  );
+}
+
+function environmentEditorRows(value, idPrefix = "env") {
+  return parseSessionEnvironmentVariables(value).entries.map((entry, index) => ({
+    id: `${idPrefix}-${index}`,
+    name: entry.name,
+    value: entry.value,
+  }));
+}
+
+function serializeEnvironmentEditorRows(rows) {
+  return rows
+    .filter((row) => String(row.name || "").trim() || String(row.value || ""))
+    .map((row) => `${String(row.name || "").trim()}=${String(row.value || "")}`)
+    .join("\n");
+}
+
+function environmentEditorRowError(row) {
+  const name = String(row?.name || "").trim();
+  if (!name && String(row?.value || "")) return "请填写变量名";
+  if (name && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return "变量名只能包含字母、数字和下划线";
+  if (/^AIWB_/i.test(name)) return "AIWB_ 是 App 内部保留前缀";
+  return "";
+}
+
+export function EnvironmentVariablesEditor({ value, onChange }) {
+  const rowSequenceRef = useRef(0);
+  const lastSerializedRef = useRef(String(value || ""));
+  const [rows, setRows] = useState(() => environmentEditorRows(value, "env-initial"));
+
+  useEffect(() => {
+    const incoming = String(value || "");
+    if (incoming === lastSerializedRef.current) return;
+    lastSerializedRef.current = incoming;
+    setRows(environmentEditorRows(incoming, `env-sync-${Date.now()}`));
+  }, [value]);
+
+  function commit(nextRows) {
+    setRows(nextRows);
+    const serialized = serializeEnvironmentEditorRows(nextRows);
+    lastSerializedRef.current = serialized;
+    onChange?.(serialized);
+  }
+
+  function addRow() {
+    rowSequenceRef.current += 1;
+    setRows((current) => [
+      ...current,
+      { id: `env-new-${Date.now()}-${rowSequenceRef.current}`, name: "", value: "" },
+    ]);
+  }
+
+  function updateRow(id, field, nextValue) {
+    commit(rows.map((row) => (row.id === id ? { ...row, [field]: nextValue } : row)));
+  }
+
+  function removeRow(id) {
+    commit(rows.filter((row) => row.id !== id));
+  }
+
+  return (
+    <div className="environment-variable-editor">
+      {rows.length ? (
+        <div className="environment-variable-list">
+          {rows.map((row, index) => {
+            const error = environmentEditorRowError(row);
+            return (
+              <div className={`environment-variable-row ${error ? "has-error" : ""}`} key={row.id}>
+                <input
+                  value={row.name}
+                  aria-label={`第 ${index + 1} 个环境变量名称`}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="变量名"
+                  onChange={(event) => updateRow(row.id, "name", event.target.value)}
+                />
+                <span className="environment-variable-equals" aria-hidden="true">=</span>
+                <input
+                  value={row.value}
+                  aria-label={`第 ${index + 1} 个环境变量值`}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="变量值"
+                  onChange={(event) => updateRow(row.id, "value", event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="environment-variable-remove"
+                  aria-label={`删除环境变量 ${row.name || index + 1}`}
+                  title="删除"
+                  onClick={() => removeRow(row.id)}
+                >
+                  <Trash size={15} weight="regular" aria-hidden="true" />
+                </button>
+                {error ? <small>{error}</small> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="environment-variable-empty">尚未添加环境变量</div>
+      )}
+      <button type="button" className="environment-variable-add" onClick={addRow}>
+        <Plus size={15} weight="bold" aria-hidden="true" />
+        添加变量
+      </button>
+      <p className="environment-variable-hint">变量值会加密保存在当前会话中，并在下一次任务启动时生效。</p>
+    </div>
   );
 }
 

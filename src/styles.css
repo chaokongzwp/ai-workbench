@@ -11541,6 +11541,17 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
   min-width: 0;
 }
 
+html:has(.iphone-shell) {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* iOS zooms the entire WKWebView when a focused form control renders below
+   16px. Keep every textual control at the non-zoom threshold. */
+.iphone-shell :is(input, textarea, select) {
+  font-size: 16px !important;
+}
+
 .iphone-shell {
   --iphone-bg: #f4f4f6;
   --iphone-surface: rgba(255, 255, 255, 0.92);
@@ -14441,7 +14452,7 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   }
 }
 
-/* Sent-message redesign: compact bubble + separate timestamp/actions row. */
+/* Sent messages retain a soft card so they remain visually distinct from replies. */
 .conversation .user-prompt,
 .mac-shell .conversation .user-prompt,
 .native-conversation .user-prompt,
@@ -14470,11 +14481,11 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .user-prompt .user-message-card {
   width: fit-content;
   max-width: min(560px, 78%);
-  padding: 0;
-  border: 0;
-  border-radius: 0;
+  padding: 13px 18px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 26px;
   color: #111827;
-  background: transparent;
+  background: #f2f2f4;
   box-shadow: none;
 }
 
@@ -14507,8 +14518,8 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 
 .iphone-shell .user-prompt .user-message-card {
   max-width: min(82%, 560px);
-  padding: 0;
-  border-radius: 0;
+  padding: 12px 17px;
+  border-radius: 24px;
 }
 
 .iphone-shell .user-prompt .user-message-card > p {
@@ -14603,9 +14614,9 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .app-shell[data-theme="dark"].mac-shell .conversation .user-prompt .user-message-card,
 .native-app-shell[data-theme="dark"] .native-conversation .user-prompt .user-message-card,
 .iphone-shell[data-theme="dark"] .user-prompt .user-message-card {
-  border-color: transparent;
+  border-color: rgba(255, 255, 255, 0.06);
   color: #f5f5f7;
-  background: transparent;
+  background: #2c2c2e;
 }
 
 .file-download-progress {

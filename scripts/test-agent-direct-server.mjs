@@ -1,17 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const home = mkdtempSync(join(tmpdir(), "aiwb-agent-http-"));
 const taskDir = join(home, "tasks", "task-1");
+const staleTaskDir = join(home, "tasks", "task-stale");
 mkdirSync(taskDir, { recursive: true });
+mkdirSync(staleTaskDir, { recursive: true });
 for (const [name, value] of Object.entries({
   status: "done",
   conversation_id: "conversation-1",
   agent_id: "codex",
   "output.log": "done result",
 })) writeFileSync(join(taskDir, name), value);
+for (const [name, value] of Object.entries({
+  status: "running",
+  conversation_id: "conversation-stale",
+  agent_id: "codex",
+})) writeFileSync(join(staleTaskDir, name), value);
 
 process.env.AIWB_AGENT_HOME = home;
 const { createAgentDirectServer, loadAgentDirectConfig, startAgentDirectServer } = await import("../agent/runtime/aiwb-agent-http.mjs");
@@ -19,9 +26,28 @@ const defaultConfig = loadAgentDirectConfig();
 assert.equal(defaultConfig.securityVersion, 1);
 assert.equal(defaultConfig.tls.enabled, true);
 assert.match(defaultConfig.tls.fingerprint, /^sha256\/[A-Za-z0-9+/=]+$/);
+const controlCalls = [];
 const server = createAgentDirectServer({
   config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
-  control: async () => ({ code: 0, stdout: "__AIWB_AGENT_VERSION__42", stderr: "" }),
+  control: async (args) => {
+    controlCalls.push(args);
+    if (args?.[0] === "create" && args?.[1] === "task-context-required") {
+      return {
+        code: 42,
+        stdout: [
+          "__AIWB_AGENT_STATUS__error",
+          "__AIWB_AGENT_ERROR_CODE__execution_context_required",
+          "__AIWB_AGENT_ERROR__macOS task creation requires SSH context.",
+        ].join("\n"),
+        stderr: "",
+      };
+    }
+    if (args?.[0] === "status" && args?.[1] === "task-stale") {
+      writeFileSync(join(staleTaskDir, "status"), "error");
+      writeFileSync(join(staleTaskDir, "exit_code"), "124");
+    }
+    return { code: 0, stdout: "__AIWB_AGENT_VERSION__42", stderr: "" };
+  },
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
@@ -38,6 +64,12 @@ const payload = await response.json();
 assert.equal(payload.task.status, "completed");
 assert.equal(payload.task.outcome, "success");
 assert.equal(payload.task.output, "done result");
+
+const staleResponse = await fetch(`${baseUrl}/v1/tasks/task-stale`, { headers: { Authorization: "Bearer test-token" } });
+const stalePayload = await staleResponse.json();
+assert.equal(stalePayload.task.rawStatus, "error");
+assert.equal(stalePayload.task.outcome, "error");
+assert.equal(controlCalls.some((args) => args?.[0] === "status" && args?.[1] === "task-stale"), true);
 
 const cacheClearResponse = await fetch(`${baseUrl}/v1/cache/clear`, {
   method: "POST",
@@ -62,9 +94,98 @@ assert.equal(
   "printf agent-direct-probe",
 );
 
+const contextRequired = await fetch(`${baseUrl}/v1/tasks`, {
+  method: "POST",
+  headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+  body: JSON.stringify({
+    taskId: "task-context-required",
+    conversationId: "conversation-context-required",
+    command: "printf should-not-run",
+  }),
+});
+assert.equal(contextRequired.status, 409);
+assert.equal((await contextRequired.json()).error.code, "execution_context_required");
+assert.equal(existsSync(join(home, "tasks", "task-context-required")), false);
+
+// The real HTTP control child must remain headless even when the HTTP runtime
+// accidentally inherited SSH_CONNECTION from its original service launcher.
+const controlPath = join(home, "aiwbctl");
+writeFileSync(controlPath, `#!/bin/sh
+if [ "\${AIWB_AGENT_HEADLESS_HTTP:-}" = "1" ] && [ -n "\${SSH_CONNECTION:-}" ]; then
+  printf '__AIWB_AGENT_STATUS__error\\n'
+  printf '__AIWB_AGENT_ERROR_CODE__execution_context_required\\n'
+  exit 42
+fi
+printf '__AIWB_AGENT_ERROR__headless marker missing\\n'
+exit 99
+`);
+chmodSync(controlPath, 0o700);
+const inheritedSshConnection = process.env.SSH_CONNECTION;
+process.env.SSH_CONNECTION = "127.0.0.1 50002 127.0.0.1 22";
+const realControlServer = createAgentDirectServer({
+  config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
+});
+await new Promise((resolve) => realControlServer.listen(0, "127.0.0.1", resolve));
+const realControlAddress = realControlServer.address();
+const inheritedContextResponse = await fetch(`http://127.0.0.1:${realControlAddress.port}/v1/tasks`, {
+  method: "POST",
+  headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+  body: JSON.stringify({
+    taskId: "task-inherited-ssh-http",
+    conversationId: "conversation-inherited-ssh-http",
+    command: "printf should-not-run",
+  }),
+});
+assert.equal(inheritedContextResponse.status, 409);
+assert.equal((await inheritedContextResponse.json()).error.code, "execution_context_required");
+assert.equal(existsSync(join(home, "tasks", "task-inherited-ssh-http")), false);
+await new Promise((resolve) => realControlServer.close(resolve));
+if (inheritedSshConnection === undefined) delete process.env.SSH_CONNECTION;
+else process.env.SSH_CONNECTION = inheritedSshConnection;
+
+if (process.platform !== "win32") {
+  writeFileSync(controlPath, "#!/bin/sh\nkill -TERM $$\nsleep 1\n");
+  chmodSync(controlPath, 0o700);
+  const signalledControlServer = createAgentDirectServer({
+    config: { listenHost: "127.0.0.1", port: 0, accessToken: "test-token", tls: null },
+  });
+  await new Promise((resolve) => signalledControlServer.listen(0, "127.0.0.1", resolve));
+  const signalledAddress = signalledControlServer.address();
+  const signalledResponse = await fetch(`http://127.0.0.1:${signalledAddress.port}/v1/cache/clear`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(signalledResponse.status, 409);
+  const signalledPayload = await signalledResponse.json();
+  assert.match(signalledPayload.error.message, /terminated by SIGTERM/);
+  await new Promise((resolve) => signalledControlServer.close(resolve));
+}
+
 const latest = await fetch(`${baseUrl}/v1/conversations/conversation-1/latest-task`, { headers: { Authorization: "Bearer test-token" } });
 assert.equal((await latest.json()).task.id, "task-linux-command");
-server.close();
+await new Promise((resolve) => server.close(resolve));
+
+// A process that cannot bind the direct API port is not a running runtime
+// generation and must leave the last known-good marker untouched.
+const previousRuntimeMarker = "previous-runtime-generation";
+writeFileSync(join(home, "http.runtime.sha256"), `${previousRuntimeMarker}\n`);
+const occupiedPort = createServer((_request, response) => response.end("occupied"));
+await new Promise((resolve) => occupiedPort.listen(0, "127.0.0.1", resolve));
+await assert.rejects(
+  startAgentDirectServer({
+    config: {
+      listenHost: "127.0.0.1",
+      port: occupiedPort.address().port,
+      accessToken: "test-token",
+      tls: null,
+    },
+  }),
+  (error) => error?.code === "EADDRINUSE",
+);
+assert.equal(readFileSync(join(home, "http.runtime.sha256"), "utf8").trim(), previousRuntimeMarker);
+assert.equal(existsSync(join(home, "http.pid")), false);
+await new Promise((resolve) => occupiedPort.close(resolve));
 
 let registration = null;
 const controlPlane = createServer((request, response) => {
@@ -91,6 +212,7 @@ assert.equal(registration?.method, "POST");
 assert.equal(registration?.path, "/v1/agent-control/register");
 assert.equal(registration?.body?.endpoint, "http://127.0.0.1:8787");
 assert.equal(registration?.body?.version, "37");
+assert.equal(registration?.body?.generationReady, false);
 assert.match(registration?.body?.agentId || "", /^agent-/);
 assert.match(registration?.body?.updateToken || "", /^[A-Za-z0-9_-]{24,}$/);
 await new Promise((resolve) => registeredServer.close(resolve));

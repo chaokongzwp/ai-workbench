@@ -45,6 +45,19 @@ function numericCssPixel(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function resetIphonePageOffset() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const root = document.documentElement;
+  const body = document.body;
+  root.scrollLeft = 0;
+  root.scrollTop = 0;
+  if (body) {
+    body.scrollLeft = 0;
+    body.scrollTop = 0;
+  }
+  if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+}
+
 function useAutoGrowingTextarea(value, fallbackMaxHeight = 136) {
   const ref = useRef(null);
   const resize = useCallback(() => {
@@ -75,21 +88,6 @@ function useAutoGrowingTextarea(value, fallbackMaxHeight = 136) {
   return ref;
 }
 
-function applyIphoneKeyboardViewport() {
-  if (typeof window === "undefined" || typeof document === "undefined") return;
-  const root = document.documentElement;
-  const viewport = window.visualViewport;
-  const layoutHeight = Math.round(window.innerHeight || viewport?.height || 0);
-  const visualHeight = Math.round(viewport?.height || layoutHeight);
-  const width = Math.round(window.innerWidth || viewport?.width || 0);
-  const keyboardFocused = root.classList.contains("aiwb-keyboard-focus");
-  const height = keyboardFocused ? Math.min(layoutHeight, visualHeight) : layoutHeight;
-
-  if (height > 0) root.style.setProperty("--app-viewport-height", `${height}px`);
-  if (width > 0) root.style.setProperty("--app-viewport-width", `${width}px`);
-  if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
-}
-
 function useIphoneKeyboardFocusGuard(textareaRef) {
   const timersRef = useRef([]);
 
@@ -101,7 +99,6 @@ function useIphoneKeyboardFocusGuard(textareaRef) {
   const keepComposerVisible = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea || document.activeElement !== textarea) return;
-    applyIphoneKeyboardViewport();
 
     const composerWrap = textarea.closest(".iphone-composer-wrap");
     const chatScroll = textarea.closest(".iphone-chat")?.querySelector(".iphone-chat-scroll");
@@ -116,10 +113,9 @@ function useIphoneKeyboardFocusGuard(textareaRef) {
       const rect = composerWrap.getBoundingClientRect();
       const overlap = rect.bottom - viewportBottom + 8;
       if (overlap > 0 && chatScroll) chatScroll.scrollTop += overlap;
-      composerWrap.scrollIntoView({ block: "end", inline: "nearest", behavior: "auto" });
     }
 
-    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    resetIphonePageOffset();
   }, [textareaRef]);
 
   const scheduleFocusRepair = useCallback(() => {
@@ -262,7 +258,7 @@ function IphoneComposer({
     if (typeof document === "undefined") return;
     document.documentElement.classList.toggle("aiwb-keyboard-focus", focused);
     document.body?.classList.toggle("aiwb-keyboard-focus", focused);
-    applyIphoneKeyboardViewport();
+    resetIphonePageOffset();
   }
 
   function handleVoiceClick() {
@@ -327,7 +323,7 @@ function IphoneComposer({
           onBlur={() => {
             window.setTimeout(() => {
               setKeyboardFocus(false);
-              applyIphoneKeyboardViewport();
+              resetIphonePageOffset();
             }, 120);
           }}
           onChange={(event) => setComposer(event.target.value)}
@@ -648,6 +644,21 @@ export function IphoneWorkbenchShell({
   const [exportingLogs, setExportingLogs] = useState(false);
   const [exportNotice, setExportNotice] = useState(null);
   const { draggingId, getReorderProps } = useSessionReorder(onReorderServer);
+
+  useLayoutEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
+    const previousContent = viewportMeta?.getAttribute("content") || "";
+    viewportMeta?.setAttribute(
+      "content",
+      "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover",
+    );
+    resetIphonePageOffset();
+    return () => {
+      if (viewportMeta) viewportMeta.setAttribute("content", previousContent);
+    };
+  }, []);
+
   const {
     visibleMessages,
     handleProgressiveScroll,

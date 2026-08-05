@@ -77,11 +77,11 @@ journalctl -u ai-workbench-config-sync -f
 Agent 启动后调用 `POST /v1/agent-control/register` 登记自身可访问地址和升级专用凭证。发布脚本在发布后调用
 `POST /v1/agent-control/publish` 上传清单和各平台运行文件，并更新目标版本；中心服务异步调用版本落后的 Agent 的 `/v1/control/update`。
 
-App 安装或修复 Agent 时只需访问配置中心：先读取 `GET /v1/agent-control/latest`，再使用返回的 `manifestUrl` 或 `windowsManifestUrl` 下载清单。清单内的所有文件 URL 也指向配置中心的版本目录，因此目标机器不需要访问 GitHub。`GET /v1/agent-control/download/{windows|linux|macos}` 可直接下载当前版本对应的入口文件。对外地址默认是 `https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control`，部署环境可通过 `AIWB_AGENT_CONTROL_PUBLIC_BASE_URL` 覆盖。
+App 安装或修复 Agent 时只访问配置中心：先读取 `GET /v1/agent-control/latest`，再按 `platforms.linux`、`platforms.macos` 或 `platforms.windows` 选择清单。三平台入口分别托管在版本目录下，公共 HTTP/updater runtime 也由配置中心托管，目标机器不需要访问 GitHub。过渡期仍返回 `manifestUrl`、`linuxManifestUrl`、`macosManifestUrl`、`windowsManifestUrl`。`GET /v1/agent-control/download/{windows|linux|macos}` 可直接下载当前平台入口。对外地址默认是 `https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control`，部署环境可通过 `AIWB_AGENT_CONTROL_PUBLIC_BASE_URL` 覆盖。
 
 服务端需要在 `apns.env` 或独立环境文件中配置 `AIWB_AGENT_CONTROL_ADMIN_TOKEN`。该令牌只用于发布端，不能放进 App 或 Agent。中心保存的是只能触发固定自更新操作的凭证，不是 Agent 的任务 API Token。
 
-`npm run agent:publish` 会在 GitHub 清单校验通过后调用配置中心，并再次读取目标版本确认发布闭环。发布机必须通过
+`npm run agent:publish` 会先在本地生成并校验 Linux、macOS、Windows 三平台制品，再上传配置中心，并再次读取目标版本确认发布闭环。发布机必须通过
 `AIWB_AGENT_CONTROL_ADMIN_TOKEN` 提供管理凭证；macOS 也可以把凭证保存在钥匙串服务
 `com.beexofficial.aiworkbench.agent-control-admin`。没有凭证时发布命令会失败，不再把“仅推送 GitHub”误报为发布成功。
 
