@@ -158,7 +158,8 @@ const controlPublishResponse = await fetch(`${controlEndpoint}/publish`, {
   }),
 });
 if (!controlPublishResponse.ok) {
-  throw new Error(`配置中心发布通知失败：HTTP ${controlPublishResponse.status}`);
+  const detail = (await controlPublishResponse.text()).replace(/\s+/g, " ").slice(0, 500);
+  throw new Error(`配置中心发布通知失败：HTTP ${controlPublishResponse.status}${detail ? `（${detail}）` : ""}`);
 }
 const controlLatestResponse = await fetch(`${controlEndpoint}/latest`, { cache: "no-store" });
 if (!controlLatestResponse.ok) {
