@@ -66,6 +66,11 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       if (bridge?.startAgentEventStream) return bridge.startAgentEventStream(payload);
       throw new Error("当前环境不支持安全的 Agent 事件流。");
     },
+    async sendAgentEventStream(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.sendAgentEventStream) return bridge.sendAgentEventStream(payload);
+      throw new Error("当前环境不支持发送 Agent WebSocket 消息。");
+    },
     async stopAgentEventStream(payload) {
       const bridge = desktopBridge();
       if (bridge?.stopAgentEventStream) return bridge.stopAgentEventStream(payload);

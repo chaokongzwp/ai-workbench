@@ -94,6 +94,37 @@ writeFileSync(join(pushedTaskDir, "output.log"), largeFinalOutput);
 writeFileSync(join(pushedTaskDir, "status"), "done");
 const terminalEvent = await terminalPush;
 assert.equal(terminalEvent.task.output.length, largeFinalOutput.length);
+const websocketTaskRequest = {
+  taskId: "task-websocket-command",
+  conversationId: "conversation-websocket",
+  command: "printf websocket-agent-direct-probe",
+};
+const acceptedTask = waitForAgentEvent(
+  (event) => event.type === "task.accepted" && event.requestId === "request-create-1",
+);
+eventSocket.send(JSON.stringify({
+  type: "task.create",
+  requestId: "request-create-1",
+  task: websocketTaskRequest,
+}));
+const acceptedEvent = await acceptedTask;
+assert.equal(acceptedEvent.task.id, "task-websocket-command");
+assert.equal(acceptedEvent.idempotent, false);
+assert.equal(
+  Buffer.from(readFileSync(join(home, "tasks", "task-websocket-command", "command.b64"), "utf8").trim(), "base64").toString("utf8"),
+  "printf websocket-agent-direct-probe",
+);
+const idempotentFallback = await fetch(`${baseUrl}/v1/tasks`, {
+  method: "POST",
+  headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+  body: JSON.stringify(websocketTaskRequest),
+});
+assert.equal(idempotentFallback.status, 200);
+assert.equal((await idempotentFallback.json()).idempotent, true);
+assert.equal(
+  controlCalls.filter((args) => args?.[0] === "create" && args?.[1] === "task-websocket-command").length,
+  1,
+);
 await new Promise((resolve, reject) => {
   if (eventSocket.readyState === WebSocket.CLOSED) {
     resolve();
@@ -113,6 +144,7 @@ assert.equal(health.version, "42");
 assert.equal(health.protocolVersion, 2);
 assert.ok(health.capabilities.includes("binary-upload-v1"));
 assert.ok(health.capabilities.includes("events-v1"));
+assert.ok(health.capabilities.includes("task-create-events-v1"));
 assert.equal(health.transport, "https");
 const response = await fetch(`${baseUrl}/v1/tasks/task-1`, { headers: { Authorization: "Bearer test-token" } });
 assert.equal(response.status, 200);

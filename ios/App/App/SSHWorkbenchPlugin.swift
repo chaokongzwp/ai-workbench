@@ -1632,6 +1632,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "cancelUpload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "agentRequest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startAgentEventStream", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "sendAgentEventStream", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopAgentEventStream", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "agentUpload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancelAgentUpload", returnType: CAPPluginReturnPromise),
@@ -2213,6 +2214,38 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             let stopped = self.agentEventStreams[streamId] != nil
             self.finishAgentEventStream(streamId: streamId, notify: false)
             call.resolve(["ok": true, "stopped": stopped])
+        }
+    }
+
+    @objc func sendAgentEventStream(_ call: CAPPluginCall) {
+        let streamId = (call.getString("streamId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let message = call.getObject("message"), JSONSerialization.isValidJSONObject(message) else {
+            call.reject("Agent WebSocket 消息无效。", "AGENT_EVENT_MESSAGE_INVALID")
+            return
+        }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: message)
+            guard data.count <= 512 * 1024, let value = String(data: data, encoding: .utf8) else {
+                call.reject("Agent WebSocket 消息大小无效。", "AGENT_EVENT_MESSAGE_INVALID")
+                return
+            }
+            DispatchQueue.main.async {
+                guard let stream = self.agentEventStreams[streamId], !stream.stopped else {
+                    call.reject("Agent WebSocket 当前不可用。", "AGENT_EVENT_NOT_OPEN")
+                    return
+                }
+                stream.task.send(.string(value)) { error in
+                    DispatchQueue.main.async {
+                        if let error {
+                            call.reject(self.safeErrorMessage(error), "AGENT_EVENT_SEND_FAILED", error)
+                        } else {
+                            call.resolve(["ok": true, "streamId": streamId])
+                        }
+                    }
+                }
+            }
+        } catch {
+            call.reject("Agent WebSocket 消息编码失败。", "AGENT_EVENT_MESSAGE_INVALID", error)
         }
     }
 

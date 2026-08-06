@@ -5976,36 +5976,54 @@ export function useWorkbenchController() {
         });
         const createThroughSshContext = plannedCreateTransport === "ssh-create-now";
         const taskCreateMode = createThroughSshContext ? "create-now" : workbenchAgentTaskCreateMode(directProfile);
+        const directTaskRequest = agentDirectTaskRequest({
+          taskId: remoteTaskId,
+          conversationId,
+          turnId,
+          agentId: agent.id,
+          model: currentProfile.aiModel,
+          workdir: currentProfile.workdir,
+          prompt: text,
+          requestMessageId: userMessageId,
+          responseMessageId: assistantMessageId,
+          command,
+          name: conversationName,
+        });
+        const acceptDirectTask = (task = {}) => ({
+          status: "ready",
+          taskStatus: String(task.rawStatus || task.status || "queued").toLowerCase(),
+          taskId: task.id || remoteTaskId,
+          pid: "",
+          startedAt: task.startedAt || "",
+          runnerStartedAt: task.runnerStartedAt || "",
+          exitCode: task.exitCode || "",
+          eventFingerprint: "",
+        });
         if (plannedCreateTransport === "direct") {
+          const eventStream = agentEventStreamStateRef.current.get(agentInstallationKey(directProfile));
+          if (eventStream?.status === "open" && eventStream.handle?.isOpen?.()) {
+            try {
+              const response = await eventStream.handle.request({ type: "task.create", task: directTaskRequest }, { timeoutMs: 5_000 });
+              created = acceptDirectTask(response?.task);
+              createTransport = "websocket";
+              void appLog("info", "agent.events.task_created", { serverId, remoteTaskId });
+            } catch (error) {
+              void appLog("warn", "agent.events.task_create_failed", {
+                serverId,
+                remoteTaskId,
+                error: shortError(error),
+              });
+            }
+          }
+        }
+        if (plannedCreateTransport === "direct" && !created) {
           try {
             const response = await agentDirectRequest(directProfile, "/v1/tasks", {
               method: "POST",
-              body: agentDirectTaskRequest({
-                taskId: remoteTaskId,
-                conversationId,
-                turnId,
-                agentId: agent.id,
-                model: currentProfile.aiModel,
-                workdir: currentProfile.workdir,
-                prompt: text,
-                requestMessageId: userMessageId,
-                responseMessageId: assistantMessageId,
-                command,
-                name: conversationName,
-              }),
+              body: directTaskRequest,
               timeoutMs: 20_000,
             });
-            const task = response?.task || {};
-            created = {
-              status: "ready",
-              taskStatus: String(task.rawStatus || task.status || "queued").toLowerCase(),
-              taskId: task.id || remoteTaskId,
-              pid: "",
-              startedAt: task.startedAt || "",
-              runnerStartedAt: task.runnerStartedAt || "",
-              exitCode: task.exitCode || "",
-              eventFingerprint: "",
-            };
+            created = acceptDirectTask(response?.task);
             createTransport = "direct";
             void appLog("info", "agent.direct.task_created", { serverId, remoteTaskId });
           } catch (error) {

@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   startAgentEventStream(payload) {
     return ipcRenderer.invoke("aiwb:agent-event-start", payload);
   },
+  sendAgentEventStream(payload) {
+    return ipcRenderer.invoke("aiwb:agent-event-send", payload);
+  },
   stopAgentEventStream(payload) {
     return ipcRenderer.invoke("aiwb:agent-event-stop", payload);
   },

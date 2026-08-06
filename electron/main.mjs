@@ -3050,9 +3050,22 @@ function startAgentEventStream(event, payload = {}) {
   });
 }
 
+function sendAgentEventStream(event, payload = {}) {
+  const streamId = String(payload.streamId || "").trim();
+  const active = activeAgentEventStreams.get(streamId);
+  if (!active || active.owner?.id !== event.sender.id || !active.opened || active.stopped || !active.socket || active.socket.destroyed) {
+    throw new Error("Agent WebSocket 当前不可用。");
+  }
+  const body = Buffer.from(JSON.stringify(payload.message ?? {}), "utf8");
+  if (!body.length || body.length > 512 * 1024) throw new Error("Agent WebSocket 消息大小无效。");
+  active.socket.write(createWebSocketFrame(body, 1));
+  return { ok: true, streamId };
+}
+
 ipcMain.handle("aiwb:agent-request", async (_event, payload) => requestAgentDirect(payload));
 ipcMain.handle("aiwb:agent-upload", async (event, payload) => requestAgentUpload(event, payload));
 ipcMain.handle("aiwb:agent-event-start", async (event, payload) => startAgentEventStream(event, payload));
+ipcMain.handle("aiwb:agent-event-send", async (event, payload) => sendAgentEventStream(event, payload));
 ipcMain.handle("aiwb:agent-event-stop", async (_event, payload = {}) => ({
   ok: true,
   stopped: stopAgentEventStream(String(payload.streamId || "").trim()),

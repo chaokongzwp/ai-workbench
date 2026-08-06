@@ -335,20 +335,53 @@ export function createAgentDirectEventStream(profile, { onEvent, onOpen, onClose
   const payload = { streamId, endpoint, accessToken, tlsFingerprint };
   const bridge = desktopBridge();
   let disposed = false;
+  let opened = false;
   let terminalNotified = false;
   let removeListener = null;
   let nativeListener = null;
+  const pendingRequests = new Map();
+
+  const rejectPending = (error) => {
+    for (const pending of pendingRequests.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    pendingRequests.clear();
+  };
 
   const notifyTerminal = (event, isError = false) => {
     if (disposed || terminalNotified) return;
     terminalNotified = true;
+    opened = false;
+    rejectPending(new AgentDirectRequestError(
+      text(event?.error) || "Agent WebSocket 已断开。",
+      { code: isError ? "agent_event_error" : "agent_event_closed" },
+    ));
     if (isError) onError?.(event);
     onClose?.(event);
   };
   const handle = (message = {}) => {
     if (disposed || String(message.streamId || "") !== streamId) return;
-    if (message.state === "open") onOpen?.();
-    else if (message.state === "event" && message.event && typeof message.event === "object") onEvent?.(message.event);
+    if (message.state === "open") {
+      opened = true;
+      onOpen?.();
+    }
+    else if (message.state === "event" && message.event && typeof message.event === "object") {
+      const event = message.event;
+      const requestId = text(event.requestId);
+      const pending = requestId ? pendingRequests.get(requestId) : null;
+      if (pending && (event.type === "task.accepted" || event.type === "command.error")) {
+        pendingRequests.delete(requestId);
+        clearTimeout(pending.timer);
+        if (event.type === "task.accepted") pending.resolve(event);
+        else pending.reject(new AgentDirectRequestError(
+          text(event.error?.message) || "Agent WebSocket 命令失败。",
+          { code: text(event.error?.code) || "agent_event_command_error", body: event },
+        ));
+        return;
+      }
+      onEvent?.(event);
+    }
     else if (message.state === "error") notifyTerminal(message, true);
     else if (message.state === "closed") notifyTerminal(message, false);
   };
@@ -372,9 +405,40 @@ export function createAgentDirectEventStream(profile, { onEvent, onOpen, onClose
   return {
     streamId,
     ready,
+    isOpen() {
+      return opened && !disposed && !terminalNotified;
+    },
+    request(command, { timeoutMs = 5_000 } = {}) {
+      if (!opened || disposed || terminalNotified) {
+        return Promise.reject(new AgentDirectRequestError("Agent WebSocket 当前不可用。", { code: "agent_event_not_open" }));
+      }
+      const requestId = globalThis.crypto?.randomUUID?.() || `agent-command-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return new Promise((resolvePromise, reject) => {
+        const timer = setTimeout(() => {
+          pendingRequests.delete(requestId);
+          reject(new AgentDirectRequestError("Agent WebSocket 确认超时。", { code: "agent_event_ack_timeout" }));
+        }, Math.max(1_000, Math.min(Number(timeoutMs) || 5_000, 30_000)));
+        pendingRequests.set(requestId, { resolve: resolvePromise, reject, timer });
+        const sendPayload = { streamId, message: { ...command, requestId } };
+        Promise.resolve().then(() => bridge?.sendAgentEventStream
+          ? bridge.sendAgentEventStream(sendPayload)
+          : SSHWorkbench.sendAgentEventStream(sendPayload)).catch((error) => {
+          const pending = pendingRequests.get(requestId);
+          if (!pending) return;
+          pendingRequests.delete(requestId);
+          clearTimeout(timer);
+          reject(new AgentDirectRequestError(
+            text(error?.message) || "Agent WebSocket 消息发送失败。",
+            { code: "agent_event_send_failed" },
+          ));
+        });
+      });
+    },
     close() {
       if (disposed) return;
       disposed = true;
+      opened = false;
+      rejectPending(new AgentDirectRequestError("Agent WebSocket 已关闭。", { code: "agent_event_closed" }));
       removeListener?.();
       nativeListener?.remove?.();
       if (bridge?.stopAgentEventStream) bridge.stopAgentEventStream({ streamId }).catch?.(() => {});

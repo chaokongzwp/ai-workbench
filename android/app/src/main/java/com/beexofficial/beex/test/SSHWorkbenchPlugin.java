@@ -403,6 +403,30 @@ public class SSHWorkbenchPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void sendAgentEventStream(PluginCall call) {
+        String streamId = stringValue(call.getString("streamId")).trim();
+        JSObject message = call.getObject("message");
+        AgentEventStreamHandle stream = agentEventStreams.get(streamId);
+        if (stream == null || stream.stopped.get() || stream.socket == null) {
+            call.reject("Agent WebSocket 当前不可用。", "AGENT_EVENT_NOT_OPEN");
+            return;
+        }
+        String encoded = message == null ? "" : message.toString();
+        if (encoded.isEmpty() || encoded.getBytes(StandardCharsets.UTF_8).length > 512 * 1024) {
+            call.reject("Agent WebSocket 消息大小无效。", "AGENT_EVENT_MESSAGE_INVALID");
+            return;
+        }
+        if (!stream.socket.send(encoded)) {
+            call.reject("Agent WebSocket 消息发送失败。", "AGENT_EVENT_SEND_FAILED");
+            return;
+        }
+        JSObject result = new JSObject();
+        result.put("ok", true);
+        result.put("streamId", streamId);
+        call.resolve(result);
+    }
+
+    @PluginMethod
     public void agentUpload(PluginCall call) {
         String endpoint = stringValue(call.getString("endpoint")).trim();
         String accessToken = stringValue(call.getString("accessToken")).trim();
