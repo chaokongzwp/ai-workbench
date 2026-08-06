@@ -13,6 +13,11 @@
   --message-font-size: 16px;
   --message-font-weight: 500;
   --message-line-height: 1.65;
+  /* Message sizing is controlled by the profile. WebKit's automatic text
+     inflation makes individual transcript blocks jump in size when a long
+     code token changes their intrinsic width. */
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
 }
 
 * {
@@ -28,6 +33,8 @@ body,
   max-width: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+  -webkit-text-size-adjust: none !important;
+  text-size-adjust: none !important;
 }
 
 body {
@@ -11542,8 +11549,8 @@ html:has(.iphone-shell[data-theme="dark"]) #root {
 }
 
 html:has(.iphone-shell) {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
 }
 
 /* iOS zooms the entire WKWebView when a focused form control renders below
@@ -14686,6 +14693,87 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
 .iphone-shell .rich-message h3,
 .iphone-shell .rich-message h4 {
   font-family: var(--message-font-family);
+}
+
+/* Transcript width containment.
+   Inline code used to be an atomic inline-block, so its text could paint past
+   its max-width and make both desktop and iPhone transcripts look wider than
+   the viewport. On iOS that overflow also triggered WebKit text inflation. */
+.conversation-scroll,
+.iphone-chat-scroll,
+.agent-response,
+.agent-response > *,
+.assistant-answer,
+.assistant-copy,
+.rich-message,
+.rich-message > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rich-message {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  overflow: hidden;
+}
+
+.rich-message :is(p, li, h1, h2, h3, h4, blockquote, a, strong, em) {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.rich-message code:not(pre code) {
+  display: inline;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.rich-message pre {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.rich-message pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  white-space: inherit;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.rich-table-wrap,
+.rich-table-scroll,
+.rich-data-table-wrap,
+.rich-diagram {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.iphone-shell .assistant-answer,
+.iphone-shell .assistant-copy,
+.iphone-shell .rich-message {
+  width: 100%;
+  max-width: 100%;
+}
+
+.iphone-shell .assistant-answer .rich-message pre code {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  overflow: visible;
 }
 
 /* Sent message meta polish: keep time, copy, and edit on one baseline with one neutral color. */

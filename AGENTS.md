@@ -10,6 +10,8 @@ Current product decision: do not put an autonomous "main AI" router in the first
 
 Current chat design decision: messages in the conversation transcript use a flat, background-free layout. Do not reintroduce rounded chat bubbles around user or assistant text.
 
+Current transcript layout decision: message content must never expand the page beyond the viewport. Long inline code wraps inside the message, fenced code scrolls only inside its own block, and iPhone typography must use the configured message size without WebKit text inflation.
+
 Current Claude login decision: remote Claude CLI OAuth is a manual URL-and-code handoff. The App must show the complete unwrapped authorization URL with open and copy actions, then provide an authorization-code field and submit that code back to the waiting remote Claude CLI. Do not treat browser authorization alone as completion, and do not truncate long OAuth query parameters.
 
 Current Agent distribution decision: every Agent install or repair must resolve the latest release through the configuration center and download manifests and binaries hosted by that center. GitHub may remain the source-code and release backup, but target machines must not depend on GitHub access during installation.

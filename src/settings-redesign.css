@@ -1076,6 +1076,32 @@
   background: color-mix(in srgb, var(--settings-control) 76%, transparent);
 }
 
+:is(.app-shell, .native-app-shell) .environment-variable-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-import-status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--settings-secondary);
+  background: color-mix(in srgb, var(--settings-control) 48%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-import-status.done {
+  color: #147a47;
+  background: rgba(52, 199, 89, 0.12);
+}
+
+:is(.app-shell, .native-app-shell) .environment-variable-import-status.error {
+  color: var(--settings-danger, #c53d35);
+  background: rgba(255, 59, 48, 0.1);
+}
+
 :is(.app-shell, .native-app-shell) .environment-variable-hint {
   margin: 0;
   color: var(--settings-secondary);

@@ -73,6 +73,7 @@ const {
   assetBase,
   assetPath,
   automaticTaskWakePhrases,
+  base64DecodedByteLength,
   bashCommand,
   browserDiagnosticLogStorageKey,
   buildAgentTaskCommand,
@@ -97,6 +98,7 @@ const {
   buildRemoteFileReadCommand,
   buildRemoteDirectoryListCommand,
   buildRemoteImageUploadCommand,
+  buildRemoteImageUploadTarget,
   buildRestartWindowsCommand,
   buildWindowsCodexExecCommand,
   buildWindowsDiscoveryCommand,
@@ -366,6 +368,7 @@ const {
   workbenchAgentVersionNumber,
   workbenchAgentTaskCreateMode,
   workdirDisplayName,
+  wslDistroFromProfile,
   workspaceDiagnosticSummary,
   workspaceMirrorStorageKey,
   workspaceStoreVersion,
@@ -667,6 +670,7 @@ export function useWorkbenchController() {
   const syncingAgentSweepRef = useRef(false);
   const loadingAgentHistoryRef = useRef(new Set());
   const sendingServerIdsRef = useRef(new Set());
+  const activeUploadByServerRef = useRef(new Map());
   const lastSendClickAtRef = useRef(0);
   const startupAgentSyncNoticeRef = useRef(new Set());
   const agentHealthRefreshKeysRef = useRef(new Set());
@@ -761,10 +765,19 @@ export function useWorkbenchController() {
     });
   }
 
-  function clearImageAttachments() {
-    revokeImagePreviews(imageAttachmentsRef.current);
-    imageAttachmentsRef.current = [];
-    setImageAttachments([]);
+  function removeUploadedImageAttachments(uploadedAttachments = []) {
+    const uploadedIds = new Set(uploadedAttachments.map((item) => String(item?.id || "")).filter(Boolean));
+    const uploadedItems = new Set(uploadedAttachments);
+    setImageAttachments((items) => {
+      const removed = items.filter(
+        (item) => uploadedItems.has(item) || (item?.id && uploadedIds.has(String(item.id))),
+      );
+      if (!removed.length) return items;
+      revokeImagePreviews(removed);
+      const nextItems = items.filter((item) => !removed.includes(item));
+      imageAttachmentsRef.current = nextItems;
+      return nextItems;
+    });
   }
 
   function removeImageAttachment(id) {
@@ -2656,15 +2669,140 @@ export function useWorkbenchController() {
     }
   }
 
-  async function uploadImageAttachmentsForProfile(targetProfile, attachments = []) {
+  async function uploadImageAttachmentsForProfile(
+    targetProfile,
+    attachments = [],
+    serverId = "",
+    assistantMessageId = "",
+  ) {
     const items = attachments.filter((item) => cleanBase64Payload(item?.base64));
     if (!items.length) return [];
+    const useNativeIosUpload = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
     const uploaded = [];
     for (let index = 0; index < items.length; index += 1) {
       const attachment = items[index];
+      if (useNativeIosUpload) {
+        const current = withKnownPassword(targetProfile);
+        const missing = profileIssue(current);
+        if (missing) throw new Error(missing);
+        const target = buildRemoteImageUploadTarget(current, attachment, index);
+        const base64 = cleanBase64Payload(attachment.base64);
+        const expectedSize = base64DecodedByteLength(base64) || Number(attachment.size || 0);
+        const connectionKey = sshEndpointKey(current);
+        const preferredHost = preferredHostByConnectionRef.current.get(connectionKey);
+        const hosts = orderedHostCandidates(current, preferredHost);
+        let lastError = null;
+
+        for (let hostIndex = 0; hostIndex < hosts.length; hostIndex += 1) {
+          const host = hosts[hostIndex];
+          const uploadId = `upload-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 9)}`;
+          const startedAt = Date.now();
+          const payload = {
+            sessionId: serverId || `profile:${profileConnectionKey(current)}`,
+            uploadId,
+            host,
+            port: current.port,
+            username: current.username,
+            password: current.password,
+            sshHostKeyFingerprint: current.sshHostKeyFingerprint,
+            connectTimeoutSeconds: current.connectTimeoutSeconds,
+            commandTimeoutSeconds: 240,
+            platform: normalizeServerPlatform(current.platform),
+            wslDistro: wslDistroFromProfile(current),
+            remoteDirectory: target.uploadDir,
+            remotePath: target.path,
+            name: target.name,
+            remoteName: target.remoteName,
+            mime: target.mime,
+            size: expectedSize,
+            expectedSize,
+            base64,
+          };
+          activeUploadByServerRef.current.set(serverId, {
+            uploadId,
+            name: target.name,
+            expectedSize,
+            assistantMessageId,
+            fileIndex: index + 1,
+            fileCount: items.length,
+            lastProgressPercent: -1,
+          });
+          void appLog("info", "ssh.upload.start", {
+            serverId,
+            uploadId,
+            host,
+            platform: payload.platform,
+            wsl: Boolean(payload.wslDistro),
+            name: target.name,
+            expectedSize,
+          });
+          try {
+            const result = await SSHWorkbench.uploadFile(payload);
+            const path = String(result?.path || target.path || "").trim();
+            if (!path) throw new Error("原生 SFTP 上传完成后没有返回文件路径。");
+            const resultSize = Number(result?.size ?? expectedSize);
+            if (expectedSize > 0 && resultSize !== expectedSize) {
+              throw new Error(`SFTP 上传校验失败：预期 ${expectedSize} 字节，实际 ${resultSize} 字节。`);
+            }
+            preferredHostByConnectionRef.current.set(connectionKey, host);
+            uploaded.push({
+              name: target.name,
+              remoteName: String(result?.remoteName || target.remoteName),
+              path,
+              mime: String(result?.mime || target.mime),
+              size: resultSize,
+              sha256: String(result?.sha256 || ""),
+            });
+            void appLog("info", "ssh.upload.success", {
+              serverId,
+              uploadId,
+              host,
+              durationMs: Date.now() - startedAt,
+              size: resultSize,
+            });
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            const stage = String(error?.stage || error?.data?.stage || "").trim().toLocaleLowerCase();
+            const retryable = error?.retryable ?? error?.data?.retryable;
+            const canTryAlternateHost =
+              stage === "connect" && retryable === true && hostIndex < hosts.length - 1;
+            void appLog("error", "ssh.upload.failed", {
+              serverId,
+              uploadId,
+              host,
+              stage: stage || "unknown",
+              retryable: retryable === true,
+              durationMs: Date.now() - startedAt,
+              error: shortError(error),
+              alternateHostRetry: canTryAlternateHost,
+            });
+            if (!canTryAlternateHost) {
+              if (error && typeof error === "object" && Object.isExtensible(error)) {
+                error.uploadedFileCount = uploaded.length;
+              }
+              throw error;
+            }
+          } finally {
+            if (activeUploadByServerRef.current.get(serverId)?.uploadId === uploadId) {
+              activeUploadByServerRef.current.delete(serverId);
+            }
+          }
+        }
+        if (lastError) throw lastError;
+        continue;
+      }
       const command = buildRemoteImageUploadCommand(targetProfile, attachment, index);
-      const output = await runRemoteCommandForProfile(targetProfile, command, 64_000, 240);
-      uploaded.push(parseRemoteImageUploadPayload(output, command));
+      try {
+        const output = await runRemoteCommandForProfile(targetProfile, command, 64_000, 240);
+        uploaded.push(parseRemoteImageUploadPayload(output, command));
+      } catch (error) {
+        if (error && typeof error === "object" && Object.isExtensible(error)) {
+          error.uploadedFileCount = uploaded.length;
+        }
+        throw error;
+      }
     }
     return uploaded;
   }
@@ -4050,6 +4188,69 @@ export function useWorkbenchController() {
     return () => {
       cancelled = true;
       desktopUnsubscribe?.();
+      nativeSubscription?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      !Capacitor.isNativePlatform() ||
+      Capacitor.getPlatform() !== "ios" ||
+      typeof SSHWorkbench.addListener !== "function"
+    ) {
+      return undefined;
+    }
+    const handleUploadProgress = (payload = {}) => {
+      const uploadId = String(payload.uploadId || "").trim();
+      if (!uploadId) return;
+      const activeEntry = [...activeUploadByServerRef.current.entries()].find(([, value]) => value?.uploadId === uploadId);
+      if (!activeEntry) return;
+      const [serverId, activeUpload] = activeEntry;
+      const bytesSent = Math.max(0, Number(payload.bytesSent || 0));
+      const totalBytes = Math.max(0, Number(payload.totalBytes || activeUpload.expectedSize || 0));
+      const rawProgress = Number(payload.progress);
+      const derivedPercent = totalBytes > 0 ? (bytesSent / totalBytes) * 100 : 0;
+      const percent = Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(
+            Number.isFinite(rawProgress) ? (rawProgress <= 1 ? rawProgress * 100 : rawProgress) : derivedPercent,
+          ),
+        ),
+      );
+      const progressBucket = percent >= 100 ? 100 : Math.floor(percent / 5) * 5;
+      if (progressBucket <= Number(activeUpload.lastProgressPercent ?? -1)) return;
+      activeUpload.lastProgressPercent = progressBucket;
+      void appLog("info", "ssh.upload.progress", {
+        serverId,
+        uploadId,
+        bytesSent,
+        totalBytes,
+        progress: progressBucket,
+      });
+      if (activeUpload.assistantMessageId) {
+        updateAssistantMessageInServer(serverId, activeUpload.assistantMessageId, {
+          title: "上传中",
+          body: `正在上传附件 ${activeUpload.fileIndex}/${activeUpload.fileCount}：${activeUpload.name}（${progressBucket}%）`,
+          taskState: taskStateSubmitting,
+          forceUpdate: true,
+        });
+      }
+    };
+    let nativeSubscription;
+    let cancelled = false;
+    SSHWorkbench.addListener("uploadProgress", handleUploadProgress)
+      .then((subscription) => {
+        if (cancelled) {
+          subscription?.remove?.();
+          return;
+        }
+        nativeSubscription = subscription;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
       nativeSubscription?.remove?.();
     };
   }, []);
@@ -7474,7 +7675,6 @@ export function useWorkbenchController() {
     const initialConversationId = ensureServerConversationId(serverId, currentProfile, selectedAgent.id);
     composerRef.current = "";
     setComposer("");
-    if (pendingFiles.length) clearImageAttachments();
     setRawOpen(false);
     setServerTaskMetadata(serverId, {
       agentId: selectedAgent.id,
@@ -7654,8 +7854,14 @@ export function useWorkbenchController() {
       let uploadedImages = [];
       let promptText = text;
       if (pendingFiles.length) {
-        uploadedImages = await uploadImageAttachmentsForProfile(currentProfile, pendingFiles);
+        uploadedImages = await uploadImageAttachmentsForProfile(
+          currentProfile,
+          pendingFiles,
+          serverId,
+          assistantMessageId,
+        );
         uploadedFileCount = uploadedImages.length;
+        removeUploadedImageAttachments(pendingFiles);
         sendStage = "executing";
         promptText = appendUploadedImagesToPrompt(text, uploadedImages);
         updateAssistantMessageInServer(serverId, userMessageId, {
@@ -7783,8 +7989,12 @@ export function useWorkbenchController() {
       }
     } catch (error) {
       const message = shortError(error);
+      uploadedFileCount = Math.max(uploadedFileCount, Number(error?.uploadedFileCount || 0));
       const agentMode = agentPreferredForProfile(currentProfile);
       const uploadFailed = sendStage === "uploading";
+      const uploadCancelled = uploadFailed && /AIWB_UPLOAD_CANCELLED|cancelled|canceled|已取消|取消上传/i.test(
+        String(error?.code || error?.message || error || ""),
+      );
       const transientAgentDisconnect = !uploadFailed && agentMode && isTransientSshSyncError(error);
       const executionTimedOut =
         !uploadFailed &&
@@ -7804,17 +8014,19 @@ export function useWorkbenchController() {
       if (uploadFailed) {
         const totalFiles = pendingFiles.length;
         updateAssistantMessageInServer(serverId, assistantMessageId, {
-          title: "文件上传失败",
-          body: [
-            `已完成：消息已保存在本机，服务器连接成功。`,
-            `中断位置：上传附件（${uploadedFileCount}/${totalFiles}）。`,
-            `尚未执行：Agent 没有创建任务，${finalAgent.shortName} 没有收到这条消息。`,
-            "",
-            message,
-          ].join("\n"),
-          taskState: taskStateFailed,
+          title: uploadCancelled ? "已取消文件上传" : "文件上传失败",
+          body: uploadCancelled
+            ? `附件仍保留在输入框，Agent 没有创建任务，${finalAgent.shortName} 没有收到这条消息。`
+            : [
+                `已完成：消息已保存在本机，服务器连接成功。`,
+                `中断位置：上传附件（${uploadedFileCount}/${totalFiles}）。`,
+                `尚未执行：Agent 没有创建任务，${finalAgent.shortName} 没有收到这条消息。`,
+                "",
+                message,
+              ].join("\n"),
+          taskState: uploadCancelled ? taskStateCancelled : taskStateFailed,
           backend: agentMode ? "agent" : "ssh",
-          remoteTaskStatus: "upload-failed",
+          remoteTaskStatus: uploadCancelled ? "upload-cancelled" : "upload-failed",
           resultMissing: false,
           completedAt: Date.now(),
           loginAction: undefined,
@@ -7826,17 +8038,19 @@ export function useWorkbenchController() {
           remoteTaskId: "",
           agentId: finalAgent.id,
           finishedAt: Date.now(),
-          label: "附件上传失败",
+          label: uploadCancelled ? "附件上传已取消" : "附件上传失败",
         });
         setServerConnection(serverId, {
-          state: "error",
-          label: "上传失败",
-          detail: `${uploadedFileCount}/${totalFiles} 个附件已上传，AI 尚未启动`,
+          state: uploadCancelled ? "connected" : "error",
+          label: uploadCancelled ? "已取消" : "上传失败",
+          detail: uploadCancelled
+            ? "附件已保留，AI 尚未启动"
+            : `${uploadedFileCount}/${totalFiles} 个附件已上传，AI 尚未启动`,
           mode: agentMode ? "agent" : "ssh",
         });
         enqueueTaskNotice({
           serverId,
-          title: "附件上传失败，AI 尚未启动",
+          title: uploadCancelled ? "附件上传已取消，可以重新发送" : "附件上传失败，AI 尚未启动",
           tone: "warning",
         });
       } else if (transientAgentDisconnect) {
@@ -8373,6 +8587,7 @@ export function useWorkbenchController() {
     const server = serverById(serverId);
     const currentProfile = withKnownPassword(server?.profile || profileRef.current);
     if (showProfileIssue(currentProfile)) return;
+    const activeUpload = activeUploadByServerRef.current.get(serverId);
 
     const runningMessage = lastActiveTaskMessage(server?.messages || []);
     const runningAgentMessage =
@@ -8385,6 +8600,14 @@ export function useWorkbenchController() {
     setBusy(true);
     setRawOpen(false);
     try {
+      if (activeUpload?.uploadId) {
+        const result = await SSHWorkbench.cancelUpload({ uploadId: activeUpload.uploadId });
+        if (result?.active === false && result?.cancelled !== true) {
+          throw new Error("上传已经结束，没有可取消的上传操作。");
+        }
+        enqueueTaskNotice({ serverId, title: "已取消附件上传，附件仍保留在输入框", tone: "warning" });
+        return;
+      }
       if (runningAgentMessage) {
         const targetAgent = agentById(runningAgentMessage.agentId || currentProfile.agentId, activeAgent);
         const output = await runRemoteCommandForProfile(

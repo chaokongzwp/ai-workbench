@@ -1282,6 +1282,159 @@ private enum SSHWorkbenchError: LocalizedError {
     }
 }
 
+private struct NativeUploadResult: Sendable {
+    let path: String
+    let name: String
+    let remoteName: String
+    let mime: String
+    let size: Int
+    let sha256: String
+}
+
+private struct NativeUploadFailure: LocalizedError, @unchecked Sendable {
+    let message: String
+    let code: String
+    let stage: String
+    let retryable: Bool
+    let underlyingError: Error?
+
+    var errorDescription: String? { message }
+}
+
+/// One upload owns one SSH transport. Keeping this state outside the pooled
+/// command sessions lets timeout/cancel close the upload without disrupting an
+/// interactive terminal or an Agent command using the same server profile.
+private final class NativeUploadOperation: @unchecked Sendable {
+    let uploadId: String
+    let call: CAPPluginCall
+
+    private let lock = NSLock()
+    private var client: SSHClient?
+    private var workTask: Task<Void, Never>?
+    private var deadlineTask: Task<Void, Never>?
+    private var cancellationRequested = false
+    private var completed = false
+    private var currentStage = "connect"
+
+    init(uploadId: String, call: CAPPluginCall) {
+        self.uploadId = uploadId
+        self.call = call
+    }
+
+    func setWorkTask(_ task: Task<Void, Never>) {
+        lock.lock()
+        workTask = task
+        let shouldCancel = cancellationRequested
+        lock.unlock()
+        if shouldCancel { task.cancel() }
+    }
+
+    func setDeadlineTask(_ task: Task<Void, Never>) {
+        lock.lock()
+        deadlineTask = task
+        let shouldCancel = completed || cancellationRequested
+        lock.unlock()
+        if shouldCancel { task.cancel() }
+    }
+
+    func setStage(_ stage: String) {
+        lock.lock()
+        currentStage = stage
+        lock.unlock()
+    }
+
+    func stage() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentStage
+    }
+
+    func attachClient(_ client: SSHClient) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancellationRequested, !completed else { return false }
+        self.client = client
+        return true
+    }
+
+    func clearClient(_ client: SSHClient) {
+        lock.lock()
+        if self.client === client {
+            self.client = nil
+        }
+        lock.unlock()
+    }
+
+    func checkCancellation() throws {
+        lock.lock()
+        let cancelled = cancellationRequested
+        lock.unlock()
+        if cancelled || Task.isCancelled {
+            throw CancellationError()
+        }
+    }
+
+    /// Only the first terminal path (success, failure, timeout, or explicit
+    /// cancellation) may settle the Capacitor promise.
+    func claimCompletion() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return false }
+        completed = true
+        return true
+    }
+
+    func cancelDeadline() {
+        lock.lock()
+        let task = deadlineTask
+        deadlineTask = nil
+        lock.unlock()
+        task?.cancel()
+    }
+
+    /// Marks the operation cancelled synchronously, then returns the transport
+    /// so the caller can close it without holding the lock across an await.
+    func requestCancellation() -> SSHClient? {
+        lock.lock()
+        cancellationRequested = true
+        let client = self.client
+        let workTask = self.workTask
+        let deadlineTask = self.deadlineTask
+        lock.unlock()
+        workTask?.cancel()
+        deadlineTask?.cancel()
+        return client
+    }
+}
+
+private final class NativeUploadSessionStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var operations: [String: NativeUploadOperation] = [:]
+
+    func begin(uploadId: String, call: CAPPluginCall) -> NativeUploadOperation? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard operations[uploadId] == nil else { return nil }
+        let operation = NativeUploadOperation(uploadId: uploadId, call: call)
+        operations[uploadId] = operation
+        return operation
+    }
+
+    func operation(uploadId: String) -> NativeUploadOperation? {
+        lock.lock()
+        defer { lock.unlock() }
+        return operations[uploadId]
+    }
+
+    func finish(uploadId: String, operation: NativeUploadOperation) {
+        lock.lock()
+        if operations[uploadId] === operation {
+            operations.removeValue(forKey: uploadId)
+        }
+        lock.unlock()
+    }
+}
+
 private final class PinnedAgentSessionDelegate: NSObject, URLSessionDelegate {
     private let expectedFingerprint: String
 
@@ -1322,6 +1475,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "connectSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "disconnectSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "runCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "uploadFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelUpload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "agentRequest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeTerminal", returnType: CAPPluginReturnPromise),
@@ -1346,6 +1501,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     private let diagnosticLogQueue = DispatchQueue(label: "com.beexofficial.aiworkbench.diagnostics")
     private let commandSessions = NativeCommandSessionStore()
     private let terminalSessions = NativeTerminalSessionStore()
+    private let uploadSessions = NativeUploadSessionStore()
     private static let crc32Table: [UInt32] = {
         (0..<256).map { index in
             var value = UInt32(index)
@@ -1462,6 +1618,330 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                 "error": safeErrorMessage(error)
             ])
             call.reject(safeErrorMessage(error), "SSH_CONFIG_INVALID", error)
+        }
+    }
+
+    @objc func uploadFile(_ call: CAPPluginCall) {
+        let uploadId = (call.getString("uploadId") ?? UUID().uuidString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let platform = (call.getString("platform") ?? "linux")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let requestedPath = (call.getString("remotePath") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedDirectory = (call.getString("remoteDirectory") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (call.getString("name") ?? "file")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let remoteName = (call.getString("remoteName") ?? nativeRemoteBasename(requestedPath))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let mime = (call.getString("mime") ?? "application/octet-stream")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedSize = max(0, call.getInt("expectedSize", call.getInt("size", 0)))
+        let rawBase64 = call.getString("base64") ?? ""
+        let startedAt = Date()
+
+        guard !uploadId.isEmpty else {
+            rejectUploadCall(
+                call,
+                failure: NativeUploadFailure(
+                    message: "缺少附件上传编号。",
+                    code: "SSH_UPLOAD_INVALID",
+                    stage: "validate",
+                    retryable: false,
+                    underlyingError: nil
+                ),
+                uploadId: ""
+            )
+            return
+        }
+        guard !requestedPath.isEmpty, !remoteName.isEmpty else {
+            rejectUploadCall(
+                call,
+                failure: NativeUploadFailure(
+                    message: "附件远程路径无效。",
+                    code: "SSH_UPLOAD_INVALID",
+                    stage: "validate",
+                    retryable: false,
+                    underlyingError: nil
+                ),
+                uploadId: uploadId
+            )
+            return
+        }
+        guard !rawBase64.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            rejectUploadCall(
+                call,
+                failure: NativeUploadFailure(
+                    message: "附件内容为空。",
+                    code: "SSH_UPLOAD_INVALID",
+                    stage: "validate",
+                    retryable: false,
+                    underlyingError: nil
+                ),
+                uploadId: uploadId
+            )
+            return
+        }
+        // The SFTP server for a WSL profile is Windows OpenSSH, while the
+        // requested path belongs to the WSL filesystem. Refuse explicitly
+        // instead of silently writing to the wrong filesystem or falling back
+        // to the known-hanging giant-stdin command path.
+        guard !platform.contains("wsl") else {
+            rejectUploadCall(
+                call,
+                failure: NativeUploadFailure(
+                    message: "iPhone 暂不支持向 WSL 工作区上传附件；附件仍保留，请改用 Linux、macOS 或原生 Windows 会话。",
+                    code: "SSH_UPLOAD_WSL_UNSUPPORTED",
+                    stage: "validate",
+                    retryable: false,
+                    underlyingError: nil
+                ),
+                uploadId: uploadId
+            )
+            return
+        }
+
+        let config: SSHConnectionConfig
+        do {
+            config = try SSHConnectionConfig(call: call)
+        } catch {
+            rejectUploadCall(
+                call,
+                failure: NativeUploadFailure(
+                    message: safeErrorMessage(error),
+                    code: "SSH_UPLOAD_INVALID",
+                    stage: "validate",
+                    retryable: false,
+                    underlyingError: error
+                ),
+                uploadId: uploadId
+            )
+            return
+        }
+
+        guard let operation = uploadSessions.begin(uploadId: uploadId, call: call) else {
+            rejectUploadCall(
+                call,
+                failure: NativeUploadFailure(
+                    message: "这个附件正在上传，请勿重复提交。",
+                    code: "SSH_UPLOAD_IN_PROGRESS",
+                    stage: "validate",
+                    retryable: false,
+                    underlyingError: nil
+                ),
+                uploadId: uploadId
+            )
+            return
+        }
+
+        appendDiagnosticLog("info", "ssh.native.upload.start", fields: [
+            "uploadId": uploadId,
+            "host": config.host,
+            "port": config.port,
+            "username": config.username,
+            "platform": platform,
+            "remotePath": requestedPath,
+            "expectedSize": expectedSize,
+            "timeoutSeconds": config.commandTimeoutSeconds
+        ])
+        emitUploadProgress(
+            uploadId: uploadId,
+            state: "connecting",
+            stage: "connect",
+            bytesSent: 0,
+            totalBytes: expectedSize,
+            path: requestedPath
+        )
+
+        let workTask = Task {
+            defer {
+                self.uploadSessions.finish(uploadId: uploadId, operation: operation)
+            }
+            do {
+                let data = try self.decodeUploadBase64(rawBase64)
+                guard data.count <= 64 * 1024 * 1024 else {
+                    throw NativeUploadFailure(
+                        message: "附件过大，iPhone 单个附件最多支持 64 MB。",
+                        code: "SSH_UPLOAD_TOO_LARGE",
+                        stage: "validate",
+                        retryable: false,
+                        underlyingError: nil
+                    )
+                }
+                if expectedSize > 0, data.count != expectedSize {
+                    throw NativeUploadFailure(
+                        message: "附件内容不完整：预期 \(expectedSize) bytes，实际解码 \(data.count) bytes。",
+                        code: "SSH_UPLOAD_SIZE_MISMATCH",
+                        stage: "validate",
+                        retryable: false,
+                        underlyingError: nil
+                    )
+                }
+                try operation.checkCancellation()
+
+                let result = try await self.performNativeUpload(
+                    data: data,
+                    config: config,
+                    operation: operation,
+                    platform: platform,
+                    requestedDirectory: requestedDirectory,
+                    requestedPath: requestedPath,
+                    name: name.isEmpty ? remoteName : name,
+                    remoteName: remoteName,
+                    mime: mime.isEmpty ? "application/octet-stream" : mime
+                )
+                guard operation.claimCompletion() else {
+                    // Timeout/cancel may win in the narrow interval after the
+                    // final stat succeeded but before this worker settles the
+                    // promise. The caller has already been told the upload did
+                    // not complete, so remove that exact random final path.
+                    Task {
+                        await self.cleanupNativeUploadArtifacts(
+                            config: config,
+                            uploadId: uploadId,
+                            partPath: nil,
+                            finalPath: self.nativeSFTPPath(result.path, platform: platform)
+                        )
+                    }
+                    return
+                }
+                operation.cancelDeadline()
+                self.appendDiagnosticLog("info", "ssh.native.upload.success", fields: [
+                    "uploadId": uploadId,
+                    "host": config.host,
+                    "path": result.path,
+                    "size": result.size,
+                    "sha256": result.sha256,
+                    "durationMs": Int(Date().timeIntervalSince(startedAt) * 1000)
+                ])
+                self.emitUploadProgress(
+                    uploadId: uploadId,
+                    state: "complete",
+                    stage: "complete",
+                    bytesSent: result.size,
+                    totalBytes: result.size,
+                    path: result.path
+                )
+                call.resolve([
+                    "ok": true,
+                    "uploadId": uploadId,
+                    "path": result.path,
+                    "name": result.name,
+                    "remoteName": result.remoteName,
+                    "mime": result.mime,
+                    "size": result.size,
+                    "sha256": result.sha256
+                ])
+            } catch {
+                guard operation.claimCompletion() else { return }
+                operation.cancelDeadline()
+                let failure = self.nativeUploadFailure(error, stage: operation.stage())
+                self.appendDiagnosticLog("error", "ssh.native.upload.failed", fields: [
+                    "uploadId": uploadId,
+                    "host": config.host,
+                    "port": config.port,
+                    "username": config.username,
+                    "stage": failure.stage,
+                    "code": failure.code,
+                    "retryable": failure.retryable,
+                    "error": failure.message,
+                    "durationMs": Int(Date().timeIntervalSince(startedAt) * 1000)
+                ])
+                self.emitUploadProgress(
+                    uploadId: uploadId,
+                    state: failure.code == "SSH_UPLOAD_CANCELLED" ? "cancelled" : "failed",
+                    stage: failure.stage,
+                    bytesSent: 0,
+                    totalBytes: expectedSize,
+                    path: requestedPath
+                )
+                self.rejectUploadCall(call, failure: failure, uploadId: uploadId)
+            }
+        }
+        operation.setWorkTask(workTask)
+
+        let timeoutNanoseconds = UInt64(config.commandTimeoutSeconds) * 1_000_000_000
+        let deadlineTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            } catch {
+                return
+            }
+            guard operation.claimCompletion() else { return }
+            let stage = operation.stage()
+            let client = operation.requestCancellation()
+            let failure = NativeUploadFailure(
+                message: "附件上传超时（\(config.commandTimeoutSeconds) 秒），连接已终止，请检查网络后重试。",
+                code: "SSH_UPLOAD_TIMEOUT",
+                stage: stage,
+                retryable: stage == "connect",
+                underlyingError: nil
+            )
+            self.appendDiagnosticLog("error", "ssh.native.upload.timeout", fields: [
+                "uploadId": uploadId,
+                "host": config.host,
+                "stage": stage,
+                "timeoutSeconds": config.commandTimeoutSeconds,
+                "durationMs": Int(Date().timeIntervalSince(startedAt) * 1000)
+            ])
+            self.emitUploadProgress(
+                uploadId: uploadId,
+                state: "timeout",
+                stage: stage,
+                bytesSent: 0,
+                totalBytes: expectedSize,
+                path: requestedPath
+            )
+            // Settle immediately; closing the independent transport is cleanup,
+            // not a prerequisite for releasing the WebView promise.
+            self.rejectUploadCall(call, failure: failure, uploadId: uploadId)
+            if let client { try? await client.close() }
+        }
+        operation.setDeadlineTask(deadlineTask)
+    }
+
+    @objc func cancelUpload(_ call: CAPPluginCall) {
+        let uploadId = (call.getString("uploadId") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !uploadId.isEmpty else {
+            call.reject("缺少附件上传编号。", "SSH_UPLOAD_INVALID")
+            return
+        }
+        guard let operation = uploadSessions.operation(uploadId: uploadId) else {
+            call.resolve(["ok": true, "cancelled": false, "active": false, "uploadId": uploadId])
+            return
+        }
+        guard operation.claimCompletion() else {
+            call.resolve(["ok": true, "cancelled": false, "active": false, "uploadId": uploadId])
+            return
+        }
+
+        let stage = operation.stage()
+        let client = operation.requestCancellation()
+        let failure = NativeUploadFailure(
+            message: "附件上传已取消。",
+            code: "SSH_UPLOAD_CANCELLED",
+            stage: stage,
+            retryable: false,
+            underlyingError: nil
+        )
+        appendDiagnosticLog("warn", "ssh.native.upload.cancelled", fields: [
+            "uploadId": uploadId,
+            "stage": stage
+        ])
+        emitUploadProgress(
+            uploadId: uploadId,
+            state: "cancelled",
+            stage: stage,
+            bytesSent: 0,
+            totalBytes: 0,
+            path: ""
+        )
+        rejectUploadCall(operation.call, failure: failure, uploadId: uploadId)
+        call.resolve(["ok": true, "cancelled": true, "active": true, "uploadId": uploadId])
+        if let client {
+            Task { try? await client.close() }
         }
     }
 
@@ -2050,6 +2530,425 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    private func performNativeUpload(
+        data: Data,
+        config: SSHConnectionConfig,
+        operation: NativeUploadOperation,
+        platform: String,
+        requestedDirectory: String,
+        requestedPath: String,
+        name: String,
+        remoteName: String,
+        mime: String
+    ) async throws -> NativeUploadResult {
+        let sftpPath = nativeSFTPPath(requestedPath, platform: platform)
+        let directorySource = requestedDirectory.isEmpty
+            ? nativeRemoteDirectory(requestedPath)
+            : requestedDirectory
+        let sftpDirectory = nativeSFTPPath(directorySource, platform: platform)
+        let partPath = "\(sftpPath).\(UUID().uuidString.lowercased()).part"
+        let totalBytes = data.count
+        let sha256 = SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        var client: SSHClient?
+        var sftp: SFTPClient?
+        var partMayExist = false
+        var renameAttempted = false
+
+        do {
+            operation.setStage("connect")
+            try operation.checkCancellation()
+            let connectedClient = try await createSSHClient(config: config)
+            guard operation.attachClient(connectedClient) else {
+                try? await connectedClient.close()
+                throw CancellationError()
+            }
+            client = connectedClient
+            try operation.checkCancellation()
+
+            operation.setStage("mkdir")
+            emitUploadProgress(
+                uploadId: operation.uploadId,
+                state: "preparing",
+                stage: "mkdir",
+                bytesSent: 0,
+                totalBytes: totalBytes,
+                path: requestedPath
+            )
+            let openedSFTP = try await connectedClient.openSFTP()
+            sftp = openedSFTP
+            try await ensureNativeUploadDirectory(sftpDirectory, sftp: openedSFTP)
+            try operation.checkCancellation()
+
+            operation.setStage("upload")
+            emitUploadProgress(
+                uploadId: operation.uploadId,
+                state: "uploading",
+                stage: "upload",
+                bytesSent: 0,
+                totalBytes: totalBytes,
+                path: requestedPath
+            )
+            // Mark before sending OPEN: the server may create the UUID-scoped
+            // file and then lose its response.
+            partMayExist = true
+            let file = try await openedSFTP.openFile(
+                filePath: partPath,
+                flags: [.write, .create, .truncate, .forceCreate]
+            )
+            do {
+                let chunkSize = 256 * 1024
+                var offset = 0
+                var nextLoggedByte = min(totalBytes, 1024 * 1024)
+                while offset < totalBytes {
+                    try operation.checkCancellation()
+                    let end = min(totalBytes, offset + chunkSize)
+                    var buffer = ByteBufferAllocator().buffer(capacity: end - offset)
+                    buffer.writeBytes(data[offset..<end])
+                    try await file.write(buffer, at: UInt64(offset))
+                    offset = end
+                    emitUploadProgress(
+                        uploadId: operation.uploadId,
+                        state: "uploading",
+                        stage: "upload",
+                        bytesSent: offset,
+                        totalBytes: totalBytes,
+                        path: requestedPath
+                    )
+                    if offset >= nextLoggedByte || offset == totalBytes {
+                        appendDiagnosticLog("info", "ssh.native.upload.progress", fields: [
+                            "uploadId": operation.uploadId,
+                            "bytesSent": offset,
+                            "totalBytes": totalBytes,
+                            "progress": totalBytes > 0 ? Double(offset) / Double(totalBytes) : 1
+                        ])
+                        nextLoggedByte = min(totalBytes, nextLoggedByte + 1024 * 1024)
+                    }
+                }
+                try await file.close()
+            } catch {
+                try? await file.close()
+                throw error
+            }
+            try operation.checkCancellation()
+
+            operation.setStage("verify")
+            emitUploadProgress(
+                uploadId: operation.uploadId,
+                state: "verifying",
+                stage: "verify",
+                bytesSent: totalBytes,
+                totalBytes: totalBytes,
+                path: requestedPath
+            )
+            let partAttributes = try await openedSFTP.getAttributes(at: partPath)
+            guard partAttributes.size == UInt64(totalBytes) else {
+                throw NativeUploadFailure(
+                    message: "附件上传不完整：本地 \(totalBytes) bytes，远端临时文件 \(partAttributes.size ?? 0) bytes。",
+                    code: "SSH_UPLOAD_SIZE_MISMATCH",
+                    stage: "verify",
+                    retryable: false,
+                    underlyingError: nil
+                )
+            }
+            try operation.checkCancellation()
+
+            operation.setStage("rename")
+            emitUploadProgress(
+                uploadId: operation.uploadId,
+                state: "committing",
+                stage: "rename",
+                bytesSent: totalBytes,
+                totalBytes: totalBytes,
+                path: requestedPath
+            )
+            renameAttempted = true
+            try await openedSFTP.rename(at: partPath, to: sftpPath)
+            try operation.checkCancellation()
+
+            operation.setStage("verify")
+            let finalAttributes = try await openedSFTP.getAttributes(at: sftpPath)
+            guard finalAttributes.size == UInt64(totalBytes) else {
+                throw NativeUploadFailure(
+                    message: "附件提交后校验失败：本地 \(totalBytes) bytes，远端文件 \(finalAttributes.size ?? 0) bytes。",
+                    code: "SSH_UPLOAD_SIZE_MISMATCH",
+                    stage: "verify",
+                    retryable: false,
+                    underlyingError: nil
+                )
+            }
+
+            try? await openedSFTP.close()
+            sftp = nil
+            operation.clearClient(connectedClient)
+            try? await connectedClient.close()
+            client = nil
+            operation.setStage("complete")
+            return NativeUploadResult(
+                path: requestedPath,
+                name: name,
+                remoteName: remoteName,
+                mime: mime,
+                size: totalBytes,
+                sha256: sha256
+            )
+        } catch {
+            // Never expose a partial attachment. A timeout/cancel closes the
+            // transport first; on ordinary failures these removes execute over
+            // the still-live SFTP channel.
+            if let sftp {
+                if renameAttempted {
+                    try? await sftp.remove(at: sftpPath)
+                }
+                try? await sftp.remove(at: partPath)
+                try? await sftp.close()
+            }
+            if let client {
+                operation.clearClient(client)
+                try? await client.close()
+            }
+            if partMayExist {
+                // The server may have committed rename even when its response
+                // was lost. Cleanup therefore reconnects once and removes only
+                // this upload's UUID-scoped part and random final path. This is
+                // cleanup, never an upload retry, and it does not delay promise
+                // rejection after timeout/cancel.
+                Task {
+                    await self.cleanupNativeUploadArtifacts(
+                        config: config,
+                        uploadId: operation.uploadId,
+                        partPath: partPath,
+                        finalPath: renameAttempted ? sftpPath : nil
+                    )
+                }
+            }
+            throw error
+        }
+    }
+
+    private func cleanupNativeUploadArtifacts(
+        config: SSHConnectionConfig,
+        uploadId: String,
+        partPath: String?,
+        finalPath: String?
+    ) async {
+        appendDiagnosticLog("info", "ssh.native.upload.cleanup.start", fields: [
+            "uploadId": uploadId,
+            "hasFinalCandidate": finalPath != nil
+        ])
+        var cleanupClient: SSHClient?
+        var cleanupSFTP: SFTPClient?
+        do {
+            let client = try await createSSHClient(
+                config: config,
+                connectTimeoutOverrideSeconds: min(config.connectTimeoutSeconds, 10)
+            )
+            cleanupClient = client
+            let cleanupDeadline = Task {
+                do {
+                    try await Task.sleep(nanoseconds: 20_000_000_000)
+                } catch {
+                    return
+                }
+                try? await client.close()
+            }
+            defer { cleanupDeadline.cancel() }
+            let sftp = try await client.openSFTP()
+            cleanupSFTP = sftp
+            if let finalPath {
+                try? await sftp.remove(at: finalPath)
+            }
+            if let partPath {
+                try? await sftp.remove(at: partPath)
+            }
+            try? await sftp.close()
+            cleanupSFTP = nil
+            try? await client.close()
+            cleanupClient = nil
+            appendDiagnosticLog("info", "ssh.native.upload.cleanup.complete", fields: [
+                "uploadId": uploadId
+            ])
+        } catch {
+            try? await cleanupSFTP?.close()
+            try? await cleanupClient?.close()
+            appendDiagnosticLog("warn", "ssh.native.upload.cleanup.failed", fields: [
+                "uploadId": uploadId,
+                "error": safeErrorMessage(error)
+            ])
+        }
+    }
+
+    private func decodeUploadBase64(_ rawValue: String) throws -> Data {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload: String
+        if let comma = trimmed.firstIndex(of: ","),
+           trimmed[..<comma].lowercased().contains(";base64") {
+            payload = String(trimmed[trimmed.index(after: comma)...])
+        } else {
+            payload = trimmed
+        }
+        let compact = payload.components(separatedBy: .whitespacesAndNewlines).joined()
+        guard !compact.isEmpty, let data = Data(base64Encoded: compact) else {
+            throw NativeUploadFailure(
+                message: "附件内容不是有效的 Base64 数据。",
+                code: "SSH_UPLOAD_INVALID_BASE64",
+                stage: "validate",
+                retryable: false,
+                underlyingError: nil
+            )
+        }
+        return data
+    }
+
+    private func nativeSFTPPath(_ path: String, platform: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if platform.contains("windows") {
+            return trimmed.replacingOccurrences(of: "\\", with: "/")
+        }
+        return trimmed
+    }
+
+    private func nativeRemoteDirectory(_ path: String) -> String {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        guard let slash = normalized.lastIndex(of: "/") else { return "." }
+        if slash == normalized.startIndex { return "/" }
+        return String(normalized[..<slash])
+    }
+
+    private func nativeRemoteBasename(_ path: String) -> String {
+        path.replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? ""
+    }
+
+    private func ensureNativeUploadDirectory(_ path: String, sftp: SFTPClient) async throws {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, normalized != ".", normalized != "/" else { return }
+
+        let isAbsolute = normalized.hasPrefix("/")
+        let components = normalized.split(separator: "/").map(String.init)
+        guard !components.isEmpty else { return }
+        var current = isAbsolute ? "/" : ""
+
+        for component in components {
+            if current.isEmpty {
+                current = component
+            } else if current == "/" {
+                current += component
+            } else {
+                current += "/\(component)"
+            }
+
+            do {
+                _ = try await sftp.getAttributes(at: current)
+            } catch {
+                do {
+                    try await sftp.createDirectory(atPath: current)
+                } catch {
+                    // A concurrent upload may have created the same directory
+                    // between stat and mkdir. Only suppress mkdir's error after
+                    // a fresh stat proves that the path now exists.
+                    _ = try await sftp.getAttributes(at: current)
+                }
+            }
+        }
+    }
+
+    private func nativeUploadFailure(_ error: Error, stage: String) -> NativeUploadFailure {
+        if let failure = error as? NativeUploadFailure {
+            return failure
+        }
+        if error is CancellationError {
+            return NativeUploadFailure(
+                message: "附件上传已取消。",
+                code: "SSH_UPLOAD_CANCELLED",
+                stage: stage,
+                retryable: false,
+                underlyingError: error
+            )
+        }
+
+        let message = safeErrorMessage(error)
+        let lowercased = message.lowercased()
+        let authenticationFailure = lowercased.contains("auth")
+            || lowercased.contains("password")
+            || lowercased.contains("permission denied")
+            || lowercased.contains("host_key")
+            || lowercased.contains("host key")
+        let retryableConnectFailure = stage == "connect"
+            && !authenticationFailure
+            && (
+                lowercased.contains("timed out")
+                    || lowercased.contains("timeout")
+                    || lowercased.contains("refused")
+                    || lowercased.contains("unreachable")
+                    || lowercased.contains("no route")
+                    || lowercased.contains("network")
+                    || lowercased.contains("connection reset")
+                    || lowercased.contains("socket is not connected")
+                    || lowercased.contains("name or service not known")
+            )
+        let code: String
+        switch stage {
+        case "connect": code = "SSH_UPLOAD_CONNECT_FAILED"
+        case "mkdir": code = "SSH_UPLOAD_MKDIR_FAILED"
+        case "verify": code = "SSH_UPLOAD_VERIFY_FAILED"
+        case "rename": code = "SSH_UPLOAD_RENAME_FAILED"
+        default: code = "SSH_UPLOAD_FAILED"
+        }
+        return NativeUploadFailure(
+            message: "附件上传失败：\(message)",
+            code: code,
+            stage: stage,
+            retryable: retryableConnectFailure,
+            underlyingError: error
+        )
+    }
+
+    private func rejectUploadCall(
+        _ call: CAPPluginCall,
+        failure: NativeUploadFailure,
+        uploadId: String
+    ) {
+        call.reject(
+            failure.message,
+            failure.code,
+            failure.underlyingError,
+            [
+                "uploadId": uploadId,
+                "stage": failure.stage,
+                "retryable": failure.retryable
+            ]
+        )
+    }
+
+    private func emitUploadProgress(
+        uploadId: String,
+        state: String,
+        stage: String,
+        bytesSent: Int,
+        totalBytes: Int,
+        path: String
+    ) {
+        let progress = totalBytes > 0
+            ? min(1, max(0, Double(bytesSent) / Double(totalBytes)))
+            : (state == "complete" ? 1 : 0)
+        DispatchQueue.main.async {
+            self.notifyListeners("uploadProgress", data: [
+                "uploadId": uploadId,
+                "state": state,
+                "stage": stage,
+                "bytesSent": bytesSent,
+                "totalBytes": totalBytes,
+                "progress": progress,
+                "path": path
+            ])
+        }
+    }
+
     private func executeWithRetry(command: String, config: SSHConnectionConfig, maxResponseSize: Int, requestId: String) async throws -> String {
         do {
             return try await execute(command: command, config: config, maxResponseSize: maxResponseSize)
@@ -2131,7 +3030,10 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         return "SSH command failed: \(raw)"
     }
 
-    private func createSSHClient(config: SSHConnectionConfig) async throws -> SSHClient {
+    private func createSSHClient(
+        config: SSHConnectionConfig,
+        connectTimeoutOverrideSeconds: Int64? = nil
+    ) async throws -> SSHClient {
         var settings = SSHClientSettings(
             host: config.host,
             port: config.port,
@@ -2140,7 +3042,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             },
             hostKeyValidator: .custom(PinnedSSHHostKeyValidator(expectedFingerprint: config.sshHostKeyFingerprint))
         )
-        settings.connectTimeout = .seconds(config.connectTimeoutSeconds)
+        settings.connectTimeout = .seconds(connectTimeoutOverrideSeconds ?? config.connectTimeoutSeconds)
         return try await SSHClient.connect(to: settings)
     }
 

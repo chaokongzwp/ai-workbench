@@ -179,6 +179,7 @@ const {
   mergeImportedServers,
   mergeLocalMessageHistory,
   mergeManualWorkdirHistory,
+  mergeSessionEnvironmentVariables,
   messagesForStorage,
   messageFontFamilyOptions,
   messageFontSizeOptions,
@@ -3216,14 +3217,17 @@ function environmentEditorRowError(row) {
 
 export function EnvironmentVariablesEditor({ value, onChange }) {
   const rowSequenceRef = useRef(0);
+  const importInputRef = useRef(null);
   const lastSerializedRef = useRef(String(value || ""));
   const [rows, setRows] = useState(() => environmentEditorRows(value, "env-initial"));
+  const [importStatus, setImportStatus] = useState(null);
 
   useEffect(() => {
     const incoming = String(value || "");
     if (incoming === lastSerializedRef.current) return;
     lastSerializedRef.current = incoming;
     setRows(environmentEditorRows(incoming, `env-sync-${Date.now()}`));
+    setImportStatus(null);
   }, [value]);
 
   function commit(nextRows) {
@@ -3235,6 +3239,7 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
 
   function addRow() {
     rowSequenceRef.current += 1;
+    setImportStatus(null);
     setRows((current) => [
       ...current,
       { id: `env-new-${Date.now()}-${rowSequenceRef.current}`, name: "", value: "" },
@@ -3242,11 +3247,58 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
   }
 
   function updateRow(id, field, nextValue) {
+    setImportStatus(null);
     commit(rows.map((row) => (row.id === id ? { ...row, [field]: nextValue } : row)));
   }
 
   function removeRow(id) {
+    setImportStatus(null);
     commit(rows.filter((row) => row.id !== id));
+  }
+
+  async function importEnvironmentFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (Number(file.size || 0) > 256 * 1024) {
+      setImportStatus({ tone: "error", message: "环境变量文件不能超过 256KB。" });
+      return;
+    }
+
+    const currentText = serializeEnvironmentEditorRows(rows);
+    const current = parseSessionEnvironmentVariables(currentText);
+    if (current.errors.length) {
+      setImportStatus({ tone: "error", message: "请先修正当前环境变量中的格式错误，再导入文件。" });
+      return;
+    }
+
+    setImportStatus({ tone: "loading", message: "正在读取环境变量文件…" });
+    try {
+      const merged = mergeSessionEnvironmentVariables(currentText, await readFileAsText(file));
+      if (merged.errors.length) {
+        setImportStatus({ tone: "error", message: merged.errors.join(" ") });
+        return;
+      }
+      if (!merged.importedCount) {
+        setImportStatus({ tone: "error", message: "文件中没有可导入的环境变量。" });
+        return;
+      }
+
+      rowSequenceRef.current += 1;
+      commit(
+        merged.entries.map((entry, index) => ({
+          id: `env-import-${Date.now()}-${rowSequenceRef.current}-${index}`,
+          name: entry.name,
+          value: entry.value,
+        })),
+      );
+      setImportStatus({
+        tone: "done",
+        message: `已导入 ${merged.importedCount} 个变量；同名变量已使用文件中的值。`,
+      });
+    } catch (error) {
+      setImportStatus({ tone: "error", message: shortError(error) });
+    }
   }
 
   return (
@@ -3293,11 +3345,37 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
       ) : (
         <div className="environment-variable-empty">尚未添加环境变量</div>
       )}
-      <button type="button" className="environment-variable-add" onClick={addRow}>
-        <Plus size={15} weight="bold" aria-hidden="true" />
-        添加变量
-      </button>
-      <p className="environment-variable-hint">变量值会加密保存在当前会话中，并在下一次任务启动时生效。</p>
+      <div className="environment-variable-actions">
+        <button type="button" className="environment-variable-add" onClick={addRow}>
+          <Plus size={15} weight="bold" aria-hidden="true" />
+          添加变量
+        </button>
+        <button
+          type="button"
+          className="environment-variable-add"
+          onClick={() => importInputRef.current?.click()}
+        >
+          <UploadSimple size={15} weight="bold" aria-hidden="true" />
+          导入文件
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          hidden
+          onChange={importEnvironmentFile}
+        />
+      </div>
+      {importStatus ? (
+        <p
+          className={`environment-variable-import-status ${importStatus.tone || ""}`}
+          role={importStatus.tone === "error" ? "alert" : "status"}
+        >
+          {importStatus.message}
+        </p>
+      ) : null}
+      <p className="environment-variable-hint">
+        支持 .env、.sh、.txt 文件中的 export KEY=value、KEY=value、空值与注释；变量会加密保存并在下一次任务启动时生效。
+      </p>
     </div>
   );
 }

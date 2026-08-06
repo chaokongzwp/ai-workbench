@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { powershellCommand } from "../src/core/foundation.js";
 import {
+  base64DecodedByteLength,
   buildRemoteFileReadCommand,
   parseRemoteFilePayload,
   buildRemoteImageUploadCommand,
+  buildRemoteImageUploadTarget,
   parseRemoteImageUploadPayload,
   sanitizeUploadName,
 } from "../src/core/remoteFiles.js";
@@ -12,6 +14,8 @@ import { normalizeBase64Payload } from "../src/core/foundation.js";
 assert.equal(normalizeBase64Payload("data:text/plain;base64,5rWL6K-V"), "5rWL6K+V");
 assert.equal(normalizeBase64Payload("YQ"), "YQ==");
 assert.throws(() => normalizeBase64Payload("abc$"), /不是有效的 Base64/);
+assert.equal(base64DecodedByteLength(Buffer.from("测试").toString("base64")), 6);
+assert.equal(base64DecodedByteLength("data:text/plain;base64,YQ=="), 1);
 
 const parsedFile = parseRemoteFilePayload([
   "__AIWB_FILE_START__",
@@ -72,6 +76,17 @@ const parsedUpload = parseRemoteImageUploadPayload(
 );
 assert.equal(parsedUpload.name, "测试截图.png");
 assert.equal(parsedUpload.remoteName, "1785478826-image.png");
+
+const nativeUploadTarget = buildRemoteImageUploadTarget(
+  { platform: "linux", workdir: "/srv/workbench" },
+  { name: "测试截图.png", mime: "image/png", size: 128, base64: "ignored-by-target-builder" },
+  0,
+);
+assert.equal(nativeUploadTarget.uploadDir, "/srv/workbench/.ai-workbench/uploads");
+assert.match(nativeUploadTarget.path, /^\/srv\/workbench\/\.ai-workbench\/uploads\//);
+assert.equal(nativeUploadTarget.name, "测试截图.png");
+assert.equal(nativeUploadTarget.mime, "image/png");
+assert.equal(Object.hasOwn(nativeUploadTarget, "base64"), false);
 
 const command = powershellCommand('Write-Output "中文输出"');
 const encoded = command.match(/-EncodedCommand\s+(\S+)/)?.[1] || "";

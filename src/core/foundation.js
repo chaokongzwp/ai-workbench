@@ -45,6 +45,16 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       if (bridge?.runCommand) return bridge.runCommand(payload);
       throw new Error("浏览器预览不能直接发起 SSH，请在 iPhone 或 iPad App 中测试。");
     },
+    async uploadFile(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.uploadFile) return bridge.uploadFile(payload);
+      throw new Error("当前环境不支持原生 SFTP 文件上传。");
+    },
+    async cancelUpload(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.cancelUpload) return bridge.cancelUpload(payload);
+      return { ok: false, active: false };
+    },
     async agentRequest(payload) {
       const bridge = desktopBridge();
       if (bridge?.agentRequest) return bridge.agentRequest(payload);
@@ -1442,6 +1452,25 @@ export function parseSessionEnvironmentVariables(value) {
       entriesByName.set(name, { name, value: entryValue, line: index + 1 });
     });
   return { entries: [...entriesByName.values()], errors };
+}
+
+export function mergeSessionEnvironmentVariables(currentValue, importedValue) {
+  const current = parseSessionEnvironmentVariables(currentValue);
+  if (current.errors.length) {
+    return { entries: current.entries, errors: current.errors, errorSource: "current", importedCount: 0 };
+  }
+  const imported = parseSessionEnvironmentVariables(importedValue);
+  if (imported.errors.length) {
+    return { entries: current.entries, errors: imported.errors, errorSource: "imported", importedCount: 0 };
+  }
+  const entriesByName = new Map(current.entries.map((entry) => [entry.name, entry]));
+  imported.entries.forEach((entry) => entriesByName.set(entry.name, entry));
+  return {
+    entries: [...entriesByName.values()],
+    errors: [],
+    errorSource: "",
+    importedCount: imported.entries.length,
+  };
 }
 
 export function sessionEnvironmentBashScript(value) {

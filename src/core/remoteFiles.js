@@ -407,13 +407,40 @@ export function imageUploadRemoteName(attachment, index = 0) {
   return `${Date.now()}-${index + 1}-${suffix}-${safeName}`;
 }
 
-export function buildRemoteImageUploadCommand(profile, attachment, index = 0) {
+export function buildRemoteImageUploadTarget(profile, attachment, index = 0) {
   const remoteName = imageUploadRemoteName(attachment, index);
   const uploadDir = joinRemotePath(profile, ".ai-workbench/uploads");
   const remotePath = joinRemotePath(profile, `.ai-workbench/uploads/${remoteName}`);
-  const base64 = cleanBase64Payload(attachment?.base64);
   const mime = String(attachment?.mime || attachment?.type || "image/png");
   const originalName = String(attachment?.name || remoteName);
+  return {
+    uploadDir,
+    path: remotePath,
+    remoteName,
+    name: originalName,
+    mime,
+    size: Number(attachment?.size || 0) || 0,
+  };
+}
+
+export function base64DecodedByteLength(value) {
+  const base64 = cleanBase64Payload(value);
+  if (!base64) return 0;
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+export function buildRemoteImageUploadCommand(profile, attachment, index = 0) {
+  const target = buildRemoteImageUploadTarget(profile, attachment, index);
+  const {
+    uploadDir,
+    path: remotePath,
+    remoteName,
+    name: originalName,
+    mime,
+    size,
+  } = target;
+  const base64 = cleanBase64Payload(attachment?.base64);
 
   if (isWindowsProfile(profile)) {
     const uploadScript = `
@@ -442,7 +469,7 @@ Write-Output "__AIWB_UPLOAD_END__"
       path: remotePath,
       name: originalName,
       mime,
-      size: Number(attachment?.size || 0) || 0,
+      size,
     };
   }
 
@@ -468,7 +495,7 @@ printf '__AIWB_UPLOAD_END__\\n'
       path: remotePath,
       name: originalName,
       mime,
-      size: Number(attachment?.size || 0) || 0,
+      size,
       command: powershellCommand(`
 $AIWB_DISTRO = ${psQuote(wslDistro)}
 if (-not $AIWB_DISTRO) { throw "请先重新连接并扫描 Windows 机器，确定要使用的 WSL Linux 发行版。" }
@@ -504,7 +531,7 @@ if ($AIWB_RUN.ExitCode -ne 0) {
     path: remotePath,
     name: originalName,
     mime,
-    size: Number(attachment?.size || 0) || 0,
+    size,
     command: bashCommand(bashUploadScript),
     stdin: base64,
   };
