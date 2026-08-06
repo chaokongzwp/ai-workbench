@@ -50,6 +50,28 @@ assert.match(updaterSource, /join\(home, "http\.pid"\)/);
 assert.match(updaterSource, /function managedServiceConfigured\(\)/);
 assert.match(updaterSource, /function activeTaskCount\(\)/);
 assert.match(updaterSource, /reason: "active_tasks"/);
+assert.match(updaterSource, /function clearFinishedOrAbandonedRuntimeUpdateFence\(\)/);
+assert.match(updaterSource, /function runtimeUpdateFenceTransactionCommitted\(\)/);
+assert.match(updaterSource, /committed\.epoch === fence\.epoch/);
+assert.match(updaterSource, /ownerPid > 1 && processAlive\(ownerPid\)/);
+assert.match(updaterSource, /if \(!transactionCommitted\) return false/);
+assert.match(updaterSource, /fence\.state === "draining"/);
+assert.match(updaterSource, /committed\.http_sha256 === fileSha256/);
+assert.match(updaterSource, /committed\.updater_sha256 === fileSha256/);
+const acquireUpdateLockSource = updaterSource.slice(
+  updaterSource.indexOf("function acquireUpdateLock()"),
+  updaterSource.indexOf("function releaseUpdateLock()"),
+);
+assert.match(acquireUpdateLockSource, /if \(sameOwner\) return false/);
+assert.doesNotMatch(acquireUpdateLockSource, /committedTakeover/);
+assert.match(acquireUpdateLockSource, /Date\.now\(\) - fileModifiedAtMs\(updateLockPath\) < lockAcquisitionGraceMs/);
+const updaterLockIndex = updaterSource.indexOf("if (!acquireUpdateLock())");
+const abandonedFenceRecoveryIndex = updaterSource.indexOf("clearFinishedOrAbandonedRuntimeUpdateFence();", updaterLockIndex);
+const updaterFetchIndex = updaterSource.indexOf("const result = await updateOnce();", updaterLockIndex);
+assert.ok(
+  updaterLockIndex >= 0 && abandonedFenceRecoveryIndex > updaterLockIndex && abandonedFenceRecoveryIndex < updaterFetchIndex,
+  "the updater must clear a dead owner's generation fence while holding the update lock",
+);
 assert.match(updaterSource, /function agentPlatform\(\)/);
 assert.match(updaterSource, /body\?\.platforms\?\.\[platform\]\?\.manifestUrl/);
 assert.match(updaterSource, /process\.platform === "darwin"/);
@@ -69,10 +91,40 @@ assert.match(directRuntimeSource, /resolve\(directRuntimePath\)/);
 assert.doesNotMatch(directRuntimeSource, /new URL\(import\.meta\.url\)\.pathname/);
 assert.match(directRuntimeSource, /control\(\["--version"\]\)/);
 assert.match(directRuntimeSource, /if \(runtime === "darwin"\) return "macos"/);
+assert.match(directRuntimeSource, /!existsSync\(join\(agentHome, "runtime-update\.fence"\)\)/);
+assert.match(directRuntimeSource, /generation\.state === "committed"/);
 
 assert.match(unixAgentSource, /aiwb_service_run\(\)/);
 assert.match(unixAgentSource, /<string>service-run<\/string>/);
 assert.match(unixAgentSource, /ExecStart=\$AIWB_HOME\/aiwbctl service-run/);
+assert.match(unixAgentSource, /WantedBy=default\.target/);
+assert.match(unixAgentSource, /systemctl --user enable --now ai-workbench-agent\.service/);
+assert.match(unixAgentSource, /loginctl enable-linger/);
+const launchdLoadedBlock = unixAgentSource.slice(
+  unixAgentSource.indexOf('if [ "$launchd_loaded" = "1" ]'),
+  unixAgentSource.indexOf('__AIWB_AGENT_SERVICE__launchd-fallback'),
+);
+const macInstallBlock = unixAgentSource.slice(
+  unixAgentSource.indexOf("aiwb_install_service()"),
+  unixAgentSource.indexOf('if ! command -v systemctl', unixAgentSource.indexOf("aiwb_install_service()")),
+);
+assert.doesNotMatch(
+  macInstallBlock,
+  /launchctl bootout/,
+  "macOS service installation must be idempotent when update triggers overlap",
+);
+assert.doesNotMatch(
+  launchdLoadedBlock,
+  /launchctl bootout/,
+  "a slow runtime restart must not unload a valid macOS auto-start service",
+);
+assert.match(
+  unixAgentSource,
+  /if \[ -f "\$AIWB_LAUNCH_AGENT_PLIST" \]; then\s*launchctl bootout/,
+  "an isolated Agent home must not unload another instance's macOS service",
+);
+assert.match(updaterSource, /\.config", "systemd", "user", "ai-workbench-agent\.service/);
+assert.match(updaterSource, /\["--user", "is-active", "--quiet", "ai-workbench-agent\.service"\]/);
 assert.match(windowsAgentSource, /async function serviceRun\(\)/);
 assert.match(windowsAgentSource, /process\.argv\[1\], "service-run"/);
 assert.match(windowsAgentSource, /if \(installedVersion\(\) !== VERSION\)/);

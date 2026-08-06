@@ -63,6 +63,9 @@ const generationReplacement = powershell.indexOf("Source = $AIWB_GENERATION_STAG
 const firstReplacement = powershell.indexOf("Move-Item -LiteralPath $item.Source", lock);
 const releaseFence = powershell.indexOf("Exit-AiwbInstallFence", firstReplacement);
 const installService = powershell.indexOf("& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service", releaseFence);
+const delegatedInstallService = powershell.indexOf("& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service $PID", releaseFence);
+const deferredHandoff = powershell.indexOf("if (@(20, 21, 22) -contains $AIWB_INSTALL_EXIT_CODE)", installService);
+const failedHandoff = powershell.indexOf("if ($AIWB_INSTALL_EXIT_CODE -ne 0)", installService);
 assert.ok(directStage > 0 && updaterStage > directStage);
 assert.ok(lock > updaterStage, "all runtime artifacts must be staged before taking the replacement lock");
 assert.ok(fence > lock, "the update fence must be published only while tick.lock is held");
@@ -73,6 +76,13 @@ assert.ok(updaterReplacement > directReplacement && generationReplacement > upda
 assert.ok(firstReplacement > lock, "replacement must happen only after the task-launch lock is held");
 assert.ok(releaseFence > firstReplacement, "the fence must remain until the generation commit loop finishes");
 assert.ok(installService > releaseFence, "the committed generation must be visible before the new supervisor starts");
+assert.equal(installService, delegatedInstallService, "the new control must inherit the verified parent tick.lock owner");
+assert.ok(deferredHandoff > installService && failedHandoff > deferredHandoff);
+assert.match(
+  powershell.slice(deferredHandoff, failedHandoff),
+  /Remove-AiwbReplacementBackups[\s\S]*__AIWB_AGENT_INSTALL_RESULT__deferred[\s\S]*supervisor_restart_pending[\s\S]*exit 20/,
+  "a final active-task race must keep the committed generation for the updater instead of rolling back to an unsafe control",
+);
 assert.ok(
   powershell.lastIndexOf("Remove-AiwbReplacementBackups") > powershell.indexOf("$AIWB_INSTALL_EXIT_CODE = $LASTEXITCODE"),
   "backups must remain available until supervisor startup has succeeded",

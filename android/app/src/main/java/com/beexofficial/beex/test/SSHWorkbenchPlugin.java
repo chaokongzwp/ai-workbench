@@ -71,6 +71,13 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
+import okio.ByteString;
+
 @CapacitorPlugin(name = "SSHWorkbench")
 public class SSHWorkbenchPlugin extends Plugin {
     private static final String PROFILE_PREFS = "ai_workbench_profile";
@@ -82,9 +89,14 @@ public class SSHWorkbenchPlugin extends Plugin {
     private final ConcurrentHashMap<String, String> commandSessionFingerprints = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, PooledCommandConnection> commandConnections = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, TerminalSession> terminalSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, HttpURLConnection> agentUploadConnections = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AgentEventStreamHandle> agentEventStreams = new ConcurrentHashMap<>();
+    private final Set<String> cancelledAgentUploads = ConcurrentHashMap.newKeySet();
 
     @Override
     protected void handleOnDestroy() {
+        for (AgentEventStreamHandle stream : agentEventStreams.values()) stream.stop();
+        agentEventStreams.clear();
         for (TerminalSession terminal : terminalSessions.values()) {
             terminal.close();
         }
@@ -94,6 +106,9 @@ public class SSHWorkbenchPlugin extends Plugin {
         commandConnections.clear();
         commandSessionFingerprints.clear();
         terminalSessions.clear();
+        for (HttpURLConnection connection : agentUploadConnections.values()) connection.disconnect();
+        agentUploadConnections.clear();
+        cancelledAgentUploads.clear();
         connectionScheduler.shutdownNow();
         executor.shutdownNow();
         super.handleOnDestroy();
@@ -246,6 +261,250 @@ public class SSHWorkbenchPlugin extends Plugin {
                 if (connection != null) connection.disconnect();
             }
         });
+    }
+
+    private final class AgentEventStreamHandle {
+        final OkHttpClient client;
+        final AtomicBoolean stopped = new AtomicBoolean(false);
+        volatile WebSocket socket;
+
+        AgentEventStreamHandle(OkHttpClient client) { this.client = client; }
+
+        void stop() {
+            if (!stopped.compareAndSet(false, true)) return;
+            WebSocket active = socket;
+            if (active != null) active.close(1000, "client-stop");
+            client.dispatcher().executorService().shutdown();
+            client.connectionPool().evictAll();
+        }
+    }
+
+    private X509TrustManager pinnedAgentTrustManager(String expectedFingerprint) throws Exception {
+        final byte[] expected = Base64.decode(expectedFingerprint, Base64.DEFAULT);
+        return new X509TrustManager() {
+            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
+            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                try {
+                    if (chain == null || chain.length == 0) throw new CertificateException("Agent TLS 证书缺失。");
+                    byte[] actual = MessageDigest.getInstance("SHA-256").digest(chain[0].getEncoded());
+                    if (!MessageDigest.isEqual(expected, actual)) {
+                        throw new CertificateException("Agent TLS 证书指纹不匹配，已阻止事件流连接。");
+                    }
+                } catch (CertificateException error) {
+                    throw error;
+                } catch (Exception error) {
+                    throw new CertificateException("Agent TLS 证书校验失败。", error);
+                }
+            }
+        };
+    }
+
+    private void emitAgentEvent(String streamId, String state, Object event, Throwable error) {
+        JSObject payload = new JSObject();
+        payload.put("streamId", streamId);
+        payload.put("state", state);
+        if (event != null) payload.put("event", event);
+        if (error != null) {
+            payload.put("error", error instanceof Exception ? safeError((Exception) error) : stringValue(error.getMessage()));
+        }
+        notifyTerminalListeners("agentEvent", payload);
+    }
+
+    @PluginMethod
+    public void startAgentEventStream(PluginCall call) {
+        String streamId = stringValue(call.getString("streamId")).trim();
+        String endpoint = stringValue(call.getString("endpoint")).trim();
+        String accessToken = stringValue(call.getString("accessToken")).trim();
+        String expectedFingerprint = stringValue(call.getString("tlsFingerprint"))
+            .replaceFirst("(?i)^sha256/", "").trim();
+        if (streamId.isEmpty() || endpoint.isEmpty() || accessToken.isEmpty() || expectedFingerprint.isEmpty()) {
+            call.reject("Agent 事件流配置不完整。", "AGENT_EVENT_INVALID");
+            return;
+        }
+        if (!endpoint.toLowerCase(Locale.ROOT).startsWith("https://")) {
+            call.reject("Agent 事件流必须使用 TLS。", "AGENT_EVENT_TLS_REQUIRED");
+            return;
+        }
+        try {
+            AgentEventStreamHandle previous = agentEventStreams.remove(streamId);
+            if (previous != null) previous.stop();
+            X509TrustManager trustManager = pinnedAgentTrustManager(expectedFingerprint);
+            SSLContext context = SSLContext.getInstance("TLS");
+            context.init(null, new TrustManager[] { trustManager }, new SecureRandom());
+            OkHttpClient client = new OkHttpClient.Builder()
+                .sslSocketFactory(context.getSocketFactory(), trustManager)
+                .hostnameVerifier((hostname, session) -> true)
+                .readTimeout(0, TimeUnit.MILLISECONDS)
+                .build();
+            AgentEventStreamHandle handle = new AgentEventStreamHandle(client);
+            agentEventStreams.put(streamId, handle);
+            String url = endpoint.replaceFirst("(?i)^https://", "wss://").replaceAll("/+$", "") + "/v1/events";
+            Request request = new Request.Builder()
+                .url(url)
+                .header("Sec-WebSocket-Protocol", "aiwb.v1, bearer." + accessToken)
+                .build();
+            handle.socket = client.newWebSocket(request, new WebSocketListener() {
+                @Override public void onOpen(WebSocket webSocket, Response response) {
+                    if (!"aiwb.v1".equals(response.header("Sec-WebSocket-Protocol"))) {
+                        webSocket.close(1002, "protocol-mismatch");
+                        emitAgentEvent(streamId, "error", null, new IOException("Agent WebSocket 协议不匹配。"));
+                        return;
+                    }
+                    emitAgentEvent(streamId, "open", null, null);
+                }
+
+                @Override public void onMessage(WebSocket webSocket, String text) {
+                    try {
+                        emitAgentEvent(streamId, "event", new JSONObject(text), null);
+                    } catch (JSONException error) {
+                        webSocket.close(1007, "invalid-json");
+                        emitAgentEvent(streamId, "error", null, error);
+                    }
+                }
+
+                @Override public void onMessage(WebSocket webSocket, ByteString bytes) {
+                    onMessage(webSocket, bytes.string(StandardCharsets.UTF_8));
+                }
+
+                @Override public void onClosed(WebSocket webSocket, int code, String reason) {
+                    AgentEventStreamHandle removed = agentEventStreams.remove(streamId);
+                    if (removed != null) removed.stop();
+                    emitAgentEvent(streamId, "closed", null, null);
+                }
+
+                @Override public void onFailure(WebSocket webSocket, Throwable throwable, Response response) {
+                    AgentEventStreamHandle removed = agentEventStreams.remove(streamId);
+                    if (removed != null) removed.stop();
+                    emitAgentEvent(streamId, "error", null, throwable);
+                }
+            });
+            JSObject result = new JSObject();
+            result.put("ok", true);
+            result.put("streamId", streamId);
+            result.put("state", "connecting");
+            call.resolve(result);
+        } catch (Exception error) {
+            AgentEventStreamHandle failed = agentEventStreams.remove(streamId);
+            if (failed != null) failed.stop();
+            call.reject(safeError(error), "AGENT_EVENT_FAILED", error);
+        }
+    }
+
+    @PluginMethod
+    public void stopAgentEventStream(PluginCall call) {
+        String streamId = stringValue(call.getString("streamId")).trim();
+        AgentEventStreamHandle stream = agentEventStreams.remove(streamId);
+        if (stream != null) stream.stop();
+        JSObject result = new JSObject();
+        result.put("ok", true);
+        result.put("stopped", stream != null);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void agentUpload(PluginCall call) {
+        String endpoint = stringValue(call.getString("endpoint")).trim();
+        String accessToken = stringValue(call.getString("accessToken")).trim();
+        String uploadId = stringValue(call.getString("uploadId")).trim();
+        String workdir = stringValue(call.getString("workdir")).trim();
+        String name = stringValue(call.getString("name")).trim();
+        String mime = stringValue(call.getString("mime")).trim();
+        String expectedFingerprint = stringValue(call.getString("tlsFingerprint"))
+            .replaceFirst("(?i)^sha256/", "").trim();
+        String encoded = stringValue(call.getString("base64")).replaceAll("\\s+", "");
+        if (endpoint.isEmpty() || accessToken.isEmpty() || uploadId.isEmpty() || workdir.isEmpty() || encoded.isEmpty()) {
+            call.reject("Agent 附件上传参数不完整。", "AGENT_UPLOAD_INVALID");
+            return;
+        }
+        final byte[] content;
+        try {
+            content = Base64.decode(encoded, Base64.DEFAULT);
+        } catch (Exception error) {
+            call.reject("附件编码无效。", "AGENT_UPLOAD_INVALID", error);
+            return;
+        }
+        if (call.getInt("size", content.length) != content.length) {
+            call.reject("附件读取不完整，请重新选择文件。", "AGENT_UPLOAD_INVALID");
+            return;
+        }
+        if (agentUploadConnections.containsKey(uploadId)) {
+            call.reject("相同编号的附件正在上传。", "AGENT_UPLOAD_DUPLICATE");
+            return;
+        }
+        executor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL base = new URL(endpoint.endsWith("/") ? endpoint : endpoint + "/");
+                URL url = new URL(base, "v1/files");
+                if (!"https".equalsIgnoreCase(url.getProtocol()) || expectedFingerprint.isEmpty()) {
+                    throw new IOException("Agent 安全上传必须使用带证书指纹的 HTTPS。");
+                }
+                connection = (HttpURLConnection) url.openConnection();
+                configurePinnedHttps((HttpsURLConnection) connection, expectedFingerprint);
+                int timeoutMs = Math.max(1_000, Math.min(call.getInt("timeoutMs", 240_000), 300_000));
+                connection.setConnectTimeout(timeoutMs);
+                connection.setReadTimeout(timeoutMs);
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(content.length);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+                connection.setRequestProperty("Content-Type", "application/octet-stream");
+                connection.setRequestProperty("X-AIWB-Upload-Id", uploadId);
+                connection.setRequestProperty("X-AIWB-Workdir", base64Url(workdir));
+                connection.setRequestProperty("X-AIWB-File-Name", base64Url(name.isEmpty() ? "attachment.bin" : name));
+                connection.setRequestProperty("X-AIWB-File-Mime", mime.isEmpty() ? "application/octet-stream" : mime);
+                connection.setRequestProperty("X-AIWB-Content-SHA256", sha256Hex(content));
+                agentUploadConnections.put(uploadId, connection);
+                try (OutputStream output = connection.getOutputStream()) {
+                    int offset = 0;
+                    while (offset < content.length) {
+                        if (cancelledAgentUploads.contains(uploadId)) throw new IOException("附件上传已取消。");
+                        int count = Math.min(64 * 1024, content.length - offset);
+                        output.write(content, offset, count);
+                        offset += count;
+                        JSObject progress = new JSObject();
+                        progress.put("uploadId", uploadId);
+                        progress.put("state", "uploading");
+                        progress.put("bytesSent", offset);
+                        progress.put("totalBytes", content.length);
+                        progress.put("progress", content.length == 0 ? 1 : (double) offset / content.length);
+                        notifyListeners("uploadProgress", progress);
+                    }
+                }
+                int status = connection.getResponseCode();
+                InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                JSObject result = new JSObject();
+                result.put("status", status);
+                result.put("body", stream == null ? "" : readStream(stream));
+                call.resolve(result);
+            } catch (Exception error) {
+                String code = cancelledAgentUploads.contains(uploadId) ? "AGENT_UPLOAD_CANCELLED" : "AGENT_UPLOAD_FAILED";
+                call.reject(cancelledAgentUploads.contains(uploadId) ? "附件上传已取消。" : safeError(error), code, error);
+            } finally {
+                agentUploadConnections.remove(uploadId);
+                cancelledAgentUploads.remove(uploadId);
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
+
+    @PluginMethod
+    public void cancelAgentUpload(PluginCall call) {
+        String uploadId = stringValue(call.getString("uploadId")).trim();
+        HttpURLConnection connection = agentUploadConnections.get(uploadId);
+        boolean active = connection != null;
+        if (active) {
+            cancelledAgentUploads.add(uploadId);
+            connection.disconnect();
+        }
+        JSObject result = new JSObject();
+        result.put("ok", true);
+        result.put("cancelled", active);
+        result.put("active", active);
+        result.put("uploadId", uploadId);
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -1325,6 +1584,17 @@ public class SSHWorkbenchPlugin extends Plugin {
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             return output.toString(StandardCharsets.UTF_8.name());
         }
+    }
+
+    private static String base64Url(String value) {
+        return Base64.encodeToString(value.getBytes(StandardCharsets.UTF_8), Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+    }
+
+    private static String sha256Hex(byte[] value) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(value);
+        StringBuilder result = new StringBuilder(digest.length * 2);
+        for (byte item : digest) result.append(String.format(Locale.ROOT, "%02x", item & 0xff));
+        return result.toString();
     }
 
     private static void configurePinnedHttps(HttpsURLConnection connection, String expectedFingerprint) throws Exception {

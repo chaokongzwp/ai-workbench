@@ -45,6 +45,7 @@ export function NativeWorkbenchShell({
   wakeError,
   wakePhrases,
   messages,
+  conversationRevealMessageId,
   conversationClassName,
   conversationScrollRef,
   handleConversationScroll,
@@ -69,6 +70,7 @@ export function NativeWorkbenchShell({
   remoteDirectory,
   onSelectServer,
   onReorderServer,
+  onSortServer,
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
@@ -165,6 +167,7 @@ export function NativeWorkbenchShell({
   } = useProgressiveMessages({
     messages,
     sessionId: activeServerId,
+    revealMessageId: conversationRevealMessageId,
     onScroll: handleConversationScroll,
   });
 
@@ -234,6 +237,7 @@ export function NativeWorkbenchShell({
           closeIfNeeded();
         }}
         onReorderServer={onReorderServer}
+        onSortServer={onSortServer}
         onConfigureServer={(serverId) => {
           onConfigureServer?.(serverId);
           closeIfNeeded();

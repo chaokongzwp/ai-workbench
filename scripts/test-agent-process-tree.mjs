@@ -55,6 +55,20 @@ async function waitFor(read, predicate, timeoutMs = 5_000) {
   throw new Error("Timed out waiting for Agent process-tree state.");
 }
 
+async function mkdirWhenAvailable(directory, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(directory);
+      return;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting to create test lock: ${directory}`);
+}
+
 try {
   await mkdir(taskDir, { recursive: true });
   await mkdir(watchdogTaskDir, { recursive: true });
@@ -88,7 +102,7 @@ try {
   await waitFor(async () => String(processAlive(replacementDaemonPid)), (value) => value === "false");
 
   const tickLock = join(agentHome, "tick.lock");
-  await mkdir(tickLock);
+  await mkdirWhenAvailable(tickLock);
   await writeFile(join(tickLock, "owner.pid"), `${process.pid}\n`);
   await writeFile(join(tickLock, "started_at"), "2000-01-01T00:00:00Z\n");
   const oldTime = new Date(Date.now() - 120_000);

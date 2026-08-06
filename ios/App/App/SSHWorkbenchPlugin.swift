@@ -1467,6 +1467,159 @@ private final class PinnedAgentSessionDelegate: NSObject, URLSessionDelegate {
     }
 }
 
+private final class PinnedAgentWebSocketDelegate: NSObject, URLSessionDelegate, URLSessionWebSocketDelegate {
+    private let expectedFingerprint: String
+    private let opened: () -> Void
+    private let closed: (Error?) -> Void
+
+    init(expectedFingerprint: String, opened: @escaping () -> Void, closed: @escaping (Error?) -> Void) {
+        self.expectedFingerprint = expectedFingerprint
+        self.opened = opened
+        self.closed = closed
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust,
+              let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let actualFingerprint = Data(SHA256.hash(data: SecCertificateCopyData(certificate) as Data)).base64EncodedString()
+        guard !expectedFingerprint.isEmpty, actualFingerprint == expectedFingerprint else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didOpenWithProtocol protocol: String?
+    ) {
+        guard `protocol` == "aiwb.v1" else {
+            webSocketTask.cancel(with: .protocolError, reason: Data("Agent WebSocket 协议不匹配。".utf8))
+            return
+        }
+        opened()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+        reason: Data?
+    ) {
+        closed(nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error { closed(error) }
+    }
+}
+
+private final class NativeAgentEventStream {
+    let session: URLSession
+    let task: URLSessionWebSocketTask
+    let delegate: PinnedAgentWebSocketDelegate
+    var stopped = false
+
+    init(session: URLSession, task: URLSessionWebSocketTask, delegate: PinnedAgentWebSocketDelegate) {
+        self.session = session
+        self.task = task
+        self.delegate = delegate
+    }
+}
+
+private final class PinnedAgentUploadDelegate: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
+    private let expectedFingerprint: String
+    private let progress: (Int64, Int64) -> Void
+    private let completion: (Data, HTTPURLResponse?, Error?) -> Void
+    private var responseData = Data()
+
+    init(
+        expectedFingerprint: String,
+        progress: @escaping (Int64, Int64) -> Void,
+        completion: @escaping (Data, HTTPURLResponse?, Error?) -> Void
+    ) {
+        self.expectedFingerprint = expectedFingerprint
+        self.progress = progress
+        self.completion = completion
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust,
+              let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let actualFingerprint = Data(SHA256.hash(data: SecCertificateCopyData(certificate) as Data)).base64EncodedString()
+        guard !expectedFingerprint.isEmpty, actualFingerprint == expectedFingerprint else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        responseData.append(data)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        progress(totalBytesSent, totalBytesExpectedToSend)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        completion(responseData, task.response as? HTTPURLResponse, error)
+    }
+}
+
+private final class AgentUploadSessionStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [String: (URLSession, URLSessionUploadTask)] = [:]
+
+    func insert(uploadId: String, session: URLSession, task: URLSessionUploadTask) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard sessions[uploadId] == nil else { return false }
+        sessions[uploadId] = (session, task)
+        return true
+    }
+
+    func finish(uploadId: String) {
+        lock.lock()
+        let entry = sessions.removeValue(forKey: uploadId)
+        lock.unlock()
+        entry?.0.finishTasksAndInvalidate()
+    }
+
+    func cancel(uploadId: String) -> Bool {
+        lock.lock()
+        let entry = sessions.removeValue(forKey: uploadId)
+        lock.unlock()
+        guard let entry else { return false }
+        entry.1.cancel()
+        entry.0.invalidateAndCancel()
+        return true
+    }
+}
+
 @objc(SSHWorkbenchPlugin)
 public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "SSHWorkbenchPlugin"
@@ -1478,6 +1631,10 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "uploadFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancelUpload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "agentRequest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startAgentEventStream", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopAgentEventStream", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "agentUpload", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelAgentUpload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resizeTerminal", returnType: CAPPluginReturnPromise),
@@ -1502,6 +1659,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     private let commandSessions = NativeCommandSessionStore()
     private let terminalSessions = NativeTerminalSessionStore()
     private let uploadSessions = NativeUploadSessionStore()
+    private let agentUploadSessions = AgentUploadSessionStore()
+    private var agentEventStreams: [String: NativeAgentEventStream] = [:]
     private static let crc32Table: [UInt32] = {
         (0..<256).map { index in
             var value = UInt32(index)
@@ -1945,6 +2104,118 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    private func finishAgentEventStream(streamId: String, error: Error? = nil, notify: Bool = true) {
+        guard let stream = agentEventStreams.removeValue(forKey: streamId) else { return }
+        stream.stopped = true
+        stream.task.cancel(with: .goingAway, reason: nil)
+        stream.session.invalidateAndCancel()
+        if notify {
+            notifyListeners("agentEvent", data: [
+                "streamId": streamId,
+                "state": error == nil ? "closed" : "error",
+                "error": error.map { safeErrorMessage($0) } ?? ""
+            ])
+        }
+    }
+
+    private func receiveAgentEvent(streamId: String, stream: NativeAgentEventStream) {
+        stream.task.receive { [weak self, weak stream] result in
+            DispatchQueue.main.async {
+                guard let self, let stream, self.agentEventStreams[streamId] === stream, !stream.stopped else { return }
+                switch result {
+                case .failure(let error):
+                    self.finishAgentEventStream(streamId: streamId, error: error)
+                case .success(let message):
+                    let data: Data
+                    switch message {
+                    case .string(let value): data = Data(value.utf8)
+                    case .data(let value): data = value
+                    @unknown default:
+                        self.receiveAgentEvent(streamId: streamId, stream: stream)
+                        return
+                    }
+                    do {
+                        guard let event = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                            throw NSError(domain: "AIWorkbenchAgentEvent", code: 1, userInfo: [NSLocalizedDescriptionKey: "Agent 事件内容无效。"])
+                        }
+                        self.notifyListeners("agentEvent", data: [
+                            "streamId": streamId,
+                            "state": "event",
+                            "event": event
+                        ])
+                        self.receiveAgentEvent(streamId: streamId, stream: stream)
+                    } catch {
+                        self.finishAgentEventStream(streamId: streamId, error: error)
+                    }
+                }
+            }
+        }
+    }
+
+    @objc func startAgentEventStream(_ call: CAPPluginCall) {
+        let streamId = (call.getString("streamId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint = (call.getString("endpoint") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let accessToken = (call.getString("accessToken") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedFingerprint = (call.getString("tlsFingerprint") ?? "")
+            .replacingOccurrences(of: "sha256/", with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !streamId.isEmpty, !accessToken.isEmpty, !expectedFingerprint.isEmpty,
+              var components = URLComponents(string: endpoint) else {
+            call.reject("Agent 事件流配置不完整。", "AGENT_EVENT_INVALID")
+            return
+        }
+        guard components.scheme?.lowercased() == "https" else {
+            call.reject("Agent 事件流必须使用 TLS。", "AGENT_EVENT_TLS_REQUIRED")
+            return
+        }
+        components.scheme = "wss"
+        components.path = "/v1/events"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else {
+            call.reject("Agent 事件流地址无效。", "AGENT_EVENT_INVALID")
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.finishAgentEventStream(streamId: streamId, notify: false)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            request.setValue("aiwb.v1, bearer.\(accessToken)", forHTTPHeaderField: "Sec-WebSocket-Protocol")
+
+            let delegate = PinnedAgentWebSocketDelegate(
+                expectedFingerprint: expectedFingerprint,
+                opened: { [weak self] in
+                    DispatchQueue.main.async {
+                        guard let self, self.agentEventStreams[streamId] != nil else { return }
+                        self.notifyListeners("agentEvent", data: ["streamId": streamId, "state": "open"])
+                    }
+                },
+                closed: { [weak self] error in
+                    DispatchQueue.main.async {
+                        self?.finishAgentEventStream(streamId: streamId, error: error)
+                    }
+                }
+            )
+            let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+            let task = session.webSocketTask(with: request)
+            let stream = NativeAgentEventStream(session: session, task: task, delegate: delegate)
+            self.agentEventStreams[streamId] = stream
+            task.resume()
+            self.receiveAgentEvent(streamId: streamId, stream: stream)
+            call.resolve(["ok": true, "streamId": streamId, "state": "connecting"])
+        }
+    }
+
+    @objc func stopAgentEventStream(_ call: CAPPluginCall) {
+        let streamId = (call.getString("streamId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        DispatchQueue.main.async {
+            let stopped = self.agentEventStreams[streamId] != nil
+            self.finishAgentEventStream(streamId: streamId, notify: false)
+            call.resolve(["ok": true, "stopped": stopped])
+        }
+    }
+
     @objc func agentRequest(_ call: CAPPluginCall) {
         guard let endpoint = call.getString("endpoint"), let baseURL = URL(string: endpoint),
               let accessToken = call.getString("accessToken"), !accessToken.isEmpty else {
@@ -2000,6 +2271,93 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
                 "body": String(data: data ?? Data(), encoding: .utf8) ?? ""
             ])
         }.resume()
+    }
+
+    private func agentUploadHeader(_ value: String) -> String {
+        Data(value.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    @objc func agentUpload(_ call: CAPPluginCall) {
+        let endpoint = (call.getString("endpoint") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let accessToken = (call.getString("accessToken") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let uploadId = (call.getString("uploadId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let workdir = (call.getString("workdir") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (call.getString("name") ?? "attachment.bin").trimmingCharacters(in: .whitespacesAndNewlines)
+        let mime = (call.getString("mime") ?? "application/octet-stream").trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedFingerprint = (call.getString("tlsFingerprint") ?? "")
+            .replacingOccurrences(of: "sha256/", with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let baseURL = URL(string: endpoint), !accessToken.isEmpty, !uploadId.isEmpty, !workdir.isEmpty,
+              let content = Data(base64Encoded: call.getString("base64") ?? "", options: [.ignoreUnknownCharacters]),
+              let url = URL(string: call.getString("path") ?? "/v1/files", relativeTo: baseURL)?.absoluteURL else {
+            call.reject("Agent 附件上传参数不完整。", "AGENT_UPLOAD_INVALID")
+            return
+        }
+        let declaredSize = call.getInt("size", content.count)
+        guard declaredSize == content.count else {
+            call.reject("附件读取不完整，请重新选择文件。", "AGENT_UPLOAD_INVALID")
+            return
+        }
+        guard url.scheme == "https", !expectedFingerprint.isEmpty else {
+            call.reject("Agent 安全上传必须使用带证书指纹的 HTTPS。", "AGENT_UPLOAD_TLS_REQUIRED")
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = TimeInterval(max(1_000, min(call.getInt("timeoutMs", 240_000), 300_000))) / 1000
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(String(content.count), forHTTPHeaderField: "Content-Length")
+        request.setValue(uploadId, forHTTPHeaderField: "X-AIWB-Upload-Id")
+        request.setValue(agentUploadHeader(workdir), forHTTPHeaderField: "X-AIWB-Workdir")
+        request.setValue(agentUploadHeader(name), forHTTPHeaderField: "X-AIWB-File-Name")
+        request.setValue(mime, forHTTPHeaderField: "X-AIWB-File-Mime")
+        request.setValue(SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined(), forHTTPHeaderField: "X-AIWB-Content-SHA256")
+
+        var session: URLSession?
+        let delegate = PinnedAgentUploadDelegate(
+            expectedFingerprint: expectedFingerprint,
+            progress: { [weak self] sent, total in
+                self?.notifyListeners("uploadProgress", data: [
+                    "uploadId": uploadId,
+                    "state": "uploading",
+                    "bytesSent": sent,
+                    "totalBytes": total,
+                    "progress": total > 0 ? Double(sent) / Double(total) : 0
+                ])
+            },
+            completion: { [weak self] data, response, error in
+                self?.agentUploadSessions.finish(uploadId: uploadId)
+                session = nil
+                if let error {
+                    call.reject(self?.safeErrorMessage(error) ?? "附件上传失败。", "AGENT_UPLOAD_FAILED", error)
+                    return
+                }
+                call.resolve([
+                    "status": response?.statusCode ?? 0,
+                    "body": String(data: data, encoding: .utf8) ?? ""
+                ])
+            }
+        )
+        session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        let task = session!.uploadTask(with: request, from: content)
+        guard agentUploadSessions.insert(uploadId: uploadId, session: session!, task: task) else {
+            session?.invalidateAndCancel()
+            call.reject("相同编号的附件正在上传。", "AGENT_UPLOAD_DUPLICATE")
+            return
+        }
+        task.resume()
+    }
+
+    @objc func cancelAgentUpload(_ call: CAPPluginCall) {
+        let uploadId = (call.getString("uploadId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let cancelled = !uploadId.isEmpty && agentUploadSessions.cancel(uploadId: uploadId)
+        call.resolve(["ok": true, "cancelled": cancelled, "active": cancelled, "uploadId": uploadId])
     }
 
     @objc func startTerminal(_ call: CAPPluginCall) {

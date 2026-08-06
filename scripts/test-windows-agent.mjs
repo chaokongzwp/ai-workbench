@@ -23,6 +23,115 @@ test("generated Windows Agent is valid ESM", () => {
   assert.equal(checked.status, 0, checked.stderr || checked.stdout);
 });
 
+function windowsAtomicWriteHarness(renameSync) {
+  const script = windowsWorkbenchAgentScript("atomic-write-test");
+  const helpersStart = script.indexOf("const ATOMIC_WRITE_RETRY_CODES");
+  const helpersEnd = script.indexOf("function append", helpersStart);
+  assert.ok(helpersStart > 0 && helpersEnd > helpersStart);
+
+  const files = new Map();
+  const unlinked = [];
+  const waits = [];
+  const fs = {
+    mkdirSync() {},
+    writeFileSync(file, value) { files.set(file, String(value)); },
+    renameSync(from, to) { renameSync({ files, from, to }); },
+    unlinkSync(file) {
+      unlinked.push(file);
+      if (!files.delete(file)) {
+        const error = new Error("missing temporary file");
+        error.code = "ENOENT";
+        throw error;
+      }
+    },
+  };
+  const helpers = Function(
+    "fs",
+    "path",
+    "process",
+    "Atomics",
+    `"use strict";\n${script.slice(helpersStart, helpersEnd)}\nreturn { write };`,
+  )(fs, path.win32, { pid: 17504 }, { wait(_array, _index, _expected, milliseconds) { waits.push(milliseconds); } });
+  return { ...helpers, files, unlinked, waits };
+}
+
+test("Windows atomic write retries transient rename contention without removing the destination", () => {
+  const destination = String.raw`C:\tasks\task-1\status`;
+  let renameAttempts = 0;
+  const destinationPresence = [];
+  const harness = windowsAtomicWriteHarness(({ files, from, to }) => {
+    renameAttempts += 1;
+    destinationPresence.push(files.has(to));
+    if (renameAttempts <= 3) {
+      const error = new Error("file is temporarily occupied");
+      error.code = "EPERM";
+      throw error;
+    }
+    files.set(to, files.get(from));
+    files.delete(from);
+  });
+  harness.files.set(destination, "running");
+
+  harness.write(destination, "done");
+
+  assert.equal(renameAttempts, 4);
+  assert.deepEqual(destinationPresence, [true, true, true, true]);
+  assert.deepEqual(harness.waits, [10, 20, 40]);
+  assert.equal(harness.files.get(destination), "done");
+  assert.equal(harness.files.has(`${destination}.tmp-17504`), false);
+  assert.deepEqual(harness.unlinked, []);
+});
+
+test("Windows atomic write recognizes every transient Windows rename error", () => {
+  for (const errorCode of ["EPERM", "EBUSY", "EACCES"]) {
+    const destination = String.raw`C:\tasks\task-contention\status`;
+    let renameAttempts = 0;
+    const harness = windowsAtomicWriteHarness(({ files, from, to }) => {
+      renameAttempts += 1;
+      if (renameAttempts === 1) {
+        const error = new Error(errorCode);
+        error.code = errorCode;
+        throw error;
+      }
+      files.set(to, files.get(from));
+      files.delete(from);
+    });
+    harness.files.set(destination, "running");
+
+    harness.write(destination, "done");
+
+    assert.equal(renameAttempts, 2, errorCode);
+    assert.deepEqual(harness.waits, [10], errorCode);
+    assert.equal(harness.files.get(destination), "done", errorCode);
+  }
+});
+
+test("Windows atomic write preserves a permanent rename error and cleans its temporary file", () => {
+  const destination = String.raw`C:\tasks\task-2\status`;
+  const permanentError = new Error("destination remains occupied");
+  permanentError.code = "EPERM";
+  let renameAttempts = 0;
+  const harness = windowsAtomicWriteHarness(() => {
+    renameAttempts += 1;
+    throw permanentError;
+  });
+  harness.files.set(destination, "running");
+
+  let caught;
+  try {
+    harness.write(destination, "done");
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.equal(caught, permanentError);
+  assert.equal(renameAttempts, 8);
+  assert.deepEqual(harness.waits, [10, 20, 40, 80, 160, 250, 250]);
+  assert.equal(harness.files.get(destination), "running");
+  assert.equal(harness.files.has(`${destination}.tmp-17504`), false);
+  assert.deepEqual(harness.unlinked, [`${destination}.tmp-17504`]);
+});
+
 test("Windows process matching uses exact executable, script, and command tokens", () => {
   const script = windowsWorkbenchAgentScript("test");
   const helpersStart = script.indexOf("function normalizeProcessPath");
@@ -117,12 +226,100 @@ test("Windows daemon launch is serialized with the installer tick lock", () => {
 
 test("Windows scheduled update handoff propagates failures", () => {
   const script = windowsWorkbenchAgentScript("test");
+  const scheduleSource = script.slice(
+    script.indexOf("function scheduleInstallService()"),
+    script.indexOf("function installServiceHandoff()"),
+  );
 
-  assert.match(script, /const accepted = created\.status === 0 && started\.status === 0/);
-  assert.match(script, /if \(!accepted\) \{[\s\S]*process\.exitCode = 3/);
-  assert.match(script, /function installServiceHandoff\(\) \{[\s\S]*ready = installService\(\)[\s\S]*if \(!ready\) process\.exitCode = 3/);
-  assert.match(script, /const command = '\"' \+ process\.execPath \+ '\" \"' \+ CONTROL_FILE \+ '\" install-service-handoff'/);
+  assert.match(scheduleSource, /New-ScheduledTaskAction -Execute [\s\S]* -Argument /);
+  assert.match(scheduleSource, /New-ScheduledTaskTrigger -AtLogOn -User \$AIWB_IDENTITY/);
+  assert.match(scheduleSource, /Register-ScheduledTask -TaskName [\s\S]*Start-ScheduledTask -TaskName/);
+  assert.match(scheduleSource, /const accepted = scheduled\.status === 0/);
+  assert.doesNotMatch(scheduleSource, /"\/SD"|"\/ST"|"\/TR"/);
+  assert.match(scheduleSource, /if \(!accepted\) \{[\s\S]*"\/Delete", "\/TN", UPDATE_HANDOFF_TASK/);
+  assert.match(scheduleSource, /if \(!accepted\) \{[\s\S]*process\.exitCode = 3/);
+  assert.match(script, /function installServiceHandoff\(\) \{[\s\S]*ready = installService\(\)[\s\S]*if \(!ready && !process\.exitCode\) process\.exitCode = 3/);
+  assert.match(scheduleSource, /const actionArguments = '\"' \+ CONTROL_FILE \+ '\" install-service-handoff'/);
   assert.match(script, /return ready;\n\}/);
+});
+
+test("Windows service replacement drains every conversation before taskkill", () => {
+  const script = windowsWorkbenchAgentScript("test");
+  const scheduleStart = script.indexOf("function scheduleInstallService()");
+  const handoffStart = script.indexOf("function installServiceHandoff()", scheduleStart);
+  const installStart = script.indexOf('function installService(parentLockOwnerPid = "")', handoffStart);
+  const uninstallStart = script.indexOf("function uninstallService()", installStart);
+  const scheduleSource = script.slice(scheduleStart, handoffStart);
+  const installSource = script.slice(installStart, uninstallStart);
+
+  assert.match(script, /function globalActiveTaskIds\(\)[\s\S]*\["queued", "preparing", "busy"\]/);
+  assert.match(script, /status !== "running"[\s\S]*processMatchesTaskRunner\(readTrim\(path\.join\(taskDir\(id\), "pid"\)\), id\)/);
+  assert.doesNotMatch(script, /globalActiveTaskIds[\s\S]{0,300}conversation_id/);
+  assert.match(scheduleSource, /const activeTaskIds = globalActiveTaskIds\(\)[\s\S]*emitInstallDeferred\("active_tasks", activeTaskIds\)/);
+  assert.match(installSource, /const transaction = beginServiceInstall\(parentLockOwnerPid\)/);
+  assert.ok(installSource.indexOf("beginServiceInstall") < installSource.indexOf('spawnSync("schtasks.exe", ["/End"'));
+  assert.ok(installSource.indexOf("beginServiceInstall") < installSource.indexOf("stopDaemon()"));
+  assert.match(script, /function beginServiceInstall[\s\S]*waitForUpdaterDrainFenceRelease\(fenceWaitMilliseconds\)[\s\S]*waitForTickLock\(fenceWaitMilliseconds\)[\s\S]*resolveUpdaterDrainFenceUnderLock\(\)[\s\S]*acquireServiceInstallFence\(\)[\s\S]*globalActiveTaskIds\(\)/);
+  assert.match(script, /function committedGenerationMatchesDrainFence[\s\S]*committed\.epoch === fence\.epoch[\s\S]*committed\.http_sha256 === httpSha[\s\S]*committed\.updater_sha256 === updaterSha/);
+  assert.match(script, /function resolveUpdaterDrainFenceUnderLock[\s\S]*isAlive\(ownerPid\)\) return false[\s\S]*committedGenerationMatchesDrainFence\(fence\)/);
+  assert.match(script, /__AIWB_AGENT_INSTALL_FENCE_RECOVERED__1/);
+  assert.match(script, /__AIWB_AGENT_INSTALL_DEFER_REASON__/);
+  assert.match(script, /updater 会自动重试/);
+  assert.match(script, /if \(command === "install-service"\) return installService\(args\[0\]\)/);
+  assert.match(script, /function matchingComponentProcessIds\(component\)[\s\S]*Get-CimInstance Win32_Process[\s\S]*descriptorMatchesComponent\(item, component\)/);
+  assert.match(script, /function stopMatchingComponentProcesses[\s\S]*processMatchesComponent\(pid, component\)[\s\S]*spawnSync\("taskkill\.exe"/);
+  assert.match(script, /const remaining = matchingComponentProcessIds\(component\)[\s\S]*if \(liveRemaining\.length\)[\s\S]*ok: false/);
+  assert.match(installSource, /cleanupReady = stopDaemon\(\)[\s\S]*if \(cleanupReady\)[\s\S]*registerAndStartServiceTask/);
+  assert.match(installSource, /if \(!ready && cleanupReady && !fallbackStarted\)[\s\S]*spawnServiceFallback\(\)/);
+});
+
+test("Windows service registration preserves executable and argument boundaries", () => {
+  const script = windowsWorkbenchAgentScript("test");
+  const registerStart = script.indexOf("function registerAndStartServiceTask(taskName)");
+  const installStart = script.indexOf('function installService(parentLockOwnerPid = "")', registerStart);
+  const registerSource = script.slice(registerStart, installStart);
+  const uninstallStart = script.indexOf("function uninstallService()", installStart);
+  const installSource = script.slice(installStart, uninstallStart);
+
+  assert.match(registerSource, /New-ScheduledTaskAction -Execute [\s\S]* -Argument /);
+  assert.match(registerSource, /const actionArguments = '\"' \+ CONTROL_FILE \+ '\" service-run'/);
+  assert.match(registerSource, /Register-ScheduledTask[\s\S]*Start-ScheduledTask/);
+  assert.doesNotMatch(registerSource, /"\/TR"|"\/Create"/);
+  assert.doesNotMatch(installSource, /"\/TR"|"\/Create"/);
+});
+
+test("Windows service-run owns one machine-wide supervisor tree", () => {
+  const script = windowsWorkbenchAgentScript("test");
+  const serviceStart = script.indexOf("async function serviceRun()");
+  const serviceEnd = script.indexOf("function scheduleInstallService()", serviceStart);
+  const serviceSource = script.slice(serviceStart, serviceEnd);
+
+  assert.match(script, /const SERVICE_LOCK = path\.join\(ROOT, "service\.lock"\)/);
+  assert.match(script, /function acquireServiceLock\(\)[\s\S]*fs\.mkdirSync\(SERVICE_LOCK\)/);
+  assert.match(script, /function clearStaleServiceLock\(\)[\s\S]*if \(!descriptor \|\| !descriptor\.executablePath \|\| !descriptor\.commandLine\) return false/);
+  assert.match(script, /if \(descriptorMatchesComponent\(descriptor, "service"\)\) return false/);
+  assert.match(script, /fs\.renameSync\(SERVICE_LOCK, quarantine\)/);
+  assert.match(serviceSource, /const serviceLockToken = acquireServiceLock\(\)[\s\S]*if \(!serviceLockToken\)[\s\S]*return false/);
+  assert.ok(serviceSource.indexOf("acquireServiceLock()") < serviceSource.indexOf("write(SERVICE_PID_FILE"));
+  assert.match(serviceSource, /releaseServiceLock\(serviceLockToken\)/);
+  assert.match(script, /function ensureDaemon\(\)[\s\S]*spawn\(process\.execPath[\s\S]*child\.unref\(\)/);
+  assert.doesNotMatch(script.slice(script.indexOf("function ensureDaemon()"), script.indexOf("async function daemon()")), /write\(PID_FILE, child\.pid\)/);
+});
+
+test("superseded Windows supervisor waits for the installer and never self-replaces", () => {
+  const script = windowsWorkbenchAgentScript("test");
+  const daemonStart = script.indexOf("async function daemon()");
+  const serviceStart = script.indexOf("async function serviceRun()", daemonStart);
+  const daemonSource = script.slice(daemonStart, serviceStart);
+  const supersededCheck = daemonSource.indexOf("installedVersion() !== VERSION");
+  const activeScan = daemonSource.indexOf("globalActiveTaskIds()", supersededCheck);
+
+  assert.ok(supersededCheck >= 0 && activeScan > supersededCheck);
+  assert.match(daemonSource, /daemon version superseded; waiting for installer handoff/);
+  assert.match(daemonSource, /write\(HEARTBEAT_FILE, now\(\)\)[\s\S]*continue/);
+  assert.match(daemonSource, /daemon upgrade handoff deferred active_tasks=/);
+  assert.doesNotMatch(daemonSource, /spawn\(process\.execPath, \[process\.argv\[1\], "service-run"\]/);
+  assert.doesNotMatch(daemonSource.slice(supersededCheck), /return;/);
 });
 
 test("Windows Git download returns the original Git failure detail", () => {

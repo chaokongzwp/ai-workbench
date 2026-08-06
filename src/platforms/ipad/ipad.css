@@ -293,9 +293,10 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
   border: 0;
   color: inherit;
   background: transparent;
-  font-size: 14px;
-  font-weight: 450;
-  line-height: 1.5;
+  font-family: var(--message-font-family);
+  font-size: var(--message-font-size);
+  font-weight: var(--message-font-weight);
+  line-height: var(--message-line-height);
 }
 
 .native-app-shell[data-native-form-factor="ipad"] .native-conversation .user-prompt .user-message-meta {
@@ -386,8 +387,10 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
   max-width: calc(100% - 34px);
   margin: 0 0 8px 34px;
   color: var(--ipad-chat-muted);
-  font-size: 15px;
-  line-height: 1.68;
+  font-family: var(--message-font-family);
+  font-size: var(--message-font-size);
+  font-weight: var(--message-font-weight);
+  line-height: var(--message-line-height);
 }
 
 .native-app-shell[data-native-form-factor="ipad"] .native-conversation .assistant-answer {
@@ -400,8 +403,10 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
 .native-app-shell[data-native-form-factor="ipad"] .native-conversation .rich-message {
   width: 100%;
   color: var(--ipad-chat-text);
-  font-size: 15px;
-  line-height: 1.68;
+  font-family: var(--message-font-family);
+  font-size: var(--message-font-size);
+  font-weight: var(--message-font-weight);
+  line-height: var(--message-line-height);
   overflow-wrap: anywhere;
 }
 

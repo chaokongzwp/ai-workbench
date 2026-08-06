@@ -10,6 +10,7 @@ import {
   taskStateCancelled,
   taskStateFailed,
   taskStateRunning,
+  taskStateSubmitting,
   taskStateSucceeded,
   taskStateSyncing,
 } from "../src/core/messageLifecycle.js";
@@ -17,6 +18,7 @@ import {
   loadLocalMessageHistory,
   localMessageHistoryStorageKey,
   localMessageHistoryVersion,
+  normalizePersistedMessage,
   normalizeWorkspaceStore,
   repairCopiedConversationMappings,
   serializeWorkspaceStore,
@@ -95,6 +97,36 @@ const oldError = normalizeMessageLifecycle({
 const recoveredSuccess = mergeTaskMessages(oldError, completed);
 assert.equal(recoveredSuccess.taskState, taskStateSucceeded);
 assert.equal(recoveredSuccess.output, completed.output);
+
+const fullRemoteTaskId = "task-1786006375455-bc69cf-codex-conv-E-codex-17";
+const truncatedRemoteTaskId = "task-1786006375455-bc69cf-codex-conv-";
+const confirmedTask = {
+  ...pending,
+  id: "turn-1786006341866-kwg19e-response",
+  turnId: "turn-1786006341866-kwg19e",
+  messagePairId: "turn-1786006341866-kwg19e",
+  remoteTaskId: fullRemoteTaskId,
+};
+const wrappedConversationTask = {
+  ...confirmedTask,
+  id: "turn-1786006341866-kwg19e",
+  remoteTaskId: truncatedRemoteTaskId,
+  body: "任务仍在执行。",
+};
+const taskMergedAfterWrappedConversationSync = mergeTaskMessages(confirmedTask, wrappedConversationTask);
+assert.equal(taskMergedAfterWrappedConversationSync.id, confirmedTask.id);
+assert.equal(taskMergedAfterWrappedConversationSync.remoteTaskId, fullRemoteTaskId);
+assert.equal(
+  mergeTaskMessages(
+    { ...confirmedTask, remoteTaskId: truncatedRemoteTaskId },
+    { ...wrappedConversationTask, remoteTaskId: fullRemoteTaskId },
+  ).remoteTaskId,
+  fullRemoteTaskId,
+);
+assert.equal(
+  mergeTaskMessages(confirmedTask, { ...wrappedConversationTask, remoteTaskId: "task-unrelated" }).remoteTaskId,
+  fullRemoteTaskId,
+);
 assert.equal(recoveredSuccess.resultMissing, false);
 
 assert.equal(lastPendingAgentResponse([
@@ -124,9 +156,131 @@ assert.deepEqual(
   sortedConversation.map((message) => message.id),
   ["turn-1-request", "turn-1-response", "turn-2-request", "turn-2-response"],
 );
+
+const legacyUndatedTail = Array.from({ length: 8 }, (_, index) => ({
+  id: `legacy-${index + 1}`,
+  role: index % 2 === 0 ? "user" : "assistant",
+  body: `旧消息 ${index + 1}`,
+}));
+const locallyAppendedAt = 500;
+const conversationWithNewLocalTurn = sortConversationMessages([
+  ...legacyUndatedTail,
+  {
+    id: "new-local-request",
+    role: "user",
+    turnId: "new-local-turn",
+    createdAtMs: locallyAppendedAt,
+  },
+  {
+    id: "new-local-response",
+    role: "assistant",
+    turnId: "new-local-turn",
+    createdAtMs: locallyAppendedAt + 1,
+    taskState: taskStateSubmitting,
+  },
+]);
+assert.deepEqual(
+  conversationWithNewLocalTurn.slice(-2).map((message) => message.id),
+  ["new-local-request", "new-local-response"],
+  "a timestamped local turn appended after undated legacy history must remain at the transcript tail",
+);
+assert.deepEqual(
+  conversationWithNewLocalTurn.slice(-6).map((message) => message.id),
+  ["legacy-5", "legacy-6", "legacy-7", "legacy-8", "new-local-request", "new-local-response"],
+  "the progressive transcript window must include the newly appended local turn",
+);
 assert.equal(
   messageChronologyTimestamp({ id: "assistant-1783047059014-result" }),
   1783047059014,
+);
+assert.equal(
+  messageChronologyTimestamp({
+    id: "agent-conv-1785376137913-task-1785988683000-user",
+    createdAtMs: 1785938000000,
+  }),
+  1785988683000,
+  "the task timestamp at the end of a restored Agent id must win over the conversation id and a skewed remote clock",
+);
+assert.equal(
+  messageChronologyTimestamp({
+    id: "remote-response",
+    turnId: "turn-1785988683000-client",
+    createdAtMs: 1785938000000,
+    completedAt: 1785938005000,
+  }),
+  1785988683000,
+  "a client-authored turn id must be the chronology source of truth across machines",
+);
+assert.equal(
+  messageChronologyTimestamp({
+    turnId: "legacy-turn-without-epoch",
+    messagePairId: "turn-1785988683000-client",
+    createdAtMs: 1785938000000,
+  }),
+  1785988683000,
+  "an unparseable turn id must not hide a valid message-pair timestamp",
+);
+assert.equal(
+  messageChronologyTimestamp({
+    id: "order-1785989999999",
+    createdAtMs: 1785988683000,
+  }),
+  1785988683000,
+  "an unrelated 13-digit business identifier must not override the recorded event time",
+);
+assert.equal(
+  messageChronologyTimestamp({
+    id: "task-2999999999999-impossible",
+    createdAtMs: 1785988683000,
+  }),
+  1785988683000,
+  "an implausible future timestamp embedded in an id must be ignored",
+);
+
+const clockSkewedConversation = sortConversationMessages([
+  {
+    id: "new-response",
+    role: "assistant",
+    turnId: "turn-1785988683000-new",
+    createdAtMs: 1785938005000,
+  },
+  {
+    id: "old-response",
+    role: "assistant",
+    turnId: "turn-1785985000000-old",
+    createdAtMs: 1786000005000,
+  },
+  {
+    id: "new-request",
+    role: "user",
+    turnId: "turn-1785988683000-new",
+    createdAtMs: 1785938000000,
+  },
+  {
+    id: "old-request",
+    role: "user",
+    turnId: "turn-1785985000000-old",
+    createdAtMs: 1786000000000,
+  },
+]);
+assert.deepEqual(
+  clockSkewedConversation.map((message) => message.id),
+  ["old-request", "old-response", "new-request", "new-response"],
+  "remote wall-clock skew must not move an older Agent turn after the newly sent client turn",
+);
+
+const persistedClockSkewedMessage = normalizePersistedMessage({
+  id: "turn-1785988683000-client-request",
+  role: "user",
+  turnId: "turn-1785988683000-client",
+  body: "保留本地排序锚点",
+  createdAtMs: 1785938000000,
+});
+assert.equal(persistedClockSkewedMessage.clientCreatedAtMs, 1785988683000);
+assert.equal(
+  persistedClockSkewedMessage.createdAtMs,
+  1785938000000,
+  "persistence must not overwrite the remote event time with the client chronology anchor",
 );
 
 const legacyWorkspace = normalizeWorkspaceStore({

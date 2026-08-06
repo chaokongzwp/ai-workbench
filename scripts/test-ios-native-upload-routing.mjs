@@ -6,27 +6,21 @@ const foundationSource = readFileSync(new URL("../src/core/foundation.js", impor
 
 assert.match(
   controllerSource,
-  /Capacitor\.isNativePlatform\(\)\s*&&\s*Capacitor\.getPlatform\(\)\s*===\s*["']ios["']/,
-  "only a native iOS runtime should select the native SFTP upload route",
+  /const result = await agentDirectUpload\(current, attachment,/,
+  "every platform must use the Agent binary upload route",
 );
-assert.match(controllerSource, /const result = await SSHWorkbench\.uploadFile\(payload\)/);
-assert.match(controllerSource, /remoteDirectory: target\.uploadDir/);
-assert.match(controllerSource, /remotePath: target\.path/);
-assert.match(controllerSource, /wslDistro: wslDistroFromProfile\(current\)/);
-assert.match(controllerSource, /expectedSize,/);
-assert.match(controllerSource, /base64,/);
-
-assert.match(
-  controllerSource,
-  /const command = buildRemoteImageUploadCommand\(targetProfile, attachment, index\);\s*try \{\s*const output = await runRemoteCommandForProfile/,
-  "non-iOS runtimes must retain the existing command upload path",
-);
+const uploadStart = controllerSource.indexOf("async function uploadImageAttachmentsForProfile");
+const uploadEnd = controllerSource.indexOf("async function routeUserIntent", uploadStart);
+const uploadSource = controllerSource.slice(uploadStart, uploadEnd);
+assert.doesNotMatch(uploadSource, /SSHWorkbench\.uploadFile|buildRemoteImageUploadCommand|runRemoteCommandForProfile/);
+assert.match(uploadSource, /agentDirectConfig\(current\)\.enabled/);
+assert.match(uploadSource, /workdir: current\.workdir/);
 
 const sendStart = controllerSource.indexOf("async function sendTask");
 const sendEnd = controllerSource.indexOf("async function startVoiceInput", sendStart);
 const sendSource = controllerSource.slice(sendStart, sendEnd);
 const uploadAwait = sendSource.indexOf("uploadedImages = await uploadImageAttachmentsForProfile");
-const removeUploaded = sendSource.indexOf("removeUploadedImageAttachments(pendingFiles)");
+const removeUploaded = sendSource.indexOf("removeUploadedImageAttachments(pendingFiles, serverId)");
 assert.ok(uploadAwait >= 0 && removeUploaded > uploadAwait, "attachments must only be removed after every upload succeeds");
 assert.match(
   sendSource,
@@ -40,13 +34,8 @@ assert.equal(
 );
 
 assert.match(controllerSource, /SSHWorkbench\.addListener\(["']uploadProgress["']/);
-assert.match(controllerSource, /SSHWorkbench\.cancelUpload\(\{ uploadId: activeUpload\.uploadId \}\)/);
-assert.match(
-  controllerSource,
-  /stage === ["']connect["']\s*&&\s*retryable === true\s*&&\s*hostIndex < hosts\.length - 1/,
-  "alternate hosts must only be tried for an explicitly retryable connect-stage failure",
-);
-assert.match(foundationSource, /async uploadFile\(payload\)/);
-assert.match(foundationSource, /async cancelUpload\(payload\)/);
+assert.match(controllerSource, /cancelAgentDirectUpload\(activeUpload\.uploadId\)/);
+assert.match(foundationSource, /async agentUpload\(payload\)/);
+assert.match(foundationSource, /async cancelAgentUpload\(payload\)/);
 
-console.log("iOS native upload routing tests passed");
+console.log("Agent binary upload routing tests passed");

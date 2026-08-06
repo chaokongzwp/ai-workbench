@@ -11,6 +11,11 @@ assert.match(swift, /CAPPluginMethod\(name: "cancelUpload"/);
 assert.match(swift, /@objc func uploadFile\(_ call: CAPPluginCall\)/);
 assert.match(swift, /@objc func cancelUpload\(_ call: CAPPluginCall\)/);
 assert.match(swift, /notifyListeners\("uploadProgress"/);
+assert.match(swift, /CAPPluginMethod\(name: "agentUpload"/);
+assert.match(swift, /CAPPluginMethod\(name: "cancelAgentUpload"/);
+assert.match(swift, /@objc func agentUpload\(_ call: CAPPluginCall\)/);
+assert.match(swift, /X-AIWB-Content-SHA256/);
+assert.match(swift, /uploadTask\(with: request, from: content\)/);
 
 const uploadStart = swift.indexOf("private func performNativeUpload(");
 const uploadEnd = swift.indexOf("private func decodeUploadBase64", uploadStart);
@@ -53,6 +58,9 @@ const project = readFileSync(
   new URL("../ios/App/App.xcodeproj/project.pbxproj", import.meta.url),
   "utf8",
 );
-assert.match(project, /CURRENT_PROJECT_VERSION = 128;/, "the user's iOS build 128 must be preserved");
+const buildVersions = [...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => Number(match[1]));
+assert.ok(buildVersions.length >= 2, "both iOS build configurations must declare a build number");
+assert.equal(new Set(buildVersions).size, 1, "all iOS build configurations must use the same build number");
+assert.ok(buildVersions[0] >= 128, "the iOS build number must not regress below the upload-fix build");
 
 console.log("iOS native SFTP upload Swift guards passed");

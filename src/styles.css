@@ -5529,6 +5529,66 @@ body {
   min-width: 0;
 }
 
+.session-sort-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.session-sort-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: #4b5563;
+  background: rgba(118, 118, 128, 0.12);
+  cursor: pointer;
+  list-style: none;
+}
+
+.session-sort-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-sort-menu[open] > summary,
+.session-sort-menu > summary:hover {
+  color: var(--blue);
+  background: rgba(10, 132, 255, 0.12);
+}
+
+.session-sort-popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  width: max-content;
+  min-width: 132px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+}
+
+.session-sort-popover button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.session-sort-popover button:hover {
+  background: var(--surface-soft);
+}
+
 .sidebar-add,
 .sidebar-duplicate,
 .sidebar-collapse {
@@ -12936,6 +12996,21 @@ html.aiwb-keyboard-focus .iphone-composer-wrap {
   color: var(--iphone-text);
   background: var(--iphone-soft);
   font-weight: 700;
+}
+
+.iphone-session-header-actions .session-sort-menu > summary {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  color: var(--iphone-text);
+  background: var(--iphone-soft);
+}
+
+.iphone-session-header-actions .session-sort-popover {
+  top: calc(100% + 8px);
+  color: var(--iphone-text);
+  background: var(--iphone-surface-solid);
+  border-color: var(--iphone-line);
 }
 
 .iphone-session-header-actions .iphone-session-close {

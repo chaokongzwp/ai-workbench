@@ -18,11 +18,16 @@ import {
   ensureIosPushRegistration,
   iosPushSupported,
 } from "../core/iosPushNotifications.js";
-import { reorderSessionsById } from "../core/sessionOrder.js";
+import { reorderSessionsById, sortSessions } from "../core/sessionOrder.js";
 import { assertSessionDispatch } from "../core/session.js";
 import { patchSession, patchSessionsMatchingConnection, sessionById } from "../core/sessionStore.js";
 import { patchMessage } from "../core/messageStore.js";
 import { canonicalConnectionState } from "../core/connectionState.js";
+import {
+  sessionAttachmentDraft,
+  switchSessionAttachmentDraft,
+  updateSessionAttachmentDraft,
+} from "../core/composerState.js";
 import {
   agentCanContinueAfterUpgradeFailure,
   agentTaskSubmissionReady,
@@ -61,8 +66,12 @@ const {
   agentById,
   agentCommand,
   agentDirectConfig,
+  createAgentDirectEventStream,
   agentDirectRequest,
+  agentDirectUpload,
   agentDirectTaskRequest,
+  agentDirectTaskStatusSnapshot,
+  cancelAgentDirectUpload,
   agentRuntimeProfile,
   agents,
   appLog,
@@ -73,7 +82,6 @@ const {
   assetBase,
   assetPath,
   automaticTaskWakePhrases,
-  base64DecodedByteLength,
   bashCommand,
   browserDiagnosticLogStorageKey,
   buildAgentTaskCommand,
@@ -97,8 +105,6 @@ const {
   buildRemoteFileDeleteCommand,
   buildRemoteFileReadCommand,
   buildRemoteDirectoryListCommand,
-  buildRemoteImageUploadCommand,
-  buildRemoteImageUploadTarget,
   buildRestartWindowsCommand,
   buildWindowsCodexExecCommand,
   buildWindowsDiscoveryCommand,
@@ -135,8 +141,10 @@ const {
   connectionModeForServer,
   connectionModeFromHealth,
   conversationBottomThreshold,
+  conversationRevealReady,
   createCloudSessionShare,
   createConversationId,
+  createConversationRevealRequest,
   createMessage,
   createRemoteTaskId,
   createServerId,
@@ -238,6 +246,7 @@ const {
   mergeImportedServers,
   mergeLocalMessageHistory,
   mergeManualWorkdirHistory,
+  messageClientTimestamp,
   messageFontFamilyCss,
   messagesForStorage,
   migrationFileKind,
@@ -262,7 +271,6 @@ const {
   parsePlaybackCommandIndex,
   parseRemoteFilePayload,
   parseRemoteDirectoryPayload,
-  parseRemoteImageUploadPayload,
   parseSessionSelectionKey,
   parseSessionSwitchIndex,
   parseSmallChineseNumber,
@@ -324,6 +332,8 @@ const {
   sshEndpointKey,
   shortError,
   sleep,
+  scrollConversationContainerToBottom,
+  revealConversationMessage,
   speakAssistantText,
   speechInterruptContextForServers,
   speechInterruptPhrases,
@@ -366,6 +376,7 @@ const {
   workbenchAgentAvailableFromOutput,
   workbenchAgentScript,
   workbenchAgentVersionNumber,
+  workbenchAgentProtocolSupports,
   workbenchAgentTaskCreateMode,
   workdirDisplayName,
   wslDistroFromProfile,
@@ -617,6 +628,18 @@ export function useWorkbenchController() {
     () => wakeContextForServers(servers, activeServerId, profile).phrases.join("\n"),
     [activeServerId, profile, servers],
   );
+  const agentEventStreamSignature = useMemo(() => {
+    const values = new Map();
+    for (const server of servers) {
+      if (server.id !== activeServerId && !lastIncompleteAgentResponse(server)) continue;
+      const normalized = normalizeProfile(server.profile);
+      const direct = agentDirectConfig(normalized);
+      if (!direct.enabled) continue;
+      const connectionKey = agentInstallationKey(normalized);
+      values.set(connectionKey, [connectionKey, direct.endpoint, direct.accessToken, direct.tlsFingerprint]);
+    }
+    return JSON.stringify([...values.values()].sort((left, right) => left[0].localeCompare(right[0])));
+  }, [activeServerId, servers]);
   const hasPendingAction = messages.some((message) => Boolean(message.requiredAction));
   const profileRef = useRef(profile);
   const draftProfileRef = useRef(draftProfile);
@@ -629,6 +652,8 @@ export function useWorkbenchController() {
   const composerDraftsRef = useRef(new Map());
   const composerServerIdRef = useRef("");
   const imageAttachmentsRef = useRef(imageAttachments);
+  const attachmentDraftsRef = useRef(new Map());
+  const attachmentServerIdRef = useRef("");
   const voiceBaseTextRef = useRef("");
   const voiceRecognitionSessionIdRef = useRef("");
   const voiceStateRef = useRef(voiceState);
@@ -680,12 +705,14 @@ export function useWorkbenchController() {
   const manualDisconnectSessionIdsRef = useRef(new Set());
   const sshHostKeyApprovalRequiredSessionIdsRef = useRef(new Set());
   const agentConnectionPollAtRef = useRef(new Map());
+  const agentEventStreamStateRef = useRef(new Map());
   const agentRouteProbeByConnectionRef = useRef(new Map());
   const agentConversationAutoSyncAtRef = useRef(new Map());
   const agentConversationSyncFailedAtRef = useRef(new Map());
   const preferredHostByConnectionRef = useRef(new Map());
   const conversationScrollRef = useRef(null);
   const conversationStickToBottomRef = useRef(true);
+  const conversationRevealRequestRef = useRef(null);
   const conversationScrollStateRef = useRef({
     activeServerId: "",
     messageCount: 0,
@@ -765,41 +792,51 @@ export function useWorkbenchController() {
     });
   }
 
-  function removeUploadedImageAttachments(uploadedAttachments = []) {
+  function updateImageAttachmentsForSession(serverId, updater) {
+    const sessionId = String(serverId || "").trim();
+    if (!sessionId) return [];
+    if (attachmentServerIdRef.current === sessionId) {
+      attachmentDraftsRef.current.set(sessionId, imageAttachmentsRef.current);
+    }
+    const nextItems = updateSessionAttachmentDraft(attachmentDraftsRef.current, sessionId, updater);
+    if (attachmentServerIdRef.current === sessionId) {
+      imageAttachmentsRef.current = nextItems;
+      setImageAttachments(nextItems);
+    }
+    return nextItems;
+  }
+
+  function removeUploadedImageAttachments(uploadedAttachments = [], serverId = attachmentServerIdRef.current) {
     const uploadedIds = new Set(uploadedAttachments.map((item) => String(item?.id || "")).filter(Boolean));
     const uploadedItems = new Set(uploadedAttachments);
-    setImageAttachments((items) => {
+    updateImageAttachmentsForSession(serverId, (items) => {
       const removed = items.filter(
         (item) => uploadedItems.has(item) || (item?.id && uploadedIds.has(String(item.id))),
       );
       if (!removed.length) return items;
       revokeImagePreviews(removed);
-      const nextItems = items.filter((item) => !removed.includes(item));
-      imageAttachmentsRef.current = nextItems;
-      return nextItems;
+      return items.filter((item) => !removed.includes(item));
     });
   }
 
   function removeImageAttachment(id) {
-    setImageAttachments((items) => {
+    updateImageAttachmentsForSession(attachmentServerIdRef.current || activeServerIdRef.current, (items) => {
       const removed = items.filter((item) => item.id === id);
       revokeImagePreviews(removed);
-      const nextItems = items.filter((item) => item.id !== id);
-      imageAttachmentsRef.current = nextItems;
-      return nextItems;
+      return items.filter((item) => item.id !== id);
     });
   }
 
   async function addImageAttachments(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
+    const serverId = activeServerIdRef.current;
     try {
       const nextItems = await Promise.all(list.map((file) => fileToImageAttachment(file)));
-      setImageAttachments((items) => {
+      updateImageAttachmentsForSession(serverId, (items) => {
         const combined = [...items, ...nextItems].slice(-10);
         const dropped = [...items, ...nextItems].slice(0, Math.max(0, items.length + nextItems.length - 10));
         revokeImagePreviews(dropped);
-        imageAttachmentsRef.current = combined;
         return combined;
       });
       setVoiceError("");
@@ -808,7 +845,7 @@ export function useWorkbenchController() {
     }
   }
 
-  function addPreparedAttachments(attachments = []) {
+  function addPreparedAttachments(attachments = [], serverId = activeServerIdRef.current) {
     const nextItems = attachments
       .filter((item) => cleanBase64Payload(item?.base64))
       .map((item) => {
@@ -827,11 +864,10 @@ export function useWorkbenchController() {
       });
     if (!nextItems.length) return false;
 
-    setImageAttachments((items) => {
+    updateImageAttachmentsForSession(serverId, (items) => {
       const combined = [...items, ...nextItems].slice(-10);
       const dropped = [...items, ...nextItems].slice(0, Math.max(0, items.length + nextItems.length - 10));
       revokeImagePreviews(dropped);
-      imageAttachmentsRef.current = combined;
       return combined;
     });
     setVoiceError("");
@@ -841,9 +877,10 @@ export function useWorkbenchController() {
   async function pasteClipboardAttachments() {
     const bridge = desktopBridge();
     if (!bridge?.readClipboardAttachments) return false;
+    const serverId = activeServerIdRef.current;
     try {
       const result = await bridge.readClipboardAttachments();
-      return addPreparedAttachments(result?.attachments || []);
+      return addPreparedAttachments(result?.attachments || [], serverId);
     } catch (error) {
       setVoiceError(shortError(error));
       return false;
@@ -954,15 +991,22 @@ export function useWorkbenchController() {
     const nextDraft = activeServerId ? composerDraftsRef.current.get(activeServerId) || "" : "";
     composerRef.current = nextDraft;
     setComposerState(nextDraft);
+
+    const previousAttachmentServerId = attachmentServerIdRef.current;
+    const nextAttachments = switchSessionAttachmentDraft(
+      attachmentDraftsRef.current,
+      previousAttachmentServerId,
+      imageAttachmentsRef.current,
+      activeServerId,
+    );
+    attachmentServerIdRef.current = activeServerId;
+    imageAttachmentsRef.current = nextAttachments;
+    setImageAttachments(nextAttachments);
   }, [activeServerId]);
 
   useEffect(() => {
     composerRef.current = composer;
   }, [composer]);
-
-  useEffect(() => {
-    imageAttachmentsRef.current = imageAttachments;
-  }, [imageAttachments]);
 
   useEffect(() => {
     voiceStateRef.current = voiceState;
@@ -1004,9 +1048,15 @@ export function useWorkbenchController() {
 
   function scrollConversationToBottom() {
     const container = conversationScrollRef.current;
-    if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+    if (!scrollConversationContainerToBottom(container)) return false;
     conversationStickToBottomRef.current = true;
+    return true;
+  }
+
+  function revealConversationTarget(messageId) {
+    const result = revealConversationMessage(conversationScrollRef.current, messageId);
+    if (result.visible) conversationStickToBottomRef.current = true;
+    return result;
   }
 
   useLayoutEffect(() => {
@@ -1014,7 +1064,9 @@ export function useWorkbenchController() {
     const previous = conversationScrollStateRef.current;
     const switchedSession = previous.activeServerId !== activeServerId;
     const restoredHistory = previous.messageCount === 0 && messages.length > 0;
-    const shouldFollow = switchedSession || restoredHistory || conversationStickToBottomRef.current;
+    const revealRequest = conversationRevealRequestRef.current;
+    const revealRequested = conversationRevealReady(revealRequest, activeServerId, messages);
+    const shouldFollow = revealRequested || switchedSession || restoredHistory || conversationStickToBottomRef.current;
 
     conversationScrollStateRef.current = {
       activeServerId,
@@ -1024,13 +1076,32 @@ export function useWorkbenchController() {
 
     if (!workspaceLoaded || !messages.length || !shouldFollow) return undefined;
 
-    scrollConversationToBottom();
-    const frame = window.requestAnimationFrame(scrollConversationToBottom);
-    const timeout = window.setTimeout(scrollConversationToBottom, 80);
+    let revealCompleted = false;
+    const followConversation = () => {
+      if (!revealRequested) return scrollConversationToBottom();
+      if (revealCompleted || conversationRevealRequestRef.current !== revealRequest) return false;
+      const result = revealConversationTarget(revealRequest.messageId);
+      if (!result.visible) return false;
+
+      revealCompleted = true;
+      conversationRevealRequestRef.current = null;
+      void appLog("info", "conversation.reveal.completed", {
+        serverId: activeServerId,
+        messageId: revealRequest.messageId,
+        delayMs: Math.max(0, Date.now() - Number(revealRequest.requestedAt || Date.now())),
+      });
+      return true;
+    };
+
+    followConversation();
+    const frame = window.requestAnimationFrame(followConversation);
+    const timeout = window.setTimeout(followConversation, 80);
+    const settleTimeout = window.setTimeout(followConversation, 240);
 
     return () => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
+      window.clearTimeout(settleTimeout);
     };
   }, [activeServerId, messages, workspaceLoaded]);
 
@@ -1120,7 +1191,9 @@ export function useWorkbenchController() {
       VoiceWorkbench.stopWakeWord?.().catch(() => {});
       VoiceWorkbench.stop?.().catch(() => {});
       stopAssistantSpeech();
-      revokeImagePreviews(imageAttachmentsRef.current);
+      const attachmentItems = new Set(imageAttachmentsRef.current);
+      attachmentDraftsRef.current.forEach((items) => items.forEach((item) => attachmentItems.add(item)));
+      revokeImagePreviews([...attachmentItems]);
     };
   }, []);
 
@@ -1466,9 +1539,20 @@ export function useWorkbenchController() {
       const finishedAtMs = timestampFromAgentTime(entry.finishedAt) * 1000 || Number(entry.mtime || 0) * 1000 || startedAtMs;
       const startedAtLabel = new Date(startedAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       const finishedAtLabel = new Date(finishedAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      // Agent clocks can differ substantially from the device clock. Reuse the
+      // client-authored turn and message ids recorded by modern Agents so the
+      // restored turn keeps the same identity and chronology as the optimistic
+      // local messages instead of being reordered by remote wall-clock time.
+      const entryTurnId = String(entry.turnId || "").trim();
+      const messagePairId = entryTurnId || `agent-pair-${conversation.id}-${taskId}`;
+      const userMessageId = String(entry.requestMessageId || "").trim() || `agent-${conversation.id}-${taskId}-user`;
+      const assistantMessageId = String(entry.responseMessageId || "").trim() || `agent-${conversation.id}-${taskId}-assistant`;
+      const clientCreatedAtMs = messageClientTimestamp({
+        turnId: entryTurnId,
+        requestMessageId: userMessageId,
+        remoteTaskId: taskId,
+      }) || undefined;
       if (lastPrompt) {
-        const messagePairId = `agent-pair-${conversation.id}-${taskId}`;
-        const userMessageId = `agent-${conversation.id}-${taskId}-user`;
         messages.push(
           createMessage({
             id: userMessageId,
@@ -1481,16 +1565,16 @@ export function useWorkbenchController() {
             remoteTaskId: taskId,
             agentId: entryAgentId,
             promptText: lastPrompt,
+            clientCreatedAtMs,
+            turnId: entryTurnId || messagePairId,
             messagePairId,
           }),
         );
       }
       if (!shouldCreateAssistant) return;
-      const messagePairId = `agent-pair-${conversation.id}-${taskId}`;
-      const userMessageId = `agent-${conversation.id}-${taskId}-user`;
       messages.push(
         createMessage({
-          id: `agent-${conversation.id}-${taskId}-assistant`,
+          id: assistantMessageId,
           role: "assistant",
           agentId: entryAgentId,
 	        title: agentFailure
@@ -1525,6 +1609,8 @@ export function useWorkbenchController() {
           agentFailure: agentFailure || undefined,
           technicalDetail: deferredWaitingResult ? visibleResult : agentFailure?.detail || undefined,
           promptText: lastPrompt,
+          clientCreatedAtMs,
+          turnId: entryTurnId || messagePairId,
           messagePairId,
           replyToMessageId: lastPrompt ? userMessageId : "",
           startedAt: startedAtMs,
@@ -2677,131 +2763,47 @@ export function useWorkbenchController() {
   ) {
     const items = attachments.filter((item) => cleanBase64Payload(item?.base64));
     if (!items.length) return [];
-    const useNativeIosUpload = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
+    const current = withKnownPassword(targetProfile);
+    if (!agentDirectConfig(current).enabled) {
+      throw new Error("当前会话尚未配置 Agent 安全上传，请等待 Agent 更新并重新连接后再试。");
+    }
     const uploaded = [];
     for (let index = 0; index < items.length; index += 1) {
       const attachment = items[index];
-      if (useNativeIosUpload) {
-        const current = withKnownPassword(targetProfile);
-        const missing = profileIssue(current);
-        if (missing) throw new Error(missing);
-        const target = buildRemoteImageUploadTarget(current, attachment, index);
-        const base64 = cleanBase64Payload(attachment.base64);
-        const expectedSize = base64DecodedByteLength(base64) || Number(attachment.size || 0);
-        const connectionKey = sshEndpointKey(current);
-        const preferredHost = preferredHostByConnectionRef.current.get(connectionKey);
-        const hosts = orderedHostCandidates(current, preferredHost);
-        let lastError = null;
-
-        for (let hostIndex = 0; hostIndex < hosts.length; hostIndex += 1) {
-          const host = hosts[hostIndex];
-          const uploadId = `upload-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 9)}`;
-          const startedAt = Date.now();
-          const payload = {
-            sessionId: serverId || `profile:${profileConnectionKey(current)}`,
-            uploadId,
-            host,
-            port: current.port,
-            username: current.username,
-            password: current.password,
-            sshHostKeyFingerprint: current.sshHostKeyFingerprint,
-            connectTimeoutSeconds: current.connectTimeoutSeconds,
-            commandTimeoutSeconds: 240,
-            platform: normalizeServerPlatform(current.platform),
-            wslDistro: wslDistroFromProfile(current),
-            remoteDirectory: target.uploadDir,
-            remotePath: target.path,
-            name: target.name,
-            remoteName: target.remoteName,
-            mime: target.mime,
-            size: expectedSize,
-            expectedSize,
-            base64,
-          };
-          activeUploadByServerRef.current.set(serverId, {
-            uploadId,
-            name: target.name,
-            expectedSize,
-            assistantMessageId,
-            fileIndex: index + 1,
-            fileCount: items.length,
-            lastProgressPercent: -1,
-          });
-          void appLog("info", "ssh.upload.start", {
-            serverId,
-            uploadId,
-            host,
-            platform: payload.platform,
-            wsl: Boolean(payload.wslDistro),
-            name: target.name,
-            expectedSize,
-          });
-          try {
-            const result = await SSHWorkbench.uploadFile(payload);
-            const path = String(result?.path || target.path || "").trim();
-            if (!path) throw new Error("原生 SFTP 上传完成后没有返回文件路径。");
-            const resultSize = Number(result?.size ?? expectedSize);
-            if (expectedSize > 0 && resultSize !== expectedSize) {
-              throw new Error(`SFTP 上传校验失败：预期 ${expectedSize} 字节，实际 ${resultSize} 字节。`);
-            }
-            preferredHostByConnectionRef.current.set(connectionKey, host);
-            uploaded.push({
-              name: target.name,
-              remoteName: String(result?.remoteName || target.remoteName),
-              path,
-              mime: String(result?.mime || target.mime),
-              size: resultSize,
-              sha256: String(result?.sha256 || ""),
-            });
-            void appLog("info", "ssh.upload.success", {
-              serverId,
-              uploadId,
-              host,
-              durationMs: Date.now() - startedAt,
-              size: resultSize,
-            });
-            lastError = null;
-            break;
-          } catch (error) {
-            lastError = error;
-            const stage = String(error?.stage || error?.data?.stage || "").trim().toLocaleLowerCase();
-            const retryable = error?.retryable ?? error?.data?.retryable;
-            const canTryAlternateHost =
-              stage === "connect" && retryable === true && hostIndex < hosts.length - 1;
-            void appLog("error", "ssh.upload.failed", {
-              serverId,
-              uploadId,
-              host,
-              stage: stage || "unknown",
-              retryable: retryable === true,
-              durationMs: Date.now() - startedAt,
-              error: shortError(error),
-              alternateHostRetry: canTryAlternateHost,
-            });
-            if (!canTryAlternateHost) {
-              if (error && typeof error === "object" && Object.isExtensible(error)) {
-                error.uploadedFileCount = uploaded.length;
-              }
-              throw error;
-            }
-          } finally {
-            if (activeUploadByServerRef.current.get(serverId)?.uploadId === uploadId) {
-              activeUploadByServerRef.current.delete(serverId);
-            }
-          }
-        }
-        if (lastError) throw lastError;
-        continue;
-      }
-      const command = buildRemoteImageUploadCommand(targetProfile, attachment, index);
+      const uploadId = `upload-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 9)}`;
+      const expectedSize = Number(attachment.size || 0);
+      const startedAt = Date.now();
+      activeUploadByServerRef.current.set(serverId, {
+        uploadId,
+        name: attachment.name || "附件",
+        expectedSize,
+        assistantMessageId,
+        fileIndex: index + 1,
+        fileCount: items.length,
+        lastProgressPercent: -1,
+      });
+      void appLog("info", "agent.upload.start", { serverId, uploadId, name: attachment.name, expectedSize });
       try {
-        const output = await runRemoteCommandForProfile(targetProfile, command, 64_000, 240);
-        uploaded.push(parseRemoteImageUploadPayload(output, command));
+        const result = await agentDirectUpload(current, attachment, {
+          uploadId,
+          workdir: current.workdir,
+          timeoutMs: 240_000,
+        });
+        if (expectedSize > 0 && Number(result.size) !== expectedSize) {
+          throw new Error(`附件上传校验失败：预期 ${expectedSize} 字节，实际 ${Number(result.size || 0)} 字节。`);
+        }
+        uploaded.push(result);
+        void appLog("info", "agent.upload.success", { serverId, uploadId, durationMs: Date.now() - startedAt, size: result.size });
       } catch (error) {
         if (error && typeof error === "object" && Object.isExtensible(error)) {
           error.uploadedFileCount = uploaded.length;
         }
+        void appLog("error", "agent.upload.failed", { serverId, uploadId, durationMs: Date.now() - startedAt, error: shortError(error) });
         throw error;
+      } finally {
+        if (activeUploadByServerRef.current.get(serverId)?.uploadId === uploadId) {
+          activeUploadByServerRef.current.delete(serverId);
+        }
       }
     }
     return uploaded;
@@ -3003,6 +3005,16 @@ export function useWorkbenchController() {
     const currentServers = serversRef.current;
     const nextServers = reorderSessionsById(currentServers, sourceId, targetId, placement);
     if (nextServers === currentServers) return;
+
+    serversRef.current = nextServers;
+    setServers(nextServers);
+    queueWorkspaceSave(nextServers, activeServerIdRef.current, 180);
+  }
+
+  function sortServerSessions(mode) {
+    const currentServers = serversRef.current;
+    const nextServers = sortSessions(currentServers, mode);
+    if (nextServers.every((server, index) => server === currentServers[index])) return;
 
     serversRef.current = nextServers;
     setServers(nextServers);
@@ -4193,13 +4205,6 @@ export function useWorkbenchController() {
   }, []);
 
   useEffect(() => {
-    if (
-      !Capacitor.isNativePlatform() ||
-      Capacitor.getPlatform() !== "ios" ||
-      typeof SSHWorkbench.addListener !== "function"
-    ) {
-      return undefined;
-    }
     const handleUploadProgress = (payload = {}) => {
       const uploadId = String(payload.uploadId || "").trim();
       if (!uploadId) return;
@@ -4222,7 +4227,7 @@ export function useWorkbenchController() {
       const progressBucket = percent >= 100 ? 100 : Math.floor(percent / 5) * 5;
       if (progressBucket <= Number(activeUpload.lastProgressPercent ?? -1)) return;
       activeUpload.lastProgressPercent = progressBucket;
-      void appLog("info", "ssh.upload.progress", {
+      void appLog("info", "agent.upload.progress", {
         serverId,
         uploadId,
         bytesSent,
@@ -4239,18 +4244,26 @@ export function useWorkbenchController() {
       }
     };
     let nativeSubscription;
+    let desktopUnsubscribe;
     let cancelled = false;
-    SSHWorkbench.addListener("uploadProgress", handleUploadProgress)
-      .then((subscription) => {
-        if (cancelled) {
-          subscription?.remove?.();
-          return;
-        }
-        nativeSubscription = subscription;
-      })
-      .catch(() => {});
+    const bridge = desktopBridge();
+    if (typeof bridge?.onUploadProgress === "function") {
+      desktopUnsubscribe = bridge.onUploadProgress(handleUploadProgress);
+    }
+    if (Capacitor.isNativePlatform() && typeof SSHWorkbench.addListener === "function") {
+      SSHWorkbench.addListener("uploadProgress", handleUploadProgress)
+        .then((subscription) => {
+          if (cancelled) {
+            subscription?.remove?.();
+            return;
+          }
+          nativeSubscription = subscription;
+        })
+        .catch(() => {});
+    }
     return () => {
       cancelled = true;
+      desktopUnsubscribe?.();
       nativeSubscription?.remove?.();
     };
   }, []);
@@ -5618,6 +5631,7 @@ export function useWorkbenchController() {
           const directVersion = String(directHealth?.version || "").trim();
           trustedDirectPlatform = trustedAgentPlatform(directHealth?.platform);
           const protocolVersion = Number(directHealth?.protocolVersion || 0);
+          const protocolReady = workbenchAgentProtocolSupports(directHealth, ["tasks"]);
           const versionReady =
             workbenchAgentVersionNumber(directVersion) >= workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
           const generationReady =
@@ -5627,7 +5641,7 @@ export function useWorkbenchController() {
             directHealth?.httpStatus === "running" &&
             directHealth?.updaterStatus === "running";
           directRouteReady =
-            protocolVersion === 1 &&
+            protocolReady &&
             versionReady &&
             generationReady &&
             componentsReady &&
@@ -5651,6 +5665,7 @@ export function useWorkbenchController() {
               version: directVersion,
               platform: trustedDirectPlatform,
               protocolVersion,
+              capabilities: Array.isArray(directHealth?.capabilities) ? directHealth.capabilities : [],
               requiredVersion: latestWorkbenchAgentVersion,
             });
           }
@@ -5825,7 +5840,7 @@ export function useWorkbenchController() {
           const verifiedVersion = String(verifiedHealth?.version || "").trim();
           const verifiedPlatform = trustedAgentPlatform(verifiedHealth?.platform);
           if (
-            Number(verifiedHealth?.protocolVersion || 0) !== 1 ||
+            !workbenchAgentProtocolSupports(verifiedHealth, ["tasks"]) ||
             verifiedHealth?.transport !== "https" ||
             verifiedHealth?.daemonStatus !== "running" ||
             verifiedHealth?.httpStatus !== "running" ||
@@ -6506,7 +6521,7 @@ export function useWorkbenchController() {
     throw new Error("Agent 是唯一任务执行后端，请先安装或修复 Agent。");
   }
 
-  async function syncRemoteAgentMessage(serverId, message) {
+  async function syncRemoteAgentMessage(serverId, message, options = {}) {
     if (!message?.remoteTaskId || message.backend !== "agent") return false;
     const lockKey = `${serverId}:${message.remoteTaskId}`;
     if (syncingAgentTasksRef.current.has(lockKey)) return false;
@@ -6553,9 +6568,14 @@ export function useWorkbenchController() {
       let statusOutput = "";
       let status = null;
 
+      if (options.directTask?.id && String(options.directTask.id) === String(message.remoteTaskId)) {
+        status = agentDirectTaskStatusSnapshot(options.directTask);
+        statusOutput = status.output;
+      }
+
       // The task was submitted through the Agent API. Query that exact task on
       // resume as well, rather than opening a fresh SSH command just to poll.
-      if (agentDirectConfig(currentProfile).enabled) {
+      if (!status && agentDirectConfig(currentProfile).enabled) {
         try {
           const response = await agentDirectRequest(
             currentProfile,
@@ -6563,34 +6583,12 @@ export function useWorkbenchController() {
             { timeoutMs: Math.min((waitTimeoutSeconds + 5) * 1_000, 25_000) },
           );
           const task = response?.task || {};
-          const outcome = String(task.outcome || "").trim().toLowerCase();
-          const rawStatus = String(task.rawStatus || "").trim().toLowerCase();
-          const taskStatus =
-            rawStatus ||
-            (outcome === "success" ? "done" : outcome === "cancelled" ? "cancelled" : outcome === "error" ? "error" : "running");
-          statusOutput = String(task.output || "");
-          status = {
-            taskStatus,
-            output: statusOutput,
-            raw: statusOutput,
-            eventFingerprint: JSON.stringify([
-              taskStatus,
-              task.startedAt || "",
-              task.finishedAt || "",
-              Number(task.activityBytes || 0),
-              task.activityUpdatedAt || "",
-              statusOutput.length,
-            ]),
-            pid: "",
-            startedAt: String(task.startedAt || ""),
-            runnerStartedAt: String(task.runnerStartedAt || ""),
-            finishedAt: String(task.finishedAt || ""),
-            exitCode: String(task.exitCode || ""),
-          };
+          status = agentDirectTaskStatusSnapshot(task);
+          statusOutput = status.output;
           void appLog("info", "agent.direct.task_status", {
             serverId,
             remoteTaskId: message.remoteTaskId,
-            taskStatus,
+            taskStatus: status.taskStatus,
           });
         } catch (error) {
           // Keep SSH as a recovery path for old routes, LAN changes, or an
@@ -7113,6 +7111,132 @@ export function useWorkbenchController() {
     return true;
   }
 
+  useEffect(() => {
+    if (!workspaceLoaded || !agentEventStreamSignature) return undefined;
+    let disposed = false;
+    const timers = new Set();
+    const states = new Map();
+    const groupedProfiles = new Map();
+
+    for (const server of serversRef.current) {
+      if (server.id !== activeServerIdRef.current && !lastIncompleteAgentResponse(server)) continue;
+      const currentProfile = withKnownPassword(server.profile);
+      if (!agentDirectConfig(currentProfile).enabled) continue;
+      const connectionKey = agentInstallationKey(currentProfile);
+      if (!groupedProfiles.has(connectionKey)) groupedProfiles.set(connectionKey, currentProfile);
+    }
+
+    const recoverConnectionTasks = async (connectionKey) => {
+      const snapshot = serversRef.current;
+      for (const server of snapshot) {
+        if (agentInstallationKey(normalizeProfile(server.profile)) !== connectionKey) continue;
+        const message = lastIncompleteAgentResponse(server);
+        if (!message?.remoteTaskId) continue;
+        await syncRemoteAgentMessage(server.id, message);
+      }
+    };
+
+    for (const [connectionKey, currentProfile] of groupedProfiles) {
+      const state = {
+        status: "connecting",
+        lastEventAt: 0,
+        reconnectAttempt: 0,
+        handle: null,
+      };
+      states.set(connectionKey, state);
+      agentEventStreamStateRef.current.set(connectionKey, state);
+
+      const scheduleReconnect = () => {
+        if (disposed || state.status === "open") return;
+        const delays = [1_000, 2_000, 5_000, 10_000, 30_000];
+        const delay = delays[Math.min(state.reconnectAttempt, delays.length - 1)];
+        state.reconnectAttempt += 1;
+        const timer = window.setTimeout(() => {
+          timers.delete(timer);
+          connect();
+        }, delay);
+        timers.add(timer);
+      };
+
+      const connect = () => {
+        if (disposed) return;
+        const previous = state.handle;
+        state.handle = null;
+        previous?.close?.();
+        state.status = "connecting";
+        let handle = null;
+        handle = createAgentDirectEventStream(currentProfile, {
+          onOpen: () => {
+            if (disposed || state.handle !== handle) return;
+            state.status = "open";
+            state.lastEventAt = Date.now();
+            state.reconnectAttempt = 0;
+            void appLog("info", "agent.events.open", { connectionKey });
+            recoverConnectionTasks(connectionKey).catch((error) => {
+              void appLog("warn", "agent.events.recovery_failed", { connectionKey, error: shortError(error) });
+            });
+          },
+          onEvent: (event) => {
+            if (disposed || state.handle !== handle) return;
+            state.lastEventAt = Date.now();
+            if (event?.type !== "task.updated" || !event.task?.id) return;
+            const taskId = String(event.task.id);
+            for (const server of serversRef.current) {
+              if (agentInstallationKey(normalizeProfile(server.profile)) !== connectionKey) continue;
+              const message = lastIncompleteAgentResponse(server);
+              if (!message || String(message.remoteTaskId || "") !== taskId) continue;
+              if (message) {
+                void appLog("info", "agent.events.task_updated", {
+                  serverId: server.id,
+                  remoteTaskId: taskId,
+                  taskStatus: event.task.rawStatus || event.task.status || "",
+                });
+                syncRemoteAgentMessage(server.id, message, { directTask: event.task }).catch((error) => {
+                  void appLog("warn", "agent.events.task_sync_failed", {
+                    serverId: server.id,
+                    remoteTaskId: taskId,
+                    error: shortError(error),
+                  });
+                });
+                break;
+              }
+            }
+          },
+          onClose: (event) => {
+            if (disposed || state.handle !== handle) return;
+            state.status = "closed";
+            state.lastEventAt = 0;
+            void appLog("warn", "agent.events.closed", {
+              connectionKey,
+              error: String(event?.error || ""),
+            });
+            scheduleReconnect();
+          },
+        });
+        if (!handle) {
+          state.status = "unsupported";
+          scheduleReconnect();
+          return;
+        }
+        state.handle = handle;
+      };
+
+      connect();
+    }
+
+    return () => {
+      disposed = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers.clear();
+      for (const [connectionKey, state] of states) {
+        state.handle?.close?.();
+        if (agentEventStreamStateRef.current.get(connectionKey) === state) {
+          agentEventStreamStateRef.current.delete(connectionKey);
+        }
+      }
+    };
+  }, [agentEventStreamSignature, workspaceLoaded]);
+
   async function syncRemoteAgentTasks() {
     if (syncingAgentSweepRef.current) return;
     syncingAgentSweepRef.current = true;
@@ -7131,8 +7255,12 @@ export function useWorkbenchController() {
 
       for (const [connectionKey, connectionServers] of serversByConnection) {
         if (agentHealthInFlightConnectionsRef.current.has(connectionKey)) continue;
+        const eventStream = agentEventStreamStateRef.current.get(connectionKey);
+        const eventStreamHealthy =
+          eventStream?.status === "open" && Date.now() - Number(eventStream.lastEventAt || 0) < 45_000;
+        if (eventStreamHealthy) continue;
         const lastConnectionPollAt = Number(agentConnectionPollAtRef.current.get(connectionKey) || 0);
-        if (lastConnectionPollAt && now - lastConnectionPollAt < 15_000) continue;
+        if (lastConnectionPollAt && now - lastConnectionPollAt < 60_000) continue;
 
         const taskCandidates = [];
         for (const server of connectionServers) {
@@ -7666,13 +7794,19 @@ export function useWorkbenchController() {
       ? (sourceServer.messages || []).find((item) => item.id === retryMessage.id && item.role === "assistant")
       : null;
     const reuseMessage = existingRetryMessage || null;
-    const turnId = String(reuseMessage?.turnId || reuseMessage?.messagePairId || "").trim() || `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const clientCreatedAtMs = Date.now();
+    const turnId = String(reuseMessage?.turnId || reuseMessage?.messagePairId || "").trim() || `turn-${clientCreatedAtMs}-${Math.random().toString(36).slice(2, 8)}`;
     const userMessageId = String(reuseMessage?.replyToMessageId || "").trim() || `${turnId}-request`;
     const assistantMessageId = reuseMessage?.id || `${turnId}-response`;
     const messagePairId = turnId;
     const sourceMessages = sourceServer.messages || [];
     const initialBackend = agentPreferredForProfile(currentProfile) ? "agent" : "ssh";
     const initialConversationId = ensureServerConversationId(serverId, currentProfile, selectedAgent.id);
+    // Keep a message-specific reveal request separate from the generic sticky
+    // scroll flag. Scroll events may update the generic flag before React has
+    // committed this turn, but they must not cancel a deliberate send reveal.
+    conversationRevealRequestRef.current = createConversationRevealRequest(serverId, userMessageId);
+    conversationStickToBottomRef.current = true;
     composerRef.current = "";
     setComposer("");
     setRawOpen(false);
@@ -7757,6 +7891,7 @@ export function useWorkbenchController() {
         conversationId: initialConversationId,
         agentId: selectedAgent.id,
         promptText: text,
+        clientCreatedAtMs,
       }),
       createMessage({
         id: assistantMessageId,
@@ -7783,6 +7918,7 @@ export function useWorkbenchController() {
         startedAt: Date.now(),
         remoteTaskStatus: "preparing",
         remoteTaskCheckedAt: Date.now(),
+        clientCreatedAtMs,
         turnId,
         messagePairId,
         replyToMessageId: userMessageId,
@@ -7861,7 +7997,7 @@ export function useWorkbenchController() {
           assistantMessageId,
         );
         uploadedFileCount = uploadedImages.length;
-        removeUploadedImageAttachments(pendingFiles);
+        removeUploadedImageAttachments(pendingFiles, serverId);
         sendStage = "executing";
         promptText = appendUploadedImagesToPrompt(text, uploadedImages);
         updateAssistantMessageInServer(serverId, userMessageId, {
@@ -8601,7 +8737,7 @@ export function useWorkbenchController() {
     setRawOpen(false);
     try {
       if (activeUpload?.uploadId) {
-        const result = await SSHWorkbench.cancelUpload({ uploadId: activeUpload.uploadId });
+        const result = await cancelAgentDirectUpload(activeUpload.uploadId);
         if (result?.active === false && result?.cancelled !== true) {
           throw new Error("上传已经结束，没有可取消的上传操作。");
         }
@@ -8802,6 +8938,10 @@ export function useWorkbenchController() {
   const deletingFilePath = fileDownload?.state === "loading" && fileDownload?.action === "delete" ? fileDownload.path : "";
   const nativeMobile = platform === "ios" || platform === "android";
   const canOpenInteractiveTerminal = Boolean(bridge?.openTerminal);
+  const conversationRevealMessageId =
+    conversationRevealRequestRef.current?.serverId === activeServerId
+      ? String(conversationRevealRequestRef.current.messageId || "")
+      : "";
   const shellProps = {
     components: shellComponents,
     shellClassName,
@@ -8844,6 +8984,7 @@ export function useWorkbenchController() {
     wakeError,
     wakePhrases: wakePhrasesForProfile(profile),
     messages,
+    conversationRevealMessageId,
     conversationClassName,
     conversationScrollRef,
     handleConversationScroll,
@@ -8869,6 +9010,7 @@ export function useWorkbenchController() {
     remoteDirectory,
     onSelectServer: selectServer,
     onReorderServer: reorderServerSessions,
+    onSortServer: sortServerSessions,
     onOpenChatWindow: openDetachedChatWindow,
     onConfigureServer: openServerSettings,
     onAddServer: openNewServerSettings,

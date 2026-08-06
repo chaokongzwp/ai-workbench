@@ -16,10 +16,12 @@ import {
   Circle as LucideCircle,
   Download as LucideDownload,
   Ear as LucideEar,
+  FileText as LucideFileText,
   Folder as LucideFolder,
   Mic as LucideMic,
   Paperclip as LucidePaperclip,
   Square as LucideSquare,
+  X as LucideX,
 } from "lucide-react";
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
@@ -470,21 +472,41 @@ export function Composer({
         <div className="input-row">
         {imageAttachments.length ? (
           <div className="composer-attachments" aria-label="待上传文件">
-            {imageAttachments.map((item) => (
-              <figure className="composer-attachment" key={item.id}>
-                {item.isImage && item.previewUrl ? (
-                  <img src={item.previewUrl} alt="" />
-                ) : (
-                  <span className="composer-attachment-file" aria-hidden="true">
-                    <FileIcon size={24} weight="regular" />
-                  </span>
-                )}
-                <figcaption>{item.name}</figcaption>
-                <button type="button" onClick={() => onRemoveImageAttachment?.(item.id)} aria-label={`移除 ${item.name}`}>
-                  <X size={12} weight="bold" aria-hidden="true" />
-                </button>
-              </figure>
-            ))}
+            {imageAttachments.map((item) => {
+              const hasImagePreview = item.isImage && item.previewUrl;
+              return (
+                <figure
+                  className={`composer-attachment ${hasImagePreview ? "is-image" : "is-file"}`}
+                  key={item.id}
+                  title={item.name}
+                >
+                  {hasImagePreview ? (
+                    <img src={item.previewUrl} alt="" />
+                  ) : (
+                    <span className="composer-attachment-file" aria-hidden="true">
+                      {macIcons ? (
+                        <LucideFileText size={21} strokeWidth={1.8} />
+                      ) : (
+                        <FileIcon size={22} weight="regular" />
+                      )}
+                    </span>
+                  )}
+                  <figcaption>{item.name}</figcaption>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveImageAttachment?.(item.id)}
+                    aria-label={`移除 ${item.name}`}
+                    title={`移除 ${item.name}`}
+                  >
+                    {macIcons ? (
+                      <LucideX size={14} strokeWidth={2} aria-hidden="true" />
+                    ) : (
+                      <X size={12} weight="bold" aria-hidden="true" />
+                    )}
+                  </button>
+                </figure>
+              );
+            })}
           </div>
         ) : null}
         <textarea

@@ -45,11 +45,12 @@ export function agentDirectConfig(profile = {}) {
 }
 
 export function agentDirectEventUrl(profile = {}) {
-  // Browser WebSockets cannot pin the Agent's self-signed certificate. Keep
-  // status transport on the native pinned HTTPS request until a native event
-  // stream implementation is available on every client.
-  void profile;
-  return "";
+  const { endpoint, enabled } = agentDirectConfig(profile);
+  if (!enabled) return "";
+  const url = new URL(endpoint);
+  url.protocol = "wss:";
+  url.pathname = "/v1/events";
+  return url.toString();
 }
 
 export function agentDirectTaskLifecycle(task = {}) {
@@ -72,6 +73,34 @@ export function agentDirectTaskLifecycle(task = {}) {
 
 export function agentDirectTaskNeedsSync(task = {}) {
   return agentDirectTaskLifecycle(task).status !== "completed";
+}
+
+export function agentDirectTaskStatusSnapshot(task = {}) {
+  const outcome = text(task.outcome).toLowerCase();
+  const rawStatus = text(task.rawStatus).toLowerCase();
+  const taskStatus =
+    rawStatus ||
+    (outcome === "success" ? "done" : outcome === "cancelled" ? "cancelled" : outcome === "error" ? "error" : "running");
+  const output = String(task.output || "");
+  return {
+    taskStatus,
+    output,
+    raw: output,
+    eventFingerprint: JSON.stringify([
+      taskStatus,
+      task.startedAt || "",
+      task.finishedAt || "",
+      Number(task.activityBytes || 0),
+      task.activityUpdatedAt || "",
+      output.length,
+    ]),
+    pid: "",
+    startedAt: text(task.startedAt),
+    runnerStartedAt: text(task.runnerStartedAt),
+    finishedAt: text(task.finishedAt),
+    exitCode: text(task.exitCode),
+    executionSummary: text(task.executionSummary),
+  };
 }
 
 export function agentDirectTaskRequest({
@@ -110,6 +139,119 @@ export class AgentDirectRequestError extends Error {
     this.code = code;
     this.body = body;
   }
+}
+
+function base64Bytes(value) {
+  const compact = String(value || "").replace(/\s+/g, "");
+  const binary = globalThis.atob(compact);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function base64UrlUtf8(value) {
+  const bytes = new TextEncoder().encode(String(value || ""));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return globalThis.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function sha256Hex(bytes) {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function parseAgentUploadResponse(response) {
+  const raw = String(response?.body || "");
+  const parsed = jsonOrNull(raw);
+  const status = Number(response?.status || 0);
+  if (status < 200 || status >= 300) {
+    throw new AgentDirectRequestError(
+      text(parsed?.error?.message || parsed?.message || raw) || `附件上传失败（${status || "未知状态"}）。`,
+      { status, code: text(parsed?.error?.code) || "agent_upload_http_error", body: parsed },
+    );
+  }
+  if (!parsed?.file?.path) {
+    throw new AgentDirectRequestError("Agent 没有返回附件路径。", { code: "agent_upload_invalid_response" });
+  }
+  return parsed.file;
+}
+
+export async function agentDirectUpload(profile, attachment, {
+  uploadId,
+  workdir,
+  timeoutMs = 240_000,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const { endpoint, accessToken, enabled, tlsFingerprint } = agentDirectConfig(profile);
+  if (!enabled) throw new AgentDirectRequestError("Agent 安全上传尚未配置。", { code: "agent_direct_not_configured" });
+  const payload = {
+    endpoint,
+    accessToken,
+    tlsFingerprint,
+    allowInsecure: false,
+    path: "/v1/files",
+    uploadId: text(uploadId),
+    workdir: text(workdir),
+    name: text(attachment?.name) || "attachment.bin",
+    mime: text(attachment?.mime) || "application/octet-stream",
+    size: Number(attachment?.size || 0),
+    base64: String(attachment?.base64 || ""),
+    timeoutMs,
+  };
+  if (!payload.uploadId || !payload.workdir || !payload.base64) {
+    throw new AgentDirectRequestError("附件上传参数不完整。", { code: "agent_upload_invalid" });
+  }
+  const nativePlatform = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
+  const nativeUpload = desktopBridge()?.agentUpload || (nativePlatform ? SSHWorkbench?.agentUpload : null);
+  if (typeof nativeUpload === "function") {
+    try {
+      return parseAgentUploadResponse(await nativeUpload(payload));
+    } catch (error) {
+      if (error instanceof AgentDirectRequestError) throw error;
+      throw new AgentDirectRequestError(text(error?.message) || "无法上传附件到 Agent。", { code: "agent_upload_network_error" });
+    }
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new AgentDirectRequestError("当前平台不支持 Agent 附件上传。", { code: "agent_direct_fetch_unavailable" });
+  }
+  const bytes = base64Bytes(payload.base64);
+  const expectedSha256 = await sha256Hex(bytes);
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), Math.max(1_000, Number(timeoutMs) || 240_000)) : null;
+  try {
+    const response = await fetchImpl(new URL("/v1/files", `${endpoint}/`), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/octet-stream",
+        "X-AIWB-Upload-Id": payload.uploadId,
+        "X-AIWB-Workdir": base64UrlUtf8(payload.workdir),
+        "X-AIWB-File-Name": base64UrlUtf8(payload.name),
+        "X-AIWB-File-Mime": payload.mime,
+        "X-AIWB-Content-SHA256": expectedSha256,
+      },
+      body: bytes,
+      signal: controller?.signal,
+    });
+    return parseAgentUploadResponse({ status: response.status, body: await response.text() });
+  } catch (error) {
+    if (error instanceof AgentDirectRequestError) throw error;
+    throw new AgentDirectRequestError(error?.name === "AbortError" ? "附件上传超时。" : "无法连接 Agent 上传附件。", {
+      code: error?.name === "AbortError" ? "agent_upload_timeout" : "agent_upload_network_error",
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function cancelAgentDirectUpload(uploadId) {
+  const nativePlatform = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
+  const cancel = desktopBridge()?.cancelAgentUpload || (nativePlatform ? SSHWorkbench?.cancelAgentUpload : null);
+  return typeof cancel === "function"
+    ? cancel({ uploadId: text(uploadId) })
+    : { ok: true, cancelled: false, active: false, uploadId: text(uploadId) };
 }
 
 export async function agentDirectRequest(profile, path, { method = "GET", body, timeoutMs = 12_000, fetchImpl = globalThis.fetch } = {}) {
@@ -185,18 +327,58 @@ export async function agentDirectRequest(profile, path, { method = "GET", body, 
   }
 }
 
-export function createAgentDirectEventStream(profile, { onEvent, onOpen, onClose, onError, WebSocketImpl = globalThis.WebSocket } = {}) {
-  const { accessToken, enabled } = agentDirectConfig(profile);
-  const eventUrl = agentDirectEventUrl(profile);
-  if (!enabled || typeof WebSocketImpl !== "function") return null;
+export function createAgentDirectEventStream(profile, { onEvent, onOpen, onClose, onError } = {}) {
+  const { endpoint, accessToken, tlsFingerprint, enabled } = agentDirectConfig(profile);
+  if (!enabled) return null;
 
-  const socket = new WebSocketImpl(eventUrl, ["aiwb.v1", `bearer.${accessToken}`]);
-  socket.addEventListener?.("open", () => onOpen?.());
-  socket.addEventListener?.("close", (event) => onClose?.(event));
-  socket.addEventListener?.("error", (event) => onError?.(event));
-  socket.addEventListener?.("message", (event) => {
-    const payload = jsonOrNull(typeof event.data === "string" ? event.data : "");
-    if (payload && typeof payload === "object") onEvent?.(payload);
-  });
-  return socket;
+  const streamId = globalThis.crypto?.randomUUID?.() || `agent-events-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const payload = { streamId, endpoint, accessToken, tlsFingerprint };
+  const bridge = desktopBridge();
+  let disposed = false;
+  let terminalNotified = false;
+  let removeListener = null;
+  let nativeListener = null;
+
+  const notifyTerminal = (event, isError = false) => {
+    if (disposed || terminalNotified) return;
+    terminalNotified = true;
+    if (isError) onError?.(event);
+    onClose?.(event);
+  };
+  const handle = (message = {}) => {
+    if (disposed || String(message.streamId || "") !== streamId) return;
+    if (message.state === "open") onOpen?.();
+    else if (message.state === "event" && message.event && typeof message.event === "object") onEvent?.(message.event);
+    else if (message.state === "error") notifyTerminal(message, true);
+    else if (message.state === "closed") notifyTerminal(message, false);
+  };
+
+  const ready = (async () => {
+    try {
+      if (bridge?.startAgentEventStream && bridge?.onAgentEvent) {
+        removeListener = bridge.onAgentEvent(handle);
+        await bridge.startAgentEventStream(payload);
+        return true;
+      }
+      nativeListener = await SSHWorkbench.addListener("agentEvent", handle);
+      await SSHWorkbench.startAgentEventStream(payload);
+      return true;
+    } catch (error) {
+      notifyTerminal(error, true);
+      return false;
+    }
+  })();
+
+  return {
+    streamId,
+    ready,
+    close() {
+      if (disposed) return;
+      disposed = true;
+      removeListener?.();
+      nativeListener?.remove?.();
+      if (bridge?.stopAgentEventStream) bridge.stopAgentEventStream({ streamId }).catch?.(() => {});
+      else SSHWorkbench.stopAgentEventStream({ streamId }).catch(() => {});
+    },
+  };
 }

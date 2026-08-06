@@ -17,6 +17,7 @@ import {
 import * as Core from "../core/workbenchCore.js";
 import * as Primitives from "./primitives.jsx";
 import { useSessionReorder } from "./useSessionReorder.js";
+import { SessionSortMenu } from "./SessionSortMenu.jsx";
 
 const {
   SSHWorkbench,
@@ -385,6 +386,7 @@ export function NavigationPanel({
   onToggleCollapse,
   onSelectServer,
   onReorderServer,
+  onSortServer,
   onOpenChatWindow,
   onConfigureServer,
   onAddServer,
@@ -473,6 +475,7 @@ export function NavigationPanel({
             )}
           </button>
         ) : null}
+        <SessionSortMenu onSort={servers.length > 1 ? onSortServer : undefined} />
         {onDuplicateServer && !macVariant && !hideDuplicate ? (
           <button
             className={`sidebar-duplicate ${ipadVariant ? "utility-icon-button" : ""}`}

@@ -3,8 +3,10 @@ import {
 } from "../core/foundation.js";
 import {
   lastPendingAgentResponse,
+  messageClientTimestamp,
   mergeTaskMessages,
   normalizeMessageLifecycle,
+  reconcileRemoteTaskId,
   sortConversationMessages,
   taskStateForMessage,
   taskStateFailed,
@@ -33,6 +35,10 @@ export function messageTextKey(message) {
 function mergeRemoteUserMessages(existing, incoming) {
   const preferred = messageTextKey(incoming) ? incoming : existing;
   const fallback = preferred === incoming ? existing : incoming;
+  const clientCreatedAtMs = earliestMessageTime(
+    messageClientTimestamp(existing),
+    messageClientTimestamp(incoming),
+  );
   const createdAtMs = earliestMessageTime(existing.createdAtMs, incoming.createdAtMs);
 
   return {
@@ -41,13 +47,14 @@ function mergeRemoteUserMessages(existing, incoming) {
     id: existing.id,
     body: preferred.body || fallback.body || "",
     promptText: preferred.promptText || fallback.promptText || preferred.body || fallback.body || "",
-    remoteTaskId: existing.remoteTaskId || incoming.remoteTaskId,
+    remoteTaskId: reconcileRemoteTaskId(existing.remoteTaskId, incoming.remoteTaskId),
     conversationId: existing.conversationId || incoming.conversationId,
     agentId: existing.agentId || incoming.agentId,
     backend: existing.backend || incoming.backend,
     turnId: existing.turnId || incoming.turnId || existing.messagePairId || incoming.messagePairId || "",
     messagePairId: existing.messagePairId || incoming.messagePairId || "",
     replyToMessageId: existing.replyToMessageId || incoming.replyToMessageId || "",
+    clientCreatedAtMs,
     createdAtMs,
     createdAt: existing.createdAt || incoming.createdAt,
   };

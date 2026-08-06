@@ -221,6 +221,7 @@ try {
 
   assert.equal(await httpGeneration(httpPort, "/upgrade"), "accepted");
   await waitUntil(async () => (await httpGeneration(httpPort)) === "new-v53", 15_000);
+  await waitUntil(async () => Boolean(await readText(join(agentHome, "daemon.lock", "control.sha256"))), 15_000);
   const newHttpPid = Number(await readText(join(agentHome, "http.pid")));
   const newUpdaterPid = Number(await readText(join(agentHome, "updater.pid")));
   const newServicePid = Number(await readText(join(agentHome, "service.pid")));

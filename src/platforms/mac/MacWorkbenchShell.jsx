@@ -48,6 +48,7 @@ export function MacWorkbenchShell({
   wakeError,
   wakePhrases,
   messages,
+  conversationRevealMessageId,
   conversationClassName,
   conversationScrollRef,
   handleConversationScroll,
@@ -72,6 +73,7 @@ export function MacWorkbenchShell({
   remoteDirectory,
   onSelectServer,
   onReorderServer,
+  onSortServer,
   onOpenChatWindow,
   onConfigureServer,
   onAddServer,
@@ -168,6 +170,7 @@ export function MacWorkbenchShell({
   } = useProgressiveMessages({
     messages,
     sessionId: activeServerId,
+    revealMessageId: conversationRevealMessageId,
     onScroll: handleConversationScroll,
   });
   const macSessionTitle = String(activeSessionName || "当前会话")
@@ -211,6 +214,7 @@ export function MacWorkbenchShell({
             onToggleCollapse={onToggleSidebar}
             onSelectServer={onSelectServer}
             onReorderServer={onReorderServer}
+            onSortServer={onSortServer}
             onOpenChatWindow={onOpenChatWindow}
             onConfigureServer={onConfigureServer}
             onAddServer={onAddServer}
@@ -401,6 +405,7 @@ export function MacWorkbenchShell({
                 setMobileNavOpen(false);
               }}
               onReorderServer={onReorderServer}
+              onSortServer={onSortServer}
               onConfigureServer={(serverId) => {
                 onConfigureServer?.(serverId);
                 setMobileNavOpen(false);

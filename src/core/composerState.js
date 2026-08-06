@@ -5,6 +5,26 @@ import {
   taskStateSyncing,
 } from "./messageLifecycle.js";
 
+export function sessionAttachmentDraft(drafts, sessionId) {
+  if (!(drafts instanceof Map) || !sessionId) return [];
+  const attachments = drafts.get(sessionId);
+  return Array.isArray(attachments) ? attachments : [];
+}
+
+export function updateSessionAttachmentDraft(drafts, sessionId, updater) {
+  if (!(drafts instanceof Map) || !sessionId) return [];
+  const current = sessionAttachmentDraft(drafts, sessionId);
+  const next = typeof updater === "function" ? updater(current) : updater;
+  const normalized = Array.isArray(next) ? next : [];
+  drafts.set(sessionId, normalized);
+  return normalized;
+}
+
+export function switchSessionAttachmentDraft(drafts, previousSessionId, currentAttachments, nextSessionId) {
+  if (previousSessionId) updateSessionAttachmentDraft(drafts, previousSessionId, currentAttachments);
+  return sessionAttachmentDraft(drafts, nextSessionId);
+}
+
 export function composerLockPresentation({
   busy = false,
   pendingAction = false,

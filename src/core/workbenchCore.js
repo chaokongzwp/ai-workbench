@@ -6,6 +6,7 @@ export * from "./remoteCommands.js";
 export * from "./remoteFiles.js";
 export * from "./agentOutput.js";
 export * from "./routingOutput.js";
+export * from "./conversationScroll.js";
 export * from "./assistantRuntime.js";
 export * from "./messageLifecycle.js";
 export * from "./sshReconnect.js";

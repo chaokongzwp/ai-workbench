@@ -165,6 +165,7 @@ const {
   mergeImportedServers,
   mergeLocalMessageHistory,
   mergeManualWorkdirHistory,
+  messageChronologyTimestamp,
   messagesForStorage,
   migrationFileKind,
   migrationFileName,
@@ -439,10 +440,14 @@ function messageNeedsResultSync(message) {
 
 function messageTimestamp(message) {
   const completedAt = Number(message?.completedAt || 0);
-  const createdAtMs = Number(message?.createdAtMs || 0);
+  const createdAtMs = messageChronologyTimestamp(message);
+  const completedAtIsPlausible =
+    completedAt > 0 &&
+    (!createdAtMs || completedAt >= createdAtMs) &&
+    completedAt <= Date.now() + 5 * 60 * 1000;
   const timestamp =
     message?.role === "assistant" && !taskStateIsActive(taskStateForMessage(message))
-      ? completedAt || createdAtMs
+      ? (completedAtIsPlausible ? completedAt : createdAtMs)
       : createdAtMs;
   if (!timestamp) {
     return { label: String(message?.createdAt || "").trim(), dateTime: "" };
@@ -521,7 +526,15 @@ function CopyButton({
   );
 }
 
-export function AgentFailureCard({ message, failure, operationBusy, onRetry, onShowDetails, onOpenSettings }) {
+export function AgentFailureCard({
+  message,
+  failure,
+  operationBusy,
+  onRetry,
+  onShowDetails,
+  onOpenSettings,
+  showActions = true,
+}) {
   if (!failure) return null;
   const canRetry = Boolean(failure.canRetry && message?.promptText);
   const hasDetail = Boolean(failure.detail || message?.technicalDetail);
@@ -545,23 +558,25 @@ export function AgentFailureCard({ message, failure, operationBusy, onRetry, onS
           </div>
         ) : null}
       </div>
-      <div className="agent-failure-actions">
-        {canRetry ? (
-          <button type="button" className="primary" onClick={() => onRetry?.(message)} disabled={operationBusy}>
-            重试
-          </button>
-        ) : null}
-        {hasDetail ? (
-          <button type="button" onClick={() => onShowDetails?.(message, failure)} disabled={operationBusy}>
-            查看详情
-          </button>
-        ) : null}
-        {failure.canOpenSettings ? (
-          <button type="button" onClick={onOpenSettings} disabled={operationBusy}>
-            设置
-          </button>
-        ) : null}
-      </div>
+      {showActions ? (
+        <div className="agent-failure-actions">
+          {canRetry ? (
+            <button type="button" className="primary" onClick={() => onRetry?.(message)} disabled={operationBusy}>
+              重试
+            </button>
+          ) : null}
+          {hasDetail ? (
+            <button type="button" onClick={() => onShowDetails?.(message, failure)} disabled={operationBusy}>
+              查看详情
+            </button>
+          ) : null}
+          {failure.canOpenSettings ? (
+            <button type="button" onClick={onOpenSettings} disabled={operationBusy}>
+              设置
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -732,10 +747,20 @@ export function MessageBubble({
       typeof onRefreshOutput === "function" &&
       (taskRunning || taskState === taskStateFailed || needsResultSync),
   );
+  const macHeaderRecovery = iconStyle === "mac";
+  const failureCanRetry = Boolean(agentFailure?.canRetry && String(message?.promptText || "").trim());
+  const failureHasDetail = Boolean(agentFailure && (agentFailure.detail || message?.technicalDetail));
+  const failureCanOpenSettings = Boolean(agentFailure?.canOpenSettings);
+  const showMacHeaderRecovery = Boolean(
+    macHeaderRecovery && (failureCanRetry || failureHasDetail || failureCanOpenSettings || canRetryFailedMessage),
+  );
 
   if (message.role === "user") {
     return (
-      <article className={`user-prompt ${fileReferences.length ? "has-files" : ""}`}>
+      <article
+        className={`user-prompt ${fileReferences.length ? "has-files" : ""}`}
+        data-message-id={message.id}
+      >
         <div className="user-message-card">
           <p>{bodyText}</p>
           {fileReferences.length ? (
@@ -782,7 +807,10 @@ export function MessageBubble({
   if (!hasVisibleAssistantContent) return null;
 
   return (
-    <article className={`agent-response ${legacyMissingResult ? "failed" : taskState}`}>
+    <article
+      className={`agent-response ${legacyMissingResult ? "failed" : taskState}`}
+      data-message-id={message.id}
+    >
       <header className="message-header">
         <AgentLogo agentId={agent.id} compact />
         <strong>{headerTitle}</strong>
@@ -794,6 +822,42 @@ export function MessageBubble({
         <span className={`streaming ${statusForHeader}`}>{statusText}</span>
         {!taskStatusUnconfirmed && !legacyMissingResult ? <TaskTimer message={message} /> : null}
         <div className="message-header-actions">
+          {showMacHeaderRecovery ? (
+            <div className="message-header-recovery-actions" aria-label="异常处理">
+              {failureCanRetry || canRetryFailedMessage ? (
+                <button
+                  type="button"
+                  className="message-recovery-action primary"
+                  onClick={() => onRetryMessage?.(message)}
+                  disabled={operationBusy}
+                >
+                  重试
+                </button>
+              ) : null}
+              {failureHasDetail ? (
+                <button
+                  type="button"
+                  className="message-recovery-action"
+                  onClick={() => onShowDetails?.(message, agentFailure)}
+                  disabled={operationBusy}
+                  aria-label="查看异常详情"
+                  title="查看异常详情"
+                >
+                  详情
+                </button>
+              ) : null}
+              {failureCanOpenSettings ? (
+                <button
+                  type="button"
+                  className="message-recovery-action"
+                  onClick={onOpenSettings}
+                  disabled={operationBusy}
+                >
+                  设置
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {canRefreshRemoteTask ? (
             <button
               type="button"
@@ -826,6 +890,7 @@ export function MessageBubble({
           onRetry={onRetryMessage}
           onShowDetails={onShowDetails}
           onOpenSettings={onOpenSettings}
+          showActions={!macHeaderRecovery}
         />
       ) : assistantBodyText || taskStatusUnconfirmed ? (
         <p className="assistant-copy">
@@ -834,14 +899,14 @@ export function MessageBubble({
             : assistantBodyText}
         </p>
       ) : null}
-      {canRetryFailedMessage ? (
+      {!macHeaderRecovery && canRetryFailedMessage ? (
         <div className="agent-failure-actions message-recovery-actions">
           <button type="button" className="primary" onClick={() => onRetryMessage?.(message)} disabled={operationBusy}>
             重试
           </button>
         </div>
       ) : null}
-      {!agentFailure && !taskRunning && !taskStatusUnconfirmed && canRefreshRemoteTask ? (
+      {!macHeaderRecovery && !agentFailure && !taskRunning && !taskStatusUnconfirmed && canRefreshRemoteTask ? (
         <div className="agent-failure-actions message-recovery-actions">
           <button type="button" className="primary" onClick={() => onRefreshOutput?.(message)} disabled={operationBusy}>
             检查状态

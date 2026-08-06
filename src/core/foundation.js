@@ -2,6 +2,7 @@ import { registerPlugin } from "@capacitor/core";
 import {
   lastActiveTaskMessage,
   mergeTaskMessages,
+  messageClientTimestamp,
   messageChronologyTimestamp,
   normalizeMessageLifecycle,
   sortConversationMessages,
@@ -59,6 +60,26 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       const bridge = desktopBridge();
       if (bridge?.agentRequest) return bridge.agentRequest(payload);
       throw new Error("当前环境不支持安全的 Agent 直连请求。");
+    },
+    async startAgentEventStream(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.startAgentEventStream) return bridge.startAgentEventStream(payload);
+      throw new Error("当前环境不支持安全的 Agent 事件流。");
+    },
+    async stopAgentEventStream(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.stopAgentEventStream) return bridge.stopAgentEventStream(payload);
+      return { ok: true, stopped: false };
+    },
+    async agentUpload(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.agentUpload) return bridge.agentUpload(payload);
+      throw new Error("当前环境不支持安全的 Agent 附件上传。");
+    },
+    async cancelAgentUpload(payload) {
+      const bridge = desktopBridge();
+      if (bridge?.cancelAgentUpload) return bridge.cancelAgentUpload(payload);
+      return { ok: true, cancelled: false, active: false };
     },
     async haptic(payload = {}) {
       const bridge = desktopBridge();
@@ -1128,7 +1149,8 @@ export function clipPersistedText(value, limit = maxPersistedTextLength) {
 
 export function normalizePersistedMessage(message) {
   const source = message && typeof message === "object" ? message : { body: String(message ?? "") };
-  const createdAtMs = messageChronologyTimestamp(source) || Date.now();
+  const clientCreatedAtMs = messageClientTimestamp(source);
+  const createdAtMs = Number(source.createdAtMs || 0) || messageChronologyTimestamp(source) || Date.now();
   const lifecycleSource = normalizeMessageLifecycle({ ...source, createdAtMs });
   const remoteTaskStatus = String(source.remoteTaskStatus || "").trim();
   const hasCompletedRemoteOutput =
@@ -1181,6 +1203,7 @@ export function normalizePersistedMessage(message) {
     output: clipPersistedText(lifecycleSource.output),
     liveOutput: clipPersistedText(lifecycleSource.liveOutput, 30_000),
     createdAt: source.createdAt || new Date(createdAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    clientCreatedAtMs: clientCreatedAtMs || undefined,
     createdAtMs,
     startedAt: startedAt || undefined,
     completedAt: completedAt || undefined,

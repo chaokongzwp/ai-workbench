@@ -167,21 +167,59 @@ export function messageLifecycleIdentity(message) {
   return id ? `id:${id}` : "";
 }
 
+// A conversation sync record may contain an identifier hard-wrapped by a
+// legacy PTY. Keep the already-confirmed identifier, except when either value
+// is an exact prefix of the other, in which case the longer value is the
+// lossless form. Unrelated incoming ids never replace the existing id for the
+// same turn.
+export function reconcileRemoteTaskId(existingValue, incomingValue) {
+  const existing = text(existingValue);
+  const incoming = text(incomingValue);
+  if (!existing) return incoming;
+  if (!incoming || incoming === existing) return existing;
+  if (existing.startsWith(incoming)) return existing;
+  if (incoming.startsWith(existing)) return incoming;
+  return existing;
+}
+
 function positiveTimestamp(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
-function timestampFromMessageId(message) {
-  const match = text(message?.id).match(/(?:^|\D)([12]\d{12})(?:\D|$)/);
-  return positiveTimestamp(match?.[1]);
+function plausibleClientEpoch(value, now = Date.now()) {
+  const timestamp = positiveTimestamp(value);
+  const earliestSupportedEpoch = Date.UTC(2000, 0, 1);
+  const maximumClockDrift = 7 * 24 * 60 * 60 * 1000;
+  return timestamp >= earliestSupportedEpoch && timestamp <= now + maximumClockDrift ? timestamp : 0;
+}
+
+function timestampFromKnownClientIdentifier(value) {
+  const matches = [
+    ...text(value).matchAll(
+      /(?:^|[^a-z0-9])(?:turn|task|msg|request|response|assistant|user)-([12]\d{12})(?=[^0-9]|$)/gi,
+    ),
+  ];
+  return plausibleClientEpoch(matches.at(-1)?.[1]);
+}
+
+export function messageClientTimestamp(message) {
+  return (
+    plausibleClientEpoch(message?.clientCreatedAtMs) ||
+    timestampFromKnownClientIdentifier(message?.turnId) ||
+    timestampFromKnownClientIdentifier(message?.messagePairId) ||
+    timestampFromKnownClientIdentifier(message?.requestMessageId) ||
+    timestampFromKnownClientIdentifier(message?.replyToMessageId) ||
+    timestampFromKnownClientIdentifier(message?.remoteTaskId) ||
+    timestampFromKnownClientIdentifier(message?.id)
+  );
 }
 
 export function messageChronologyTimestamp(message) {
   return (
+    messageClientTimestamp(message) ||
     positiveTimestamp(message?.createdAtMs) ||
     positiveTimestamp(message?.startedAt) ||
-    timestampFromMessageId(message) ||
     positiveTimestamp(message?.completedAt)
   );
 }
@@ -229,8 +267,12 @@ export function sortConversationMessages(messages = []) {
         const roleDifference = roleOrder(left.message) - roleOrder(right.message);
         if (roleDifference) return roleDifference;
       }
-      if (leftTime && !rightTime) return -1;
-      if (!leftTime && rightTime) return 1;
+      // Timestamp-less records are legacy history. Keep their stable source
+      // order ahead of timestamped turns so a newly appended local turn does
+      // not get sorted behind an undated legacy tail and disappear from the
+      // progressively rendered end of the transcript.
+      if (leftTime && !rightTime) return 1;
+      if (!leftTime && rightTime) return -1;
       return (leftAnchor?.index ?? left.index) - (rightAnchor?.index ?? right.index) || left.index - right.index;
     })
     .map(({ message }) => message);
@@ -265,8 +307,14 @@ export function mergeTaskMessages(existingMessage, incomingMessage) {
   const incoming = normalizeMessageLifecycle(incomingMessage);
   const existingIdentity = messageLifecycleIdentity(existing);
   const incomingIdentity = messageLifecycleIdentity(incoming);
+  const existingTurnId = text(existing.turnId || existing.messagePairId);
+  const incomingTurnId = text(incoming.turnId || incoming.messagePairId);
+  const sameTurn =
+    Boolean(existingTurnId) &&
+    existingTurnId === incomingTurnId &&
+    text(existing.role) === text(incoming.role);
 
-  if (existingIdentity && incomingIdentity && existingIdentity !== incomingIdentity) {
+  if (existingIdentity && incomingIdentity && existingIdentity !== incomingIdentity && !sameTurn) {
     return incoming;
   }
 
@@ -282,7 +330,9 @@ export function mergeTaskMessages(existingMessage, incomingMessage) {
     turnId: preferred.turnId || fallback.turnId || preferred.messagePairId || fallback.messagePairId || "",
     messagePairId: preferred.messagePairId || fallback.messagePairId || "",
     replyToMessageId: preferred.replyToMessageId || fallback.replyToMessageId || "",
-    remoteTaskId: preferred.remoteTaskId || fallback.remoteTaskId || "",
+    remoteTaskId: sameTurn
+      ? reconcileRemoteTaskId(existing.remoteTaskId, incoming.remoteTaskId)
+      : preferred.remoteTaskId || fallback.remoteTaskId || "",
     conversationId: preferred.conversationId || fallback.conversationId || "",
     agentId: preferred.agentId || fallback.agentId || "",
     backend: preferred.backend || fallback.backend || "",
@@ -299,6 +349,10 @@ export function mergeTaskMessages(existingMessage, incomingMessage) {
       Array.isArray(preferred.attachments) && preferred.attachments.length
         ? preferred.attachments
         : fallback.attachments,
+    clientCreatedAtMs: earliestPositiveNumber(
+      messageClientTimestamp(existing),
+      messageClientTimestamp(incoming),
+    ),
     createdAtMs: earliestPositiveNumber(existing.createdAtMs, incoming.createdAtMs),
     startedAt: earliestPositiveNumber(
       existing.startedAt || existing.createdAtMs,

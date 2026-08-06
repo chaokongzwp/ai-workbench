@@ -30,6 +30,8 @@ let activeWakeRun;
 let activeSpeechOutputRun;
 let profileSaveChain = Promise.resolve();
 const embeddedTerminals = new Map();
+const activeAgentUploads = new Map();
+const activeAgentEventStreams = new Map();
 const sshCommandSessions = new Map();
 const sshCommandConnections = new Map();
 const sshConnectionIdleTtlMs = 30_000;
@@ -2490,7 +2492,10 @@ function executeSshCommand(client, config) {
       return;
     }
 
-    client.exec(config.command, config.stdin ? {} : { pty: true }, (error, stream) => {
+    // Machine-readable commands must not run behind a terminal. A PTY can
+    // hard-wrap long Agent protocol markers at its column boundary (80 columns
+    // by default on Windows OpenSSH), corrupting task and message identifiers.
+    client.exec(config.command, {}, (error, stream) => {
       if (error) {
         finish(() => reject(error));
         return;
@@ -2611,6 +2616,38 @@ async function openExternalFile(payload = {}) {
   const openError = await shell.openPath(previewPath);
   if (openError) throw new Error(openError);
   return { ok: true, path: previewPath };
+}
+
+const maxEnvironmentImportBytes = 256 * 1024;
+
+async function pickEnvironmentFile(ownerWindow) {
+  const options = {
+    title: "选择环境变量文件",
+    buttonLabel: "导入",
+    properties: ["openFile", "showHiddenFiles", "dontAddToRecent"],
+    filters: [
+      { name: "环境变量文件", extensions: ["env", "sh", "txt"] },
+      { name: "所有文件", extensions: ["*"] },
+    ],
+  };
+  const result = ownerWindow && !ownerWindow.isDestroyed()
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options);
+  const filePath = result.filePaths?.[0];
+  if (result.canceled || !filePath) return { ok: true, canceled: true };
+
+  const info = await stat(filePath);
+  if (!info.isFile()) throw new Error("请选择一个环境变量文件。");
+  if (info.size > maxEnvironmentImportBytes) {
+    throw new Error("环境变量文件不能超过 256KB。");
+  }
+  return {
+    ok: true,
+    canceled: false,
+    name: basename(filePath),
+    size: info.size,
+    text: await readFile(filePath, "utf8"),
+  };
 }
 
 const maxClipboardAttachmentBytes = 20 * 1024 * 1024;
@@ -2802,7 +2839,231 @@ function requestAgentDirect(payload = {}) {
   });
 }
 
+function requestAgentUpload(event, payload = {}) {
+  const endpoint = String(payload.endpoint || "").trim();
+  const accessToken = String(payload.accessToken || "").trim();
+  const tlsFingerprint = normalizeTlsFingerprint(payload.tlsFingerprint);
+  const uploadId = String(payload.uploadId || "").trim();
+  const workdir = String(payload.workdir || "").trim();
+  const name = String(payload.name || "attachment.bin").trim();
+  const mime = String(payload.mime || "application/octet-stream").trim();
+  const compactBase64 = String(payload.base64 || "").replace(/\s+/g, "");
+  const timeoutMs = Math.max(1_000, Math.min(300_000, Number(payload.timeoutMs) || 240_000));
+  if (!endpoint || !accessToken || !uploadId || !workdir || !compactBase64) throw new Error("Agent 附件上传参数不完整。");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compactBase64) || compactBase64.length % 4 === 1) throw new Error("附件编码无效。");
+  const content = Buffer.from(compactBase64, "base64");
+  const declaredSize = Number(payload.size || 0);
+  if (declaredSize > 0 && declaredSize !== content.length) throw new Error("附件读取不完整，请重新选择文件。");
+  const expectedSha256 = createHash("sha256").update(content).digest("hex");
+  const url = new URL(String(payload.path || "/v1/files"), endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
+  if (!['https:', 'http:'].includes(url.protocol)) throw new Error("Agent 地址协议无效。");
+  if (url.protocol === "http:" && payload.allowInsecure !== true) throw new Error("Agent 未启用 TLS，拒绝使用不加密连接。");
+  if (url.protocol === "https:" && !tlsFingerprint) throw new Error("缺少 Agent TLS 证书指纹，无法建立安全连接。");
+
+  return new Promise((resolvePromise, reject) => {
+    const requester = url.protocol === "https:" ? httpsRequest : httpRequest;
+    let certificateVerified = url.protocol === "http:";
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      if (activeAgentUploads.get(uploadId)?.request === request) activeAgentUploads.delete(uploadId);
+      if (error) reject(error instanceof Error ? error : new Error(String(error || "附件上传失败。")));
+      else resolvePromise(result);
+    };
+    const request = requester(url, {
+      method: "POST",
+      agent: false,
+      rejectUnauthorized: false,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/octet-stream",
+        "Content-Length": content.length,
+        "X-AIWB-Upload-Id": uploadId,
+        "X-AIWB-Workdir": Buffer.from(workdir, "utf8").toString("base64url"),
+        "X-AIWB-File-Name": Buffer.from(name, "utf8").toString("base64url"),
+        "X-AIWB-File-Mime": mime,
+        "X-AIWB-Content-SHA256": expectedSha256,
+      },
+    }, (response) => {
+      let raw = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { raw += chunk; });
+      response.once("error", (error) => finish(error));
+      response.once("end", () => {
+        if (!certificateVerified) return finish(new Error("Agent TLS 证书校验失败。"));
+        finish(null, { status: Number(response.statusCode || 0), body: raw });
+      });
+    });
+    activeAgentUploads.set(uploadId, { request, ownerId: event.sender.id });
+    request.once("socket", (socket) => {
+      if (url.protocol !== "https:") return;
+      socket.once("secureConnect", () => {
+        const rawCertificate = socket.getPeerCertificate?.(true)?.raw;
+        const received = rawCertificate ? createHash("sha256").update(rawCertificate).digest("base64") : "";
+        if (!received || received !== tlsFingerprint) return request.destroy(new Error("Agent TLS 证书指纹不匹配，已阻止连接。"));
+        certificateVerified = true;
+      });
+    });
+    request.once("error", (error) => finish(error));
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("附件上传超时。")));
+    let offset = 0;
+    const writeNext = () => {
+      if (settled || request.destroyed) return;
+      if (offset >= content.length) {
+        request.end();
+        return;
+      }
+      const nextOffset = Math.min(content.length, offset + 64 * 1024);
+      const writable = request.write(content.subarray(offset, nextOffset));
+      offset = nextOffset;
+      if (!event.sender.isDestroyed()) {
+        event.sender.send("aiwb:upload-progress", { uploadId, state: "uploading", bytesSent: offset, totalBytes: content.length, progress: content.length ? offset / content.length : 1 });
+      }
+      if (writable) setImmediate(writeNext);
+      else request.once("drain", writeNext);
+    };
+    writeNext();
+  });
+}
+
+function emitAgentEvent(owner, payload) {
+  if (!owner || owner.isDestroyed()) return;
+  owner.send("aiwb:agent-event", payload);
+}
+
+function stopAgentEventStream(streamId, reason = "client-stop") {
+  const active = activeAgentEventStreams.get(streamId);
+  if (!active) return false;
+  activeAgentEventStreams.delete(streamId);
+  active.stopped = true;
+  if (active.timeout) clearTimeout(active.timeout);
+  if (active.socket && !active.socket.destroyed) {
+    try { active.socket.write(createWebSocketFrame(Buffer.from(reason, "utf8"), 8)); } catch {}
+    active.socket.destroy();
+  }
+  active.request?.destroy();
+  return true;
+}
+
+function startAgentEventStream(event, payload = {}) {
+  const streamId = String(payload.streamId || "").trim();
+  const endpoint = String(payload.endpoint || "").trim();
+  const accessToken = String(payload.accessToken || "").trim();
+  const tlsFingerprint = normalizeTlsFingerprint(payload.tlsFingerprint);
+  if (!streamId || !endpoint || !accessToken || !tlsFingerprint) throw new Error("Agent 事件流配置不完整。");
+
+  const url = new URL("/v1/events", endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
+  if (url.protocol !== "https:") throw new Error("Agent 事件流必须使用 TLS。");
+  stopAgentEventStream(streamId, "replaced");
+
+  return new Promise((resolvePromise, reject) => {
+    const key = randomBytes(16).toString("base64");
+    const expectedAccept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+    const active = { owner: event.sender, request: null, socket: null, timeout: null, stopped: false, opened: false };
+    activeAgentEventStreams.set(streamId, active);
+
+    const finish = (error, state = "closed") => {
+      if (active.stopped) return;
+      active.stopped = true;
+      if (activeAgentEventStreams.get(streamId) === active) activeAgentEventStreams.delete(streamId);
+      if (active.timeout) clearTimeout(active.timeout);
+      if (error && !active.opened) reject(error);
+      else if (!active.opened) reject(new Error("Agent 事件流连接失败。"));
+      emitAgentEvent(active.owner, {
+        streamId,
+        state,
+        error: error ? String(error?.message || error) : "",
+      });
+    };
+
+    let certificateVerified = false;
+    const request = httpsRequest(url, {
+      method: "GET",
+      agent: false,
+      rejectUnauthorized: false,
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Key": key,
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": `aiwb.v1, bearer.${accessToken}`,
+      },
+    });
+    active.request = request;
+    request.once("socket", (socket) => {
+      socket.once("secureConnect", () => {
+        const rawCertificate = socket.getPeerCertificate?.(true)?.raw;
+        const received = rawCertificate ? createHash("sha256").update(rawCertificate).digest("base64") : "";
+        if (!received || received !== tlsFingerprint) {
+          request.destroy(new Error("Agent TLS 证书指纹不匹配，已阻止事件流连接。"));
+          return;
+        }
+        certificateVerified = true;
+      });
+    });
+    request.once("upgrade", (response, socket, head) => {
+      if (!certificateVerified) return socket.destroy(new Error("Agent TLS 证书校验失败。"));
+      if (String(response.headers["sec-websocket-accept"] || "") !== expectedAccept) {
+        return socket.destroy(new Error("Agent WebSocket 握手校验失败。"));
+      }
+      if (String(response.headers["sec-websocket-protocol"] || "") !== "aiwb.v1") {
+        return socket.destroy(new Error("Agent WebSocket 协议不匹配。"));
+      }
+      active.socket = socket;
+      active.opened = true;
+      if (active.timeout) clearTimeout(active.timeout);
+      emitAgentEvent(active.owner, { streamId, state: "open" });
+      resolvePromise({ ok: true, streamId, state: "open" });
+
+      const parser = new WebSocketFrameParser();
+      const consume = (chunk) => {
+        try {
+          for (const frame of parser.push(chunk)) {
+            if (frame.opcode === 1) {
+              const payloadValue = JSON.parse(frame.payload.toString("utf8"));
+              emitAgentEvent(active.owner, { streamId, state: "event", event: payloadValue });
+            } else if (frame.opcode === 8) {
+              socket.destroy();
+            } else if (frame.opcode === 9) {
+              socket.write(createWebSocketFrame(frame.payload, 10));
+            }
+          }
+        } catch (error) {
+          socket.destroy(error);
+        }
+      };
+      if (head?.length) consume(head);
+      socket.on("data", consume);
+      socket.once("error", (error) => finish(error, "error"));
+      socket.once("close", () => finish(null, "closed"));
+    });
+    request.once("response", (response) => {
+      response.resume();
+      request.destroy(new Error(`Agent WebSocket 握手失败（${response.statusCode || 0}）。`));
+    });
+    request.once("error", (error) => finish(error, "error"));
+    active.timeout = setTimeout(() => request.destroy(new Error("连接 Agent 事件流超时。")), 15_000);
+    event.sender.once("destroyed", () => stopAgentEventStream(streamId, "renderer-destroyed"));
+    request.end();
+  });
+}
+
 ipcMain.handle("aiwb:agent-request", async (_event, payload) => requestAgentDirect(payload));
+ipcMain.handle("aiwb:agent-upload", async (event, payload) => requestAgentUpload(event, payload));
+ipcMain.handle("aiwb:agent-event-start", async (event, payload) => startAgentEventStream(event, payload));
+ipcMain.handle("aiwb:agent-event-stop", async (_event, payload = {}) => ({
+  ok: true,
+  stopped: stopAgentEventStream(String(payload.streamId || "").trim()),
+}));
+ipcMain.handle("aiwb:agent-upload-cancel", async (event, payload = {}) => {
+  const uploadId = String(payload.uploadId || "").trim();
+  const active = activeAgentUploads.get(uploadId);
+  if (!active || active.ownerId !== event.sender.id) return { ok: true, cancelled: false, active: false, uploadId };
+  active.request.destroy(new Error("附件上传已取消。"));
+  return { ok: true, cancelled: true, active: true, uploadId };
+});
 
 ipcMain.handle("aiwb:session-connect", async (_event, payload) => {
   const config = normalizeSshSessionRequest(payload);
@@ -2858,6 +3119,10 @@ ipcMain.handle("aiwb:save-file", async (_event, payload) => {
 
 ipcMain.handle("aiwb:open-external-file", async (_event, payload) => {
   return openExternalFile(payload);
+});
+
+ipcMain.handle("aiwb:pick-environment-file", async (event) => {
+  return pickEnvironmentFile(BrowserWindow.fromWebContents(event.sender));
 });
 
 ipcMain.handle("aiwb:read-clipboard-attachments", async () => {

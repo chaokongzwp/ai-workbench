@@ -23,6 +23,7 @@ import { AgentLogo, StatusDot } from "../../features/primitives.jsx";
 import { NativeSshTerminal } from "../native/NativeSshTerminal.jsx";
 import { useProgressiveMessages } from "../useProgressiveMessages.js";
 import { useSessionReorder } from "../../features/useSessionReorder.js";
+import { SessionSortMenu } from "../../features/SessionSortMenu.jsx";
 import {
   agentById,
   composerLockPresentation,
@@ -527,6 +528,7 @@ export function IphoneWorkbenchShell({
   wakeError,
   wakePhrases,
   messages,
+  conversationRevealMessageId,
   conversationClassName,
   conversationScrollRef,
   handleConversationScroll,
@@ -551,6 +553,7 @@ export function IphoneWorkbenchShell({
   remoteDirectory,
   onSelectServer,
   onReorderServer,
+  onSortServer,
   onConfigureServer,
   onAddServer,
   onDuplicateServer,
@@ -665,6 +668,7 @@ export function IphoneWorkbenchShell({
   } = useProgressiveMessages({
     messages,
     sessionId: activeServerId,
+    revealMessageId: conversationRevealMessageId,
     onScroll: handleConversationScroll,
   });
   const visibleSessions = useMemo(() => {
@@ -943,6 +947,7 @@ export function IphoneWorkbenchShell({
                 <span>选择一个任务继续</span>
               </div>
               <div className="iphone-session-header-actions">
+                <SessionSortMenu onSort={servers.length > 1 ? onSortServer : undefined} className="iphone-session-sort" />
                 <button
                   type="button"
                   className="iphone-session-add"

@@ -78,5 +78,11 @@ assert.match(electronSource, /const sshCommandSessions = new Map\(\);/);
 assert.match(electronSource, /sshCommandConnections\.get\(fingerprint\)/);
 assert.match(electronSource, /record\.sessionIds\.add\(sessionId\)/);
 assert.match(electronSource, /for \(const sessionId of record\?\.sessionIds \|\| \[\]\)/);
+const machineCommandSource = electronSource.slice(
+  electronSource.indexOf("function executeSshCommand"),
+  electronSource.indexOf("async function runSshCommand"),
+);
+assert.match(machineCommandSource, /client\.exec\(config\.command, \{\},/);
+assert.doesNotMatch(machineCommandSource, /pty\s*:/);
 
 console.log("session connection lifecycle regression: ok");

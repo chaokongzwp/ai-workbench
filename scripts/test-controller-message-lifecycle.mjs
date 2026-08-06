@@ -9,6 +9,7 @@ import {
   reconcileServerMessageLifecycle,
 } from "../src/app/controllerMessageLifecycle.js";
 import {
+  messageChronologyTimestamp,
   taskStateRunning,
   taskStateSucceeded,
   taskStateSyncing,
@@ -33,6 +34,32 @@ const userMessages = dedupeRemoteTaskMessages([
 assert.equal(userMessages.length, 1);
 assert.equal(userMessages[0].body, "检查服务状态");
 assert.equal(userMessages[0].createdAtMs, 100);
+
+const skewedRemoteUserMessages = dedupeRemoteTaskMessages([
+  {
+    id: "turn-1785988683000-client-request",
+    role: "user",
+    turnId: "turn-1785988683000-client",
+    remoteTaskId: "task-1785988683500-client",
+    body: "检查跨机器时间",
+    createdAtMs: 1785988683000,
+  },
+  {
+    id: "agent-conversation-1785376137913-task-1785988683500-user",
+    role: "user",
+    turnId: "turn-1785988683000-client",
+    remoteTaskId: "task-1785988683500-client",
+    body: "检查跨机器时间",
+    createdAtMs: 1785938000000,
+  },
+]);
+assert.equal(skewedRemoteUserMessages.length, 1);
+assert.equal(
+  skewedRemoteUserMessages[0].clientCreatedAtMs,
+  1785988683000,
+  "a remote Agent clock must not replace the client-authored send time",
+);
+assert.equal(messageChronologyTimestamp(skewedRemoteUserMessages[0]), 1785988683000);
 
 const taskMessages = dedupeRemoteTaskMessages([
   {
@@ -63,6 +90,37 @@ assert.equal(taskMessages.length, 1);
 assert.equal(taskMessages[0].taskState, taskStateSucceeded);
 assert.equal(taskMessages[0].output, "服务运行正常。");
 assert.equal(taskMessages[0].body, "");
+
+const skewedRemoteTaskMessages = dedupeRemoteTaskMessages([
+  {
+    id: "turn-1785988683000-client-response",
+    role: "assistant",
+    turnId: "turn-1785988683000-client",
+    backend: "agent",
+    remoteTaskId: "task-1785988683500-client",
+    taskState: taskStateRunning,
+    body: "正在等待 Codex 回复。",
+    clientCreatedAtMs: 1785988683000,
+    createdAtMs: 1785988683000,
+  },
+  {
+    id: "agent-conversation-1785376137913-task-1785988683500-assistant",
+    role: "assistant",
+    turnId: "turn-1785988683000-client",
+    backend: "agent",
+    remoteTaskId: "task-1785988683500-client",
+    taskState: taskStateSucceeded,
+    output: "OK",
+    createdAtMs: 1785938000000,
+    completedAt: 1785938005000,
+  },
+]);
+assert.equal(skewedRemoteTaskMessages.length, 1);
+assert.equal(skewedRemoteTaskMessages[0].id, "turn-1785988683000-client-response");
+assert.equal(skewedRemoteTaskMessages[0].taskState, taskStateSucceeded);
+assert.equal(skewedRemoteTaskMessages[0].output, "OK");
+assert.equal(skewedRemoteTaskMessages[0].clientCreatedAtMs, 1785988683000);
+assert.equal(messageChronologyTimestamp(skewedRemoteTaskMessages[0]), 1785988683000);
 
 const reconciled = reconcileServerMessageLifecycle({
   id: "server-1",
@@ -151,9 +209,27 @@ const sendTaskSource = controllerSource.slice(
 const optimisticSendIndex = sendTaskSource.indexOf("const selectedAgent = agentById");
 const clearComposerIndex = sendTaskSource.indexOf('setComposer("");', optimisticSendIndex);
 const appendLocalMessagesIndex = sendTaskSource.indexOf("setServerMessages(serverId, (items) => {", optimisticSendIndex);
+const revealNewTurnIndex = sendTaskSource.indexOf(
+  "conversationRevealRequestRef.current = createConversationRevealRequest(serverId, userMessageId);",
+  optimisticSendIndex,
+);
 const awaitConnectionIndex = sendTaskSource.indexOf("await connectExistingSession(serverId);");
 assert.ok(clearComposerIndex >= 0 && clearComposerIndex < awaitConnectionIndex);
 assert.ok(appendLocalMessagesIndex >= 0 && appendLocalMessagesIndex < awaitConnectionIndex);
+assert.ok(
+  revealNewTurnIndex >= 0 && revealNewTurnIndex < appendLocalMessagesIndex,
+  "a deliberate send must retain a message-specific reveal until the optimistic turn is rendered",
+);
+assert.match(controllerSource, /conversationRevealReady\(revealRequest, activeServerId, messages\)/);
+assert.match(controllerSource, /revealConversationTarget\(revealRequest\.messageId\)/);
+assert.match(controllerSource, /if \(!result\.visible\) return false/);
+assert.match(controllerSource, /conversationRevealMessageId/);
+assert.match(controllerSource, /entry\.requestMessageId/);
+assert.match(controllerSource, /entry\.responseMessageId/);
+assert.match(controllerSource, /entry\.turnId/);
+assert.match(controllerSource, /workbenchAgentProtocolSupports\(directHealth, \["tasks"\]\)/);
+assert.match(controllerSource, /workbenchAgentProtocolSupports\(verifiedHealth, \["tasks"\]\)/);
+assert.doesNotMatch(controllerSource, /protocolVersion === 1/);
 assert.match(sendTaskSource, /消息已保存在本地，但没有发送到远端/);
 
 const connectSessionSource = controllerSource.slice(
@@ -222,7 +298,22 @@ assert.doesNotMatch(controllerSource, /SSH 直连中|改用 SSH 直连|Agent 自
 const chatSource = readFileSync(new URL("../src/features/chat.jsx", import.meta.url), "utf8");
 assert.match(chatSource, /const canRetryFailedMessage = Boolean\(/);
 assert.match(chatSource, />\s*重试\s*</);
+const assistantHeaderSource = chatSource.slice(
+  chatSource.indexOf('<header className="message-header">'),
+  chatSource.indexOf("</header>", chatSource.indexOf('<header className="message-header">')),
+);
+assert.match(assistantHeaderSource, /message-header-recovery-actions/);
+assert.match(assistantHeaderSource, />\s*重试\s*</);
+assert.match(chatSource, /showActions=\{!macHeaderRecovery\}/);
+assert.match(chatSource, /!macHeaderRecovery && canRetryFailedMessage/);
 assert.match(chatSource, /aria-label="文件下载进度"/);
+assert.match(chatSource, /data-message-id=\{message\.id\}/);
+
+const macShellSource = readFileSync(
+  new URL("../src/platforms/mac/MacWorkbenchShell.jsx", import.meta.url),
+  "utf8",
+);
+assert.match(macShellSource, /revealMessageId: conversationRevealMessageId/);
 
 const iphoneShellSource = readFileSync(
   new URL("../src/platforms/iphone/IphoneWorkbenchShell.jsx", import.meta.url),

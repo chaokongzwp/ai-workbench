@@ -19,6 +19,28 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   agentRequest(payload) {
     return ipcRenderer.invoke("aiwb:agent-request", payload);
   },
+  startAgentEventStream(payload) {
+    return ipcRenderer.invoke("aiwb:agent-event-start", payload);
+  },
+  stopAgentEventStream(payload) {
+    return ipcRenderer.invoke("aiwb:agent-event-stop", payload);
+  },
+  onAgentEvent(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("aiwb:agent-event", listener);
+    return () => ipcRenderer.removeListener("aiwb:agent-event", listener);
+  },
+  agentUpload(payload) {
+    return ipcRenderer.invoke("aiwb:agent-upload", payload);
+  },
+  cancelAgentUpload(payload) {
+    return ipcRenderer.invoke("aiwb:agent-upload-cancel", payload);
+  },
+  onUploadProgress(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("aiwb:upload-progress", listener);
+    return () => ipcRenderer.removeListener("aiwb:upload-progress", listener);
+  },
   openTerminal(payload) {
     return ipcRenderer.invoke("aiwb:open-terminal", payload);
   },
@@ -52,6 +74,9 @@ contextBridge.exposeInMainWorld("aiWorkbench", {
   },
   openExternalFile(payload) {
     return ipcRenderer.invoke("aiwb:open-external-file", payload);
+  },
+  pickEnvironmentFile() {
+    return ipcRenderer.invoke("aiwb:pick-environment-file");
   },
   readClipboardAttachments() {
     return ipcRenderer.invoke("aiwb:read-clipboard-attachments");

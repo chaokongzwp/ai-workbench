@@ -1,5 +1,26 @@
 import assert from "node:assert/strict";
-import { composerLockPresentation } from "../src/core/composerState.js";
+import {
+  composerLockPresentation,
+  sessionAttachmentDraft,
+  switchSessionAttachmentDraft,
+  updateSessionAttachmentDraft,
+} from "../src/core/composerState.js";
+
+const attachmentDrafts = new Map();
+const firstAttachments = [{ id: "first-file" }];
+assert.deepEqual(switchSessionAttachmentDraft(attachmentDrafts, "session-a", firstAttachments, "session-b"), []);
+assert.equal(sessionAttachmentDraft(attachmentDrafts, "session-a"), firstAttachments);
+
+const secondAttachments = updateSessionAttachmentDraft(attachmentDrafts, "session-b", (items) => [
+  ...items,
+  { id: "second-file" },
+]);
+assert.deepEqual(secondAttachments.map(({ id }) => id), ["second-file"]);
+assert.deepEqual(sessionAttachmentDraft(attachmentDrafts, "session-a").map(({ id }) => id), ["first-file"]);
+assert.equal(
+  switchSessionAttachmentDraft(attachmentDrafts, "session-b", secondAttachments, "session-a"),
+  firstAttachments,
+);
 
 const ready = composerLockPresentation();
 assert.deepEqual(ready, {

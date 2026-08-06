@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,11 +53,66 @@ const server = createAgentDirectServer({
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 const baseUrl = `http://127.0.0.1:${address.port}`;
+const eventSocket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/events`, ["aiwb.v1", "bearer.test-token"]);
+const firstAgentEvent = await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error("Agent WebSocket did not publish a ready event.")), 5_000);
+  eventSocket.addEventListener("message", (event) => {
+    clearTimeout(timer);
+    resolve(JSON.parse(String(event.data || "{}")));
+  }, { once: true });
+  eventSocket.addEventListener("error", (event) => {
+    clearTimeout(timer);
+    reject(event.error || new Error("Agent WebSocket connection failed."));
+  }, { once: true });
+});
+assert.equal(firstAgentEvent.type, "connection.ready");
+const waitForAgentEvent = (predicate) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => {
+    eventSocket.removeEventListener("message", listener);
+    reject(new Error("Agent WebSocket task event timed out."));
+  }, 5_000);
+  const listener = (event) => {
+    const payload = JSON.parse(String(event.data || "{}"));
+    if (!predicate(payload)) return;
+    clearTimeout(timer);
+    eventSocket.removeEventListener("message", listener);
+    resolve(payload);
+  };
+  eventSocket.addEventListener("message", listener);
+});
+const pushedTaskDir = join(home, "tasks", "task-pushed");
+const runningPush = waitForAgentEvent((event) => event.type === "task.updated" && event.task?.id === "task-pushed");
+mkdirSync(pushedTaskDir, { recursive: true });
+writeFileSync(join(pushedTaskDir, "status"), "running");
+writeFileSync(join(pushedTaskDir, "output.log"), "live output");
+assert.equal((await runningPush).task.rawStatus, "running");
+const terminalPush = waitForAgentEvent(
+  (event) => event.type === "task.updated" && event.task?.id === "task-pushed" && event.task?.rawStatus === "done",
+);
+const largeFinalOutput = "x".repeat(70_000);
+writeFileSync(join(pushedTaskDir, "output.log"), largeFinalOutput);
+writeFileSync(join(pushedTaskDir, "status"), "done");
+const terminalEvent = await terminalPush;
+assert.equal(terminalEvent.task.output.length, largeFinalOutput.length);
+await new Promise((resolve, reject) => {
+  if (eventSocket.readyState === WebSocket.CLOSED) {
+    resolve();
+    return;
+  }
+  const timer = setTimeout(() => reject(new Error("Agent WebSocket did not close cleanly.")), 5_000);
+  eventSocket.addEventListener("close", () => {
+    clearTimeout(timer);
+    resolve();
+  }, { once: true });
+  eventSocket.close();
+});
 const healthResponse = await fetch(`${baseUrl}/v1/health`, { headers: { Authorization: "Bearer test-token" } });
 assert.equal(healthResponse.status, 200);
 const health = await healthResponse.json();
 assert.equal(health.version, "42");
-assert.equal(health.protocolVersion, 1);
+assert.equal(health.protocolVersion, 2);
+assert.ok(health.capabilities.includes("binary-upload-v1"));
+assert.ok(health.capabilities.includes("events-v1"));
 assert.equal(health.transport, "https");
 const response = await fetch(`${baseUrl}/v1/tasks/task-1`, { headers: { Authorization: "Bearer test-token" } });
 assert.equal(response.status, 200);
@@ -79,6 +135,49 @@ const cacheClearResponse = await fetch(`${baseUrl}/v1/cache/clear`, {
 assert.equal(cacheClearResponse.status, 200);
 assert.equal((await cacheClearResponse.json()).ok, true);
 
+const workspace = join(home, "workspace");
+mkdirSync(workspace, { recursive: true });
+const uploadBody = Buffer.alloc(2 * 1024 * 1024 + 137, 0x5a);
+const uploadSha256 = createHash("sha256").update(uploadBody).digest("hex");
+const encodedHeader = (value) => Buffer.from(value, "utf8").toString("base64url");
+const uploadedResponse = await fetch(`${baseUrl}/v1/files`, {
+  method: "POST",
+  headers: {
+    Authorization: "Bearer test-token",
+    "Content-Type": "application/octet-stream",
+    "X-AIWB-Upload-Id": "upload-large-1",
+    "X-AIWB-Workdir": encodedHeader(workspace),
+    "X-AIWB-File-Name": encodedHeader("数据 原型.html"),
+    "X-AIWB-File-Mime": "text/html",
+    "X-AIWB-Content-SHA256": uploadSha256,
+  },
+  body: uploadBody,
+});
+assert.equal(uploadedResponse.status, 201);
+const uploadedFile = (await uploadedResponse.json()).file;
+assert.equal(uploadedFile.name, "数据 原型.html");
+assert.equal(uploadedFile.size, uploadBody.length);
+assert.equal(uploadedFile.sha256, uploadSha256);
+assert.deepEqual(readFileSync(uploadedFile.path), uploadBody);
+
+const invalidUpload = await fetch(`${baseUrl}/v1/files`, {
+  method: "POST",
+  headers: {
+    Authorization: "Bearer test-token",
+    "Content-Type": "application/octet-stream",
+    "X-AIWB-Upload-Id": "upload-invalid-sha",
+    "X-AIWB-Workdir": encodedHeader(workspace),
+    "X-AIWB-File-Name": encodedHeader("broken.bin"),
+    "X-AIWB-Content-SHA256": "0".repeat(64),
+  },
+  body: Buffer.from("must-not-be-published"),
+});
+assert.equal(invalidUpload.status, 400);
+assert.equal(
+  readdirSync(join(workspace, ".ai-workbench", "uploads")).some((name) => name.includes("broken.bin") || name.endsWith(".part")),
+  false,
+);
+
 const created = await fetch(`${baseUrl}/v1/tasks`, {
   method: "POST",
   headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
@@ -92,6 +191,35 @@ assert.equal(created.status, 202);
 assert.equal(
   Buffer.from(readFileSync(join(home, "tasks", "task-linux-command", "command.b64"), "utf8").trim(), "base64").toString("utf8"),
   "printf agent-direct-probe",
+);
+
+const windowsCommand = {
+  kind: "codex",
+  command: "codex",
+  workdir: "C:\\workspace",
+  model: "gpt-5.6",
+  prompt: "return windows-agent-direct-ok",
+  sessionFile: "C:\\workspace\\.ai-workbench\\conversation.session",
+  executionPermissionMode: "full-access",
+};
+const windowsCreated = await fetch(`${baseUrl}/v1/tasks`, {
+  method: "POST",
+  headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+  body: JSON.stringify({
+    taskId: "task-windows-command",
+    conversationId: "conversation-windows",
+    command: windowsCommand,
+  }),
+});
+assert.equal(windowsCreated.status, 202);
+assert.deepEqual(
+  JSON.parse(
+    Buffer.from(
+      readFileSync(join(home, "tasks", "task-windows-command", "command.b64"), "utf8").trim(),
+      "base64",
+    ).toString("utf8"),
+  ),
+  windowsCommand,
 );
 
 const contextRequired = await fetch(`${baseUrl}/v1/tasks`, {

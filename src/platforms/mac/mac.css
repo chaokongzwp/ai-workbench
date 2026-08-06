@@ -206,8 +206,10 @@
 }
 
 .mac-shell .sidebar-add,
+.mac-shell .session-sort-menu > summary,
 .mac-shell .sidebar-collapse,
 .app-shell[data-theme="dark"].mac-shell .sidebar-add,
+.app-shell[data-theme="dark"].mac-shell .session-sort-menu > summary,
 .app-shell[data-theme="dark"].mac-shell .sidebar-collapse {
   width: 24px;
   min-width: 24px;
@@ -221,8 +223,12 @@
 }
 
 .mac-shell .sidebar-add:hover,
+.mac-shell .session-sort-menu > summary:hover,
+.mac-shell .session-sort-menu[open] > summary,
 .mac-shell .sidebar-collapse:hover,
 .app-shell[data-theme="dark"].mac-shell .sidebar-add:hover,
+.app-shell[data-theme="dark"].mac-shell .session-sort-menu > summary:hover,
+.app-shell[data-theme="dark"].mac-shell .session-sort-menu[open] > summary,
 .app-shell[data-theme="dark"].mac-shell .sidebar-collapse:hover {
   color: var(--mac-text);
   background: var(--mac-surface-selected);
@@ -485,10 +491,10 @@
   width: 100%;
   max-width: none;
   color: var(--mac-text);
-  font-family: var(--mac-font-text);
-  font-size: 15px;
-  font-weight: 400;
-  line-height: 1.66;
+  font-family: var(--message-font-family);
+  font-size: var(--message-font-size);
+  font-weight: var(--message-font-weight);
+  line-height: var(--message-line-height);
 }
 
 .mac-shell .conversation .rich-message {
@@ -559,9 +565,10 @@
   border-radius: 0 !important;
   color: inherit;
   background: transparent !important;
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1.5;
+  font-family: var(--message-font-family);
+  font-size: var(--message-font-size);
+  font-weight: var(--message-font-weight);
+  line-height: var(--message-line-height);
 }
 
 .mac-shell .conversation .user-prompt .user-message-meta {
@@ -682,6 +689,77 @@
 
 .mac-shell .composer.compact .composer-attachments {
   grid-column: 1;
+  gap: 8px;
+  padding: 2px 2px 6px;
+}
+
+.mac-shell .composer.compact .composer-attachment {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 24px;
+  align-items: center;
+  width: clamp(210px, 31vw, 280px);
+  min-height: 58px;
+  gap: 10px;
+  padding: 7px 7px 7px 8px;
+  border: 1px solid var(--mac-line-soft);
+  border-radius: 12px;
+  color: var(--mac-text);
+  background: var(--mac-surface-raised);
+}
+
+.mac-shell .composer.compact .composer-attachment img,
+.mac-shell .composer.compact .composer-attachment-file {
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+}
+
+.mac-shell .composer.compact .composer-attachment img {
+  object-fit: cover;
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .composer.compact .composer-attachment-file {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .composer.compact .composer-attachment figcaption {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--mac-text);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-shell .composer.compact .composer-attachment button {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--mac-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mac-shell .composer.compact .composer-attachment button:hover {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .composer.compact .composer-attachment button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mac-text) 34%, transparent);
+  outline-offset: 1px;
 }
 
 .mac-shell .conversation .composer.compact .input-row textarea,
@@ -991,6 +1069,51 @@ body.mac-terminal-resizing {
 .mac-shell .conversation .message-header-actions {
   align-items: center;
   gap: 2px;
+}
+
+.mac-shell .conversation .message-header-recovery-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  margin-right: 2px;
+  padding-right: 4px;
+  border-right: 1px solid var(--mac-line-soft);
+}
+
+.mac-shell .conversation .message-header-recovery-actions .message-recovery-action {
+  min-width: 0;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--aiwb-radius-xs);
+  color: var(--mac-muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 26px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--aiwb-duration-fast) ease,
+    background var(--aiwb-duration-fast) ease;
+}
+
+.mac-shell .conversation .message-header-recovery-actions .message-recovery-action.primary {
+  color: var(--mac-text);
+  background: color-mix(in srgb, var(--mac-surface-selected) 64%, transparent);
+}
+
+.mac-shell .conversation .message-header-recovery-actions .message-recovery-action:hover:not(:disabled) {
+  color: var(--mac-text);
+  background: var(--mac-surface-selected);
+}
+
+.mac-shell .conversation .message-header-recovery-actions .message-recovery-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
 }
 
 .mac-shell .conversation .message-header-actions :is(.refresh-message, .copy-message.copy-assistant-message) {

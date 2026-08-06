@@ -1,9 +1,33 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "55";
+export const latestWorkbenchAgentVersion = "71";
 export const workbenchAgentOssBucket = "limpet-ai-workbench-47t37ccfz2";
 export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
+
+// Protocol v1 predates explicit capability advertisement and provides the
+// task API implicitly. Protocol v2+ is negotiated by capability so adding a
+// backwards-compatible protocol revision does not unnecessarily force SSH.
+export function workbenchAgentProtocolSupports(health, requiredCapabilities = ["tasks"]) {
+  const protocolVersion = Number(health?.protocolVersion || 0);
+  if (!Number.isSafeInteger(protocolVersion) || protocolVersion < 1) return false;
+
+  const required = [...new Set(
+    (Array.isArray(requiredCapabilities) ? requiredCapabilities : [requiredCapabilities])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  )];
+  if (protocolVersion === 1) {
+    return required.every((capability) => capability === "tasks");
+  }
+
+  const advertised = new Set(
+    (Array.isArray(health?.capabilities) ? health.capabilities : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+  return required.every((capability) => advertised.has(capability));
+}
 export const workbenchAgentControlEndpoint = "https://inner-api.limpet-inc.cn/aiwb-config-sync/v1/agent-control";
 export const workbenchAgentControlLatestUrl = `${workbenchAgentControlEndpoint}/latest`;
 
@@ -189,6 +213,8 @@ AIWB_RUNTIME_UPDATE_FENCE="$AIWB_HOME/runtime-update.fence"
 AIWB_LAUNCH_AGENT_LABEL="com.beexofficial.ai-workbench-agent"
 AIWB_LAUNCH_AGENT_DIR="$AIWB_USER_HOME/Library/LaunchAgents"
 AIWB_LAUNCH_AGENT_PLIST="$AIWB_LAUNCH_AGENT_DIR/$AIWB_LAUNCH_AGENT_LABEL.plist"
+AIWB_SYSTEMD_USER_DIR="$AIWB_USER_HOME/.config/systemd/user"
+AIWB_SYSTEMD_USER_UNIT="$AIWB_SYSTEMD_USER_DIR/ai-workbench-agent.service"
 AIWB_MAX_CONCURRENCY="4"
 mkdir -p "$AIWB_TASKS" "$AIWB_CONVERSATIONS" "$AIWB_CONVERSATION_LOCKS"
 
@@ -1636,7 +1662,11 @@ aiwb_service_status() {
     return 0
   fi
 
-  state="$(systemctl is-active ai-workbench-agent.service 2>/dev/null || true)"
+  if [ "$(id -u)" = "0" ]; then
+    state="$(systemctl is-active ai-workbench-agent.service 2>/dev/null || true)"
+  else
+    state="$(systemctl --user is-active ai-workbench-agent.service 2>/dev/null || true)"
+  fi
   if [ -z "$state" ]; then
     state="inactive"
   fi
@@ -2228,6 +2258,7 @@ aiwb_wait_runtime_ready() {
 }
 
 aiwb_install_service() {
+  local launchd_loaded="0"
   if command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
     systemctl stop ai-workbench-agent.service >/dev/null 2>&1 || true
   fi
@@ -2268,20 +2299,35 @@ aiwb_install_service() {
 </plist>
 AIWB_LAUNCH_AGENT
     chmod 600 "$AIWB_LAUNCH_AGENT_PLIST"
-    launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      if ! launchctl print "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+    if launchctl print "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+      launchd_loaded="1"
+    fi
+    for _ in 1 2 3; do
+      [ "$launchd_loaded" = "1" ] && break
+      if launchctl bootstrap "gui/$(id -u)" "$AIWB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+        launchd_loaded="1"
         break
       fi
-      sleep 0.2
+      # Another concurrent installer may have registered the same service
+      # between our probe and bootstrap call. Treat that as success.
+      if launchctl print "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+        launchd_loaded="1"
+        break
+      fi
+      sleep 0.5
     done
-    if launchctl bootstrap "gui/$(id -u)" "$AIWB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+    if [ "$launchd_loaded" = "1" ]; then
       launchctl kickstart -k "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
       if aiwb_wait_runtime_ready; then
         printf "__AIWB_AGENT_SERVICE__launchd\\n"
         return 0
       fi
-      launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+      # Runtime replacement can take longer than the readiness window. Keep
+      # the valid LaunchAgent loaded so the operating system can self-heal it.
+      launchctl kickstart -k "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+      printf "__AIWB_AGENT_SERVICE__launchd-pending\\n"
+      aiwb_wait_runtime_ready
+      return $?
     fi
     printf "__AIWB_AGENT_SERVICE__launchd-fallback\\n"
     aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
@@ -2323,6 +2369,33 @@ AIWB_SYSTEMD_UNIT
     return 1
   fi
 
+  mkdir -p "$AIWB_SYSTEMD_USER_DIR"
+  cat > "$AIWB_SYSTEMD_USER_UNIT" <<AIWB_SYSTEMD_USER_UNIT_CONTENT
+[Unit]
+Description=AI Workbench Agent
+After=network.target
+
+[Service]
+Type=simple
+Environment=HOME=$AIWB_USER_HOME
+ExecStart=$AIWB_HOME/aiwbctl service-run
+Restart=always
+RestartSec=2
+KillMode=control-group
+WorkingDirectory=$AIWB_HOME
+
+[Install]
+WantedBy=default.target
+AIWB_SYSTEMD_USER_UNIT_CONTENT
+  chmod 600 "$AIWB_SYSTEMD_USER_UNIT"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  if systemctl --user enable --now ai-workbench-agent.service >/dev/null 2>&1; then
+    loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+    if aiwb_wait_runtime_ready; then
+      printf "__AIWB_AGENT_SERVICE__systemd-user\\n"
+      return 0
+    fi
+  fi
   aiwb_start_service_run >/dev/null 2>&1 || aiwb_start_daemon >/dev/null 2>&1 || true
   printf "__AIWB_AGENT_SERVICE__user-fallback\\n"
   aiwb_wait_runtime_ready
@@ -2338,10 +2411,14 @@ aiwb_uninstall_service() {
       systemctl daemon-reload >/dev/null 2>&1 || true
     else
       systemctl --user disable --now ai-workbench-agent.service >/dev/null 2>&1 || true
+      rm -f "$AIWB_SYSTEMD_USER_UNIT"
+      systemctl --user daemon-reload >/dev/null 2>&1 || true
     fi
   fi
   if [ "$(uname -s 2>/dev/null || printf "")" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
-    launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    if [ -f "$AIWB_LAUNCH_AGENT_PLIST" ]; then
+      launchctl bootout "gui/$(id -u)/$AIWB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    fi
     rm -f "$AIWB_LAUNCH_AGENT_PLIST"
   fi
 
@@ -3136,7 +3213,7 @@ if (-not (Enter-AiwbInstallFence)) {
   exit 22
 }
 
-# A v55 creator sees the fence before accepting work. The quiet window also
+# A v65 creator sees the fence before accepting work. The quiet window also
 # exposes a legacy creator that wrote command metadata immediately beforehand.
 Start-Sleep -Milliseconds 250
 $AIWB_ACTIVE_TASK_COUNT = Get-AiwbActiveTaskCount
@@ -3280,8 +3357,24 @@ try {
 }
 Remove-Item -LiteralPath $AIWB_CONTROL_TMP, $AIWB_MANIFEST_TMP -Force -ErrorAction SilentlyContinue
 Exit-AiwbInstallFence
-& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service
+# The installer still owns tick.lock here. Pass that verified owner into the
+# new control runtime so its final service-tree restart can publish a fresh
+# fence, drain creators once more, and avoid deadlocking on our parent lock.
+& $AIWB_NODE_COMMAND.Source $AIWB_SCRIPT install-service $PID
 $AIWB_INSTALL_EXIT_CODE = $LASTEXITCODE
+if (@(20, 21, 22) -contains $AIWB_INSTALL_EXIT_CODE) {
+  # A task appeared in the final supervisor handoff window. The new generation
+  # is already committed and its updater will retry the restart after the
+  # shared host queue drains; rolling back here could reintroduce the old
+  # unguarded taskkill path.
+  Remove-AiwbReplacementBackups
+  Exit-AiwbInstallTransaction
+  Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
+  Write-Output "__AIWB_AGENT_INSTALL_RESULT__deferred"
+  Write-Output "__AIWB_AGENT_INSTALL_DEFER_REASON__supervisor_restart_pending"
+  Write-Output "__AIWB_AGENT_ERROR__Agent 新版本已安全安装，服务切换会在当前任务结束后由 updater 自动完成。"
+  exit 20
+}
 if ($AIWB_INSTALL_EXIT_CODE -ne 0) {
   Write-Output "__AIWB_AGENT_INSTALL_SOURCE__config-center"
   Write-Output "__AIWB_AGENT_INSTALL_RESULT__failed"
@@ -3922,7 +4015,7 @@ if ! aiwb_publish_install_fence; then
 fi
 
 # Cover the old-generation window between uploading command.b64 and publishing
-# preparing/creator.pid. Requests from v55 see the fence and fail retryably;
+# preparing/creator.pid. Requests from v65 see the fence and fail retryably;
 # v54 creators are detected by their live command line in the late scan.
 sleep 0.25
 aiwb_migrate_macos_legacy_tasks
@@ -5477,6 +5570,23 @@ export function latestWorkbenchAgentConversationTask(conversation, fallbackAgent
   };
 }
 
+function wrappedWorkbenchMarkerValue(block, markerName) {
+  const lines = String(block || "").split("\n");
+  const markerIndex = lines.findIndex((line) => line.startsWith(markerName));
+  if (markerIndex < 0) return "";
+
+  const parts = [lines[markerIndex].slice(markerName.length)];
+  // Legacy desktop SSH requested a PTY for machine-readable commands. Windows
+  // OpenSSH could therefore insert a physical newline at column 80. Continue
+  // until the next protocol marker and join without adding a semantic newline.
+  for (let index = markerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.startsWith("__AIWB_")) break;
+    parts.push(line);
+  }
+  return parts.join("").trim();
+}
+
 export function parseWorkbenchAgentConversations(output) {
   // Native SSH clients commonly return CRLF even when the remote host is
   // Linux. Normalize once so the block protocol behaves identically on Mac,
@@ -5486,16 +5596,16 @@ export function parseWorkbenchAgentConversations(output) {
   return blocks
     .map((block) => {
       const marker = (name) =>
-        block.match(new RegExp(`^__AIWB_AGENT_CONVERSATION_${name}__([\\s\\S]*?)$`, "m"))?.[1]?.trim() || "";
+        wrappedWorkbenchMarkerValue(block, `__AIWB_AGENT_CONVERSATION_${name}__`);
       const historyBlock =
         block.match(/__AIWB_AGENT_CONVERSATION_HISTORY_START__\n([\s\S]*?)\n__AIWB_AGENT_CONVERSATION_HISTORY_END__/)?.[1] || "";
       const historyMarker = (name) =>
-        historyBlock.match(new RegExp(`^__AIWB_AGENT_CONVERSATION_HISTORY_${name}__([\\s\\S]*?)$`, "m"))?.[1]?.trim() || "";
+        wrappedWorkbenchMarkerValue(historyBlock, `__AIWB_AGENT_CONVERSATION_HISTORY_${name}__`);
       const historyItems = historyBlock.match(/__AIWB_AGENT_CONVERSATION_HISTORY_ITEM_START__[\s\S]*?__AIWB_AGENT_CONVERSATION_HISTORY_ITEM_END__/g) || [];
       const history = historyItems
         .map((itemBlock) => {
           const itemMarker = (name) =>
-            itemBlock.match(new RegExp(`^__AIWB_AGENT_CONVERSATION_HISTORY_${name}__([\\s\\S]*?)$`, "m"))?.[1]?.trim() || "";
+            wrappedWorkbenchMarkerValue(itemBlock, `__AIWB_AGENT_CONVERSATION_HISTORY_${name}__`);
           const prompt =
             itemBlock.match(/__AIWB_AGENT_CONVERSATION_HISTORY_PROMPT_START__\n([\s\S]*?)\n__AIWB_AGENT_CONVERSATION_HISTORY_PROMPT_END__/)?.[1]?.trim() ||
             "";

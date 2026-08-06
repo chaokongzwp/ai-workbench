@@ -3256,11 +3256,8 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
     commit(rows.filter((row) => row.id !== id));
   }
 
-  async function importEnvironmentFile(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (Number(file.size || 0) > 256 * 1024) {
+  async function importEnvironmentText(text, size = 0) {
+    if (Number(size || 0) > 256 * 1024) {
       setImportStatus({ tone: "error", message: "环境变量文件不能超过 256KB。" });
       return;
     }
@@ -3274,7 +3271,7 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
 
     setImportStatus({ tone: "loading", message: "正在读取环境变量文件…" });
     try {
-      const merged = mergeSessionEnvironmentVariables(currentText, await readFileAsText(file));
+      const merged = mergeSessionEnvironmentVariables(currentText, text);
       if (merged.errors.length) {
         setImportStatus({ tone: "error", message: merged.errors.join(" ") });
         return;
@@ -3296,6 +3293,37 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
         tone: "done",
         message: `已导入 ${merged.importedCount} 个变量；同名变量已使用文件中的值。`,
       });
+    } catch (error) {
+      setImportStatus({ tone: "error", message: shortError(error) });
+    }
+  }
+
+  async function importEnvironmentFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      await importEnvironmentText(await readFileAsText(file), file.size);
+    } catch (error) {
+      setImportStatus({ tone: "error", message: shortError(error) });
+    }
+  }
+
+  async function chooseEnvironmentFile() {
+    const bridge = desktopBridge();
+    if (!bridge?.pickEnvironmentFile) {
+      importInputRef.current?.click();
+      return;
+    }
+
+    setImportStatus({ tone: "loading", message: "正在打开文件选择器…" });
+    try {
+      const selected = await bridge.pickEnvironmentFile();
+      if (selected?.canceled) {
+        setImportStatus(null);
+        return;
+      }
+      await importEnvironmentText(String(selected?.text || ""), Number(selected?.size || 0));
     } catch (error) {
       setImportStatus({ tone: "error", message: shortError(error) });
     }
@@ -3353,7 +3381,7 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
         <button
           type="button"
           className="environment-variable-add"
-          onClick={() => importInputRef.current?.click()}
+          onClick={chooseEnvironmentFile}
         >
           <UploadSimple size={15} weight="bold" aria-hidden="true" />
           导入文件
@@ -3361,6 +3389,7 @@ export function EnvironmentVariablesEditor({ value, onChange }) {
         <input
           ref={importInputRef}
           type="file"
+          accept=".env,.sh,.txt,text/plain"
           hidden
           onChange={importEnvironmentFile}
         />
