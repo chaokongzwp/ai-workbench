@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "73";
+export const latestWorkbenchAgentVersion = "74";
 export const workbenchAgentOssBucket = "limpet-ai-workbench-47t37ccfz2";
 export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
@@ -332,6 +332,46 @@ aiwb_schedule_terminal_notification() {
   aiwb_notify_terminal "$1" >/dev/null 2>&1 &
 }
 
+aiwb_prune_conversation_tasks() {
+  local current_task_dir="$1"
+  local current_task_id
+  local conversation_id
+  local task_dir
+  local task_conversation_id
+  local status
+  local removed_count=0
+
+  current_task_id="$(basename -- "$current_task_dir")"
+  conversation_id="$(cat "$current_task_dir/conversation_id" 2>/dev/null || printf "")"
+  [ -n "$conversation_id" ] || return 0
+
+  for task_dir in "$AIWB_TASKS"/*; do
+    [ -d "$task_dir" ] || continue
+    [ "$(basename -- "$task_dir")" != "$current_task_id" ] || continue
+    task_conversation_id="$(cat "$task_dir/conversation_id" 2>/dev/null || printf "")"
+    [ "$task_conversation_id" = "$conversation_id" ] || continue
+    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    case "$status" in
+      done|error|cancelled|rejected|busy)
+        rm -rf -- "$task_dir"
+        removed_count=$((removed_count + 1))
+        ;;
+    esac
+  done
+
+  if [ "$removed_count" -gt 0 ]; then
+    aiwb_append_log "pruned conversation tasks conversation=$conversation_id current=$current_task_id removed=$removed_count"
+  fi
+}
+
+aiwb_finalize_terminal_task() {
+  local task_dir="$1"
+  [ -d "$task_dir" ] || return 0
+  aiwb_update_conversation_from_task "$task_dir"
+  aiwb_schedule_terminal_notification "$task_dir"
+  aiwb_prune_conversation_tasks "$task_dir"
+}
+
 aiwb_update_conversation_from_task() {
   local task_dir="$1"
   local conversation_id
@@ -344,7 +384,6 @@ aiwb_update_conversation_from_task() {
   conversation_dir="$(aiwb_conversation_dir "$conversation_id")"
   mkdir -p "$conversation_dir"
   aiwb_write_file "$conversation_dir/id" "$conversation_id"
-  aiwb_write_file "$conversation_dir/task_id" "$(basename "$task_dir")"
   aiwb_write_file "$conversation_dir/status" "$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
   aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
 
@@ -359,15 +398,20 @@ aiwb_update_conversation_from_task() {
 
   status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
   if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    : > "$conversation_dir/last_result.txt"
     if [ -s "$task_dir/output.log" ]; then
       cp "$task_dir/output.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
     elif [ -s "$task_dir/bootstrap.log" ]; then
       cp "$task_dir/bootstrap.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
     fi
+    : > "$conversation_dir/last_execution_summary.txt"
     if [ -s "$task_dir/execution-summary.txt" ]; then
       cp "$task_dir/execution-summary.txt" "$conversation_dir/last_execution_summary.txt" 2>/dev/null || true
     fi
   fi
+  # Publish the pointer last so readers never observe a new task ID with the
+  # previous task's result snapshot.
+  aiwb_write_file "$conversation_dir/task_id" "$(basename "$task_dir")"
 }
 
 aiwb_set_status() {
@@ -381,7 +425,7 @@ aiwb_set_status() {
   fi
   aiwb_update_conversation_from_task "$task_dir"
   if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
-    aiwb_schedule_terminal_notification "$task_dir"
+    aiwb_finalize_terminal_task "$task_dir"
   fi
 }
 
@@ -1151,7 +1195,6 @@ aiwb_update_conversation_from_task() {
   mkdir -p "$conversation_dir"
 
   aiwb_write_file "$conversation_dir/id" "$conversation_id"
-  aiwb_write_file "$conversation_dir/task_id" "$(basename "$AIWB_TASK_DIR")"
   aiwb_write_file "$conversation_dir/status" "$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf unknown)"
   aiwb_write_file "$conversation_dir/updated_at" "$(aiwb_now)"
 
@@ -1166,26 +1209,34 @@ aiwb_update_conversation_from_task() {
 
   status="$(cat "$AIWB_TASK_DIR/status" 2>/dev/null || printf unknown)"
   if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    : > "$conversation_dir/last_result.txt"
     if [ -s "$AIWB_TASK_DIR/output.log" ]; then
       cp "$AIWB_TASK_DIR/output.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
     elif [ -s "$AIWB_TASK_DIR/bootstrap.log" ]; then
       cp "$AIWB_TASK_DIR/bootstrap.log" "$conversation_dir/last_result.txt" 2>/dev/null || true
     fi
+    : > "$conversation_dir/last_execution_summary.txt"
     if [ -s "$AIWB_TASK_DIR/execution-summary.txt" ]; then
       cp "$AIWB_TASK_DIR/execution-summary.txt" "$conversation_dir/last_execution_summary.txt" 2>/dev/null || true
     fi
   fi
+  aiwb_write_file "$conversation_dir/task_id" "$(basename "$AIWB_TASK_DIR")"
 }
 
 aiwb_set_status() {
   local status="$1"
   local exit_code="$2"
+  local aiwb_control
   aiwb_write_file "$AIWB_TASK_DIR/status" "$status"
   aiwb_write_file "$AIWB_TASK_DIR/exit_code" "$exit_code"
   if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
     aiwb_write_file "$AIWB_TASK_DIR/finished_at" "$(aiwb_now)"
   fi
   aiwb_update_conversation_from_task
+  if [ "$status" = "done" ] || [ "$status" = "error" ] || [ "$status" = "cancelled" ]; then
+    aiwb_control="$(cd "$AIWB_TASK_DIR/../.." 2>/dev/null && pwd)/aiwbctl"
+    "$aiwb_control" finalize-task "$(basename "$AIWB_TASK_DIR")" >/dev/null 2>&1 || true
+  fi
 }
 
 aiwb_write_file "$AIWB_TASK_DIR/runner_started_at" "$(aiwb_now)"
@@ -2539,6 +2590,15 @@ case "$AIWB_CMD" in
     ;;
   clear-cache)
     aiwb_clear_cache
+    ;;
+  finalize-task)
+    [ "$#" -gt 1 ] || exit 2
+    AIWB_FINALIZE_TASK_DIR="$(aiwb_task_dir "$2")"
+    AIWB_FINALIZE_STATUS="$(cat "$AIWB_FINALIZE_TASK_DIR/status" 2>/dev/null || printf unknown)"
+    case "$AIWB_FINALIZE_STATUS" in
+      done|error|cancelled) aiwb_finalize_terminal_task "$AIWB_FINALIZE_TASK_DIR" ;;
+      *) exit 3 ;;
+    esac
     ;;
   create|create-now)
     AIWB_CREATE_IMMEDIATE="0"

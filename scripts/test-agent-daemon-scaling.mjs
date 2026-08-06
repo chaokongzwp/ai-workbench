@@ -26,6 +26,7 @@ assert.doesNotMatch(
   /done\|error\|cancelled[\s\S]*aiwb_schedule_terminal_notification/,
   "the daemon must not reschedule notifications for every historical terminal task on every tick",
 );
-assert.match(source, /aiwb_set_status\(\)[\s\S]*aiwb_schedule_terminal_notification/, "task completion must still schedule one notification");
+assert.match(source, /aiwb_set_status\(\)[\s\S]*aiwb_finalize_terminal_task/, "task completion must still finalize once");
+assert.match(source, /aiwb_finalize_terminal_task\(\)[\s\S]*aiwb_schedule_terminal_notification/, "finalization must schedule one notification");
 
 console.log("agent daemon historical-task scaling regression: ok");

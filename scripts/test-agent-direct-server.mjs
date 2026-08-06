@@ -47,6 +47,13 @@ const server = createAgentDirectServer({
       writeFileSync(join(staleTaskDir, "status"), "error");
       writeFileSync(join(staleTaskDir, "exit_code"), "124");
     }
+    if (args?.[0] === "create") {
+      const createdTaskDir = join(home, "tasks", args[1]);
+      const conversationId = readFileSync(join(createdTaskDir, "conversation_id"), "utf8").trim();
+      const conversationDir = join(home, "conversations", conversationId);
+      mkdirSync(conversationDir, { recursive: true });
+      writeFileSync(join(conversationDir, "task_id"), `${args[1]}\n`);
+    }
     return { code: 0, stdout: "__AIWB_AGENT_VERSION__42", stderr: "" };
   },
 });
