@@ -1,6 +1,6 @@
 import * as Foundation from "./foundation.js";
 
-export const latestWorkbenchAgentVersion = "72";
+export const latestWorkbenchAgentVersion = "73";
 export const workbenchAgentOssBucket = "limpet-ai-workbench-47t37ccfz2";
 export const workbenchAgentOssEndpoint = "oss-ap-southeast-1.aliyuncs.com";
 export const workbenchAgentOssBaseUrl = `https://${workbenchAgentOssBucket}.${workbenchAgentOssEndpoint}`;
@@ -1397,10 +1397,16 @@ aiwb_launch_task() {
 
 aiwb_running_count() {
   local count
+  local status
   count=0
   for task_dir in "$AIWB_TASKS"/*; do
     [ -d "$task_dir" ] || continue
-    if [ "$(cat "$task_dir/status" 2>/dev/null || printf unknown)" = "running" ] && aiwb_task_pid_alive "$task_dir"; then
+    status="unknown"
+    if [ -f "$task_dir/status" ]; then
+      IFS= read -r status < "$task_dir/status" || true
+      [ -n "$status" ] || status="unknown"
+    fi
+    if [ "$status" = "running" ] && aiwb_task_pid_alive "$task_dir"; then
       count="$((count + 1))"
     fi
   done
@@ -1472,7 +1478,11 @@ aiwb_tick_tasks_unlocked() {
 
   for task_dir in "$AIWB_TASKS"/*; do
     [ -d "$task_dir" ] || continue
-    status="$(cat "$task_dir/status" 2>/dev/null || printf unknown)"
+    status="unknown"
+    if [ -f "$task_dir/status" ]; then
+      IFS= read -r status < "$task_dir/status" || true
+      [ -n "$status" ] || status="unknown"
+    fi
     case "$status" in
       queued)
         if aiwb_is_macos; then
@@ -1494,9 +1504,6 @@ aiwb_tick_tasks_unlocked() {
         ;;
       running)
         aiwb_mark_stale_if_needed "$task_dir"
-        ;;
-      done|error|cancelled)
-        aiwb_schedule_terminal_notification "$task_dir"
         ;;
     esac
   done
@@ -1677,9 +1684,15 @@ aiwb_task_count() {
   local target="$1"
   local count="0"
   local task_dir
+  local status
   for task_dir in "$AIWB_TASKS"/*; do
     [ -d "$task_dir" ] || continue
-    if [ "$(cat "$task_dir/status" 2>/dev/null || printf unknown)" = "$target" ]; then
+    status="unknown"
+    if [ -f "$task_dir/status" ]; then
+      IFS= read -r status < "$task_dir/status" || true
+      [ -n "$status" ] || status="unknown"
+    fi
+    if [ "$status" = "$target" ]; then
       count="$((count + 1))"
     fi
   done
