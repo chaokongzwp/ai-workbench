@@ -13,6 +13,42 @@ test("Windows Agent does not expose an empty stdin pipe to Codex", () => {
   assert.doesNotMatch(script, /if \(input\) child\.stdin\.end\(input, "utf8"\); else child\.stdin\.end\(\)/);
 });
 
+test("Windows Agent recovers a completed Codex result from a stuck CLI teardown", () => {
+  const script = windowsWorkbenchAgentScript("completion-recovery-test");
+  const helperStart = script.indexOf("function completionFileSnapshot");
+  const helperEnd = script.indexOf("async function runChild", helperStart);
+  assert.ok(helperStart > 0 && helperEnd > helperStart);
+
+  let current = null;
+  const helpers = Function(
+    "fs",
+    `"use strict";\n${script.slice(helperStart, helperEnd)}\nreturn { completionFileSnapshot, sameCompletionFileSnapshot };`,
+  )({
+    statSync() {
+      if (current instanceof Error) throw current;
+      return current;
+    },
+  });
+
+  current = { isFile: () => true, size: 0, mtimeMs: 100 };
+  assert.equal(helpers.completionFileSnapshot("result.txt"), null, "empty output must not complete a task");
+  current = { isFile: () => true, size: 12, mtimeMs: 100 };
+  const first = helpers.completionFileSnapshot("result.txt");
+  assert.deepEqual(first, { size: 12, mtimeMs: 100 });
+  assert.equal(helpers.sameCompletionFileSnapshot(first, { size: 12, mtimeMs: 100 }), true);
+  assert.equal(helpers.sameCompletionFileSnapshot(first, { size: 13, mtimeMs: 101 }), false, "continued writes reset the grace period");
+  current = Object.assign(new Error("missing"), { code: "ENOENT" });
+  assert.equal(helpers.completionFileSnapshot("result.txt"), null);
+
+  assert.match(script, /const CODEX_FINAL_OUTPUT_EXIT_GRACE_MILLISECONDS = 15000/);
+  assert.match(script, /if \(Date\.now\(\) - completionStableSince < completionGraceMs\) return/);
+  assert.match(script, /if \(child\.exitCode === null\) \{[\s\S]*spawnSync\("taskkill\.exe", \["\/PID", String\(child\.pid\), "\/T", "\/F"\]/);
+  assert.match(script, /finish\(0, \{ completionRecovered: true \}\)/);
+  assert.match(script, /fs\.rmSync\(outputPath, \{ force: true \}\)/, "a previous result must never trigger recovery");
+  assert.match(script, /spec\.kind === "codex" \? \{ completionFile: outputPath \} : \{\}/);
+  assert.match(script, /Agent 已读取稳定的 Codex 最终结果，并回收未正常退出的残留进程/);
+});
+
 test("generated Windows Agent is valid ESM", () => {
   const script = windowsWorkbenchAgentScript("syntax-test");
   const checked = spawnSync(process.execPath, ["--input-type=module", "--check"], {
