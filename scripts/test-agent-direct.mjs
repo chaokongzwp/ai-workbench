@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {
+  AgentDirectRequestError,
   agentDirectConfig,
   agentDirectEventUrl,
   agentDirectRequest,
   agentDirectTaskLifecycle,
   agentDirectTaskNeedsSync,
   normalizeAgentDirectEndpoint,
+  raceAgentDirectTimeout,
 } from "../src/core/agentDirect.js";
 import {
   taskLifecycleForMessage,
@@ -79,5 +81,43 @@ assert.notEqual(
   agentInstallationKey({ ...linuxMachine, platform: "wsl", wslDistro: "Debian" }),
 );
 assert.equal(serverPlatformLabel("macos"), "macOS");
+
+// The native bridge path (Electron/iOS `agentRequest`) has no AbortController,
+// so it must be bounded by a client-side deadline. A request that resolves in
+// time passes through untouched; one that never settles rejects with a typed
+// timeout error instead of hanging the sender forever (the iOS "stuck at 正在发送"
+// regression). Uses a floored 1s deadline to stay fast and deterministic.
+const fastPath = await raceAgentDirectTimeout(Promise.resolve({ status: 200, body: "{}" }), 50);
+assert.deepEqual(fastPath, { status: 200, body: "{}" });
+
+let timedOut = null;
+try {
+  await raceAgentDirectTimeout(new Promise(() => {}), 10);
+} catch (error) {
+  timedOut = error;
+}
+assert.ok(timedOut instanceof AgentDirectRequestError, "hanging native request must reject");
+assert.equal(timedOut.code, "agent_direct_timeout");
+
+// End to end: a native bridge whose agentRequest never resolves must surface the
+// timeout through agentDirectRequest rather than leaving the promise pending.
+const savedWindow = globalThis.window;
+globalThis.window = {
+  Capacitor: { isNativePlatform: () => true },
+  aiWorkbench: { agentRequest: () => new Promise(() => {}) },
+};
+try {
+  let nativeTimeout = null;
+  try {
+    await agentDirectRequest(profile, "/v1/tasks", { method: "POST", body: { hello: "world" }, timeoutMs: 10 });
+  } catch (error) {
+    nativeTimeout = error;
+  }
+  assert.ok(nativeTimeout instanceof AgentDirectRequestError, "native agentDirectRequest must settle");
+  assert.equal(nativeTimeout.code, "agent_direct_timeout");
+} finally {
+  if (savedWindow === undefined) delete globalThis.window;
+  else globalThis.window = savedWindow;
+}
 
 console.log("agent direct protocol regression: ok");
