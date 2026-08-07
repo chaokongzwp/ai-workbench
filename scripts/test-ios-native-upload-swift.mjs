@@ -23,6 +23,19 @@ assert.match(swift, /uploadTask\(with: request, fromFile:/);
 assert.match(swift, /agentUploadFileSHA256/);
 assert.match(swift, /X-AIWB-Content-SHA256/);
 assert.match(swift, /uploadTask\(with: request, from: content \?\? Data\(\)\)/);
+assert.match(swift, /private func resolvePinnedAgentChallenge\(/);
+assert.match(swift, /actualFingerprint == expectedFingerprint/);
+assert.match(swift, /SecTrustSetAnchorCertificates\(trust, \[certificate\] as CFArray\)/);
+assert.match(swift, /SecTrustSetAnchorCertificatesOnly\(trust, true\)/);
+assert.match(swift, /SecPolicyCreateBasicX509\(\)/);
+assert.match(swift, /SecTrustEvaluateWithError\(trust, &trustError\)/);
+assert.match(swift, /AGENT_TLS_FINGERPRINT_MISMATCH/);
+assert.match(swift, /"agent\.tls\.rejected"/);
+assert.equal(
+  [...swift.matchAll(/resolvePinnedAgentChallenge\(/g)].length,
+  4,
+  "request, WebSocket and upload delegates must share the exact pinned trust policy",
+);
 
 const uploadStart = swift.indexOf("private func performNativeUpload(");
 const uploadEnd = swift.indexOf("private func decodeUploadBase64", uploadStart);

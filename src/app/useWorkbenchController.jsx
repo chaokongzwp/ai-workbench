@@ -699,6 +699,7 @@ export function useWorkbenchController() {
   const syncingAgentSweepRef = useRef(false);
   const loadingAgentHistoryRef = useRef(new Set());
   const sendingServerIdsRef = useRef(new Set());
+  const cancelledUploadBootstrapServerIdsRef = useRef(new Set());
   const activeUploadByServerRef = useRef(new Map());
   const lastSendClickAtRef = useRef(0);
   const startupAgentSyncNoticeRef = useRef(new Set());
@@ -2867,6 +2868,196 @@ export function useWorkbenchController() {
     }
   }
 
+  function agentDirectHealthOutput(health = {}) {
+    const version = String(health?.version || "").trim();
+    return [
+      "__AIWB_AGENT_STATUS__ready",
+      `__AIWB_AGENT_VERSION__${version}`,
+      `__AIWB_AGENT_GENERATION_READY__${health?.generationReady === true ? "1" : "0"}`,
+      `__AIWB_AGENT_SERVICE_STATUS__${health?.serviceStatus || ""}`,
+      `__AIWB_AGENT_SERVICE_PROCESS_STATUS__${health?.serviceProcessStatus || ""}`,
+      `__AIWB_AGENT_DAEMON_STATUS__${health?.daemonStatus || ""}`,
+      `__AIWB_AGENT_HTTP_STATUS__${health?.httpStatus || ""}`,
+      `__AIWB_AGENT_UPDATER_STATUS__${health?.updaterStatus || ""}`,
+    ].join("\n");
+  }
+
+  function verifiedAgentDirectHealth(health, requiredCapabilities = ["tasks"]) {
+    const version = String(health?.version || "").trim();
+    const platform = trustedAgentPlatform(health?.platform);
+    const versionNumber = workbenchAgentVersionNumber(version);
+    const ready =
+      workbenchAgentProtocolSupports(health, requiredCapabilities) &&
+      health?.transport === "https" &&
+      health?.daemonStatus === "running" &&
+      health?.httpStatus === "running" &&
+      health?.updaterStatus === "running" &&
+      Boolean(platform) &&
+      (versionNumber < 54 || health?.generationReady === true) &&
+      versionNumber >= workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
+    return { ready, version, platform };
+  }
+
+  function decodeAgentDirectConfig(encoded) {
+    const compact = String(encoded || "").replace(/\s+/g, "");
+    if (!compact || typeof globalThis.atob !== "function") {
+      throw new Error("Agent 直连引导未返回配置数据。");
+    }
+    const binary = globalThis.atob(compact);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  }
+
+  function assertUploadBootstrapNotCancelled(serverId) {
+    if (!cancelledUploadBootstrapServerIdsRef.current.has(serverId)) return;
+    const error = new Error("附件上传已取消。");
+    error.code = "AIWB_UPLOAD_CANCELLED";
+    error.uploadedFileCount = 0;
+    throw error;
+  }
+
+  async function bootstrapAgentDirectProfile(
+    targetProfile,
+    { serverId = "", reason = "send", requiredCapabilities = ["tasks"] } = {},
+  ) {
+    const current = withKnownPassword(targetProfile);
+    const directConfigOutput = await runRemoteCommandForProfile(
+      current,
+      buildWorkbenchAgentDirectConfigCommand(current),
+      30_000,
+      10,
+    );
+    if (reason.startsWith("upload")) assertUploadBootstrapNotCancelled(serverId);
+    const encoded = String(directConfigOutput || "").match(
+      /__AIWB_AGENT_DIRECT_CONFIG_B64__([^\r\n]+)/,
+    )?.[1]?.trim();
+    const directConfig = decodeAgentDirectConfig(encoded);
+    const port = Number(directConfig?.port) || 8787;
+    const transport = directConfig?.tls ? "https" : "http";
+    const connectedHost = preferredHostByConnectionRef.current.get(sshEndpointKey(current)) || current.host;
+    const endpoint = `${transport}://${connectedHost}:${port}`;
+    const accessToken = String(directConfig?.accessToken || "").trim();
+    const tlsFingerprint = String(directConfig?.tls?.fingerprint || "").trim();
+    if (!accessToken || transport !== "https" || !tlsFingerprint) {
+      throw new Error("Agent 直连引导配置不完整或未启用 TLS。");
+    }
+
+    const machineProfileUpdatedAt = Date.now();
+    let directProfile = {
+      ...current,
+      agentDirectEndpoint: endpoint,
+      agentDirectAccessToken: accessToken,
+      agentDirectTlsFingerprint: tlsFingerprint,
+      machineProfileUpdatedAt,
+    };
+    const health = await agentDirectRequest(directProfile, "/v1/health", { timeoutMs: 10_000 });
+    if (reason.startsWith("upload")) assertUploadBootstrapNotCancelled(serverId);
+    const verified = verifiedAgentDirectHealth(health, requiredCapabilities);
+    if (!verified.ready) {
+      throw new Error(`Agent 直连健康校验未通过（v${verified.version || "?"}）。`);
+    }
+    directProfile = { ...directProfile, platform: verified.platform };
+    patchServersByConnection(
+      current,
+      (server) => ({
+        ...server,
+        profile: {
+          ...server.profile,
+          agentDirectEndpoint: endpoint,
+          agentDirectAccessToken: accessToken,
+          agentDirectTlsFingerprint: tlsFingerprint,
+          platform: verified.platform,
+          machineProfileUpdatedAt,
+        },
+        connection: {
+          ...(server.connection || {}),
+          mode: "agent",
+        },
+      }),
+      { persistDelay: 0 },
+    );
+    if (activeServerIdRef.current === serverId) profileRef.current = directProfile;
+    void appLog("info", "agent.direct.configured", {
+      serverId,
+      reason,
+      endpoint,
+      connectedHost,
+      transport,
+      version: verified.version,
+      platform: verified.platform,
+      capabilities: requiredCapabilities,
+      sharedByConnection: true,
+    });
+    return {
+      profile: directProfile,
+      health,
+      platform: verified.platform,
+      output: agentDirectHealthOutput(health),
+    };
+  }
+
+  async function ensureAgentBinaryUploadProfile(targetProfile, serverId = "") {
+    const current = withKnownPassword(targetProfile);
+    assertUploadBootstrapNotCancelled(serverId);
+    if (agentDirectConfig(current).enabled) {
+      try {
+        const health = await agentDirectRequest(current, "/v1/health", { timeoutMs: 10_000 });
+        assertUploadBootstrapNotCancelled(serverId);
+        if (verifiedAgentDirectHealth(health, ["binary-upload-v1"]).ready) return current;
+        void appLog("warn", "agent.upload.direct_not_ready", {
+          serverId,
+          version: String(health?.version || ""),
+          capabilities: Array.isArray(health?.capabilities) ? health.capabilities : [],
+        });
+      } catch (error) {
+        if (String(error?.code || "") === "AIWB_UPLOAD_CANCELLED") throw error;
+        void appLog("warn", "agent.upload.direct_stale", { serverId, error: shortError(error) });
+      }
+    }
+
+    assertUploadBootstrapNotCancelled(serverId);
+    let bootstrapError = null;
+    try {
+      const configured = await bootstrapAgentDirectProfile(current, {
+        serverId,
+        reason: "upload",
+        requiredCapabilities: ["binary-upload-v1"],
+      });
+      return configured.profile;
+    } catch (error) {
+      if (
+        String(error?.code || "") === "AIWB_UPLOAD_CANCELLED" ||
+        isSshTransportUnavailableError(error) ||
+        /^(?:agent_direct_|AGENT_TLS_)/.test(String(error?.code || ""))
+      ) {
+        throw error;
+      }
+      bootstrapError = error;
+      void appLog("warn", "agent.upload.direct_bootstrap_failed", { serverId, error: shortError(error) });
+    }
+
+    const setup = await ensureWorkbenchAgentForProfile(current, {
+      serverId,
+      reason: "upload",
+      allowCachedReady: false,
+    });
+    assertUploadBootstrapNotCancelled(serverId);
+    if (!setup.available || setup.taskSubmissionReady === false) {
+      throw new Error(`无法建立 Agent 安全上传通道：${shortError(setup.error || bootstrapError)}`);
+    }
+    const refreshedProfile = withKnownPassword(serverById(serverId)?.profile || current);
+    try {
+      const configured = await bootstrapAgentDirectProfile(refreshedProfile, {
+        serverId,
+        reason: "upload-retry",
+        requiredCapabilities: ["binary-upload-v1"],
+      });
+      return configured.profile;
+    } catch (error) {
+      throw new Error(`无法建立 Agent 安全上传通道：${shortError(error)}`);
+    }
+  }
+
   async function uploadImageAttachmentsForProfile(
     targetProfile,
     attachments = [],
@@ -2875,10 +3066,8 @@ export function useWorkbenchController() {
   ) {
     const items = attachments.filter(agentUploadAttachmentReady);
     if (!items.length) return [];
-    const current = withKnownPassword(targetProfile);
-    if (!agentDirectConfig(current).enabled) {
-      throw new Error("当前会话尚未配置 Agent 安全上传，请等待 Agent 更新并重新连接后再试。");
-    }
+    const current = await ensureAgentBinaryUploadProfile(targetProfile, serverId);
+    assertUploadBootstrapNotCancelled(serverId);
     const uploaded = [];
     for (let index = 0; index < items.length; index += 1) {
       const attachment = items[index];
@@ -5934,92 +6123,15 @@ export function useWorkbenchController() {
       let directProfile = healthResolvedProfile;
       if (!directRouteReady) {
         try {
-          const directConfigOutput = await runRemoteCommandForProfile(
-            healthResolvedProfile,
-            buildWorkbenchAgentDirectConfigCommand(healthResolvedProfile),
-            30_000,
-            10,
-          );
-          const encoded = String(directConfigOutput || "").match(/__AIWB_AGENT_DIRECT_CONFIG_B64__([^\r\n]+)/)?.[1]?.trim();
-          if (!encoded || typeof atob !== "function") {
-            throw new Error("Agent 直连引导未返回配置数据。");
-          }
-          const directConfig = JSON.parse(atob(encoded));
-          const port = Number(directConfig?.port) || 8787;
-          const transport = directConfig?.tls ? "https" : "http";
-          const connectedHost =
-            preferredHostByConnectionRef.current.get(sshEndpointKey(currentProfile)) || currentProfile.host;
-          const endpoint = `${transport}://${connectedHost}:${port}`;
-          const accessToken = String(directConfig?.accessToken || "").trim();
-          const tlsFingerprint = String(directConfig?.tls?.fingerprint || "").trim();
-          if (!accessToken || transport !== "https" || !tlsFingerprint) {
-            throw new Error("Agent 直连引导配置不完整或未启用 TLS。");
-          }
-          const machineProfileUpdatedAt = Date.now();
-          directProfile = {
-            ...healthResolvedProfile,
-            agentDirectEndpoint: endpoint,
-            agentDirectAccessToken: accessToken,
-            agentDirectTlsFingerprint: tlsFingerprint,
-            machineProfileUpdatedAt,
-          };
-          const verifiedHealth = await agentDirectRequest(directProfile, "/v1/health", { timeoutMs: 10_000 });
-          const verifiedVersion = String(verifiedHealth?.version || "").trim();
-          const verifiedPlatform = trustedAgentPlatform(verifiedHealth?.platform);
-          if (
-            !workbenchAgentProtocolSupports(verifiedHealth, ["tasks"]) ||
-            verifiedHealth?.transport !== "https" ||
-            verifiedHealth?.daemonStatus !== "running" ||
-            verifiedHealth?.httpStatus !== "running" ||
-            verifiedHealth?.updaterStatus !== "running" ||
-            !verifiedPlatform ||
-            (workbenchAgentVersionNumber(verifiedVersion) >= 54 && verifiedHealth?.generationReady !== true) ||
-            workbenchAgentVersionNumber(verifiedVersion) < workbenchAgentVersionNumber(latestWorkbenchAgentVersion)
-          ) {
-            throw new Error(`Agent 直连健康校验未通过（v${verifiedVersion || "?"}）。`);
-          }
-          trustedDirectPlatform = verifiedPlatform;
-          directProfile = { ...directProfile, platform: verifiedPlatform };
-          directRouteReady = true;
-          directHealthOutput = [
-            "__AIWB_AGENT_STATUS__ready",
-            `__AIWB_AGENT_VERSION__${verifiedVersion}`,
-            `__AIWB_AGENT_GENERATION_READY__${verifiedHealth?.generationReady === true ? "1" : "0"}`,
-            `__AIWB_AGENT_SERVICE_STATUS__${verifiedHealth?.serviceStatus || ""}`,
-            `__AIWB_AGENT_SERVICE_PROCESS_STATUS__${verifiedHealth?.serviceProcessStatus || ""}`,
-            `__AIWB_AGENT_DAEMON_STATUS__${verifiedHealth?.daemonStatus || ""}`,
-            `__AIWB_AGENT_HTTP_STATUS__${verifiedHealth?.httpStatus || ""}`,
-            `__AIWB_AGENT_UPDATER_STATUS__${verifiedHealth?.updaterStatus || ""}`,
-          ].join("\n");
-          patchServersByConnection(
-            currentProfile,
-            (server) => ({
-              ...server,
-              profile: {
-                ...server.profile,
-                agentDirectEndpoint: endpoint,
-                agentDirectAccessToken: accessToken,
-                agentDirectTlsFingerprint: tlsFingerprint,
-                platform: verifiedPlatform,
-                machineProfileUpdatedAt,
-              },
-              connection: {
-                ...(server.connection || {}),
-                mode: "agent",
-              },
-            }),
-            { persistDelay: 0 },
-          );
-          if (activeServerIdRef.current === serverId) profileRef.current = directProfile;
-          void appLog("info", "agent.direct.configured", {
+          const configured = await bootstrapAgentDirectProfile(healthResolvedProfile, {
             serverId,
-            endpoint,
-            connectedHost,
-            transport,
-            version: verifiedVersion,
-            platform: verifiedPlatform,
-            sharedByConnection: true,
+            reason: "send",
+            requiredCapabilities: ["tasks"],
           });
+          trustedDirectPlatform = configured.platform;
+          directProfile = configured.profile;
+          directRouteReady = true;
+          directHealthOutput = configured.output;
         } catch (error) {
           void appLog("warn", "agent.direct.config_read_failed", { serverId, error: shortError(error) });
         }
@@ -7934,6 +8046,7 @@ export function useWorkbenchController() {
       agentPreferredForProfile(currentProfile) && agentDirectConfig(currentProfile).enabled;
     const transportReadyForSend = connectionIsLive(sourceServer.connection) || directAgentReadyForSend;
     sendingServerIdsRef.current.add(serverId);
+    cancelledUploadBootstrapServerIdsRef.current.delete(serverId);
     const routerEnabled = mainAIRouterReady(currentProfile) && !pendingFiles.length;
     const existingRetryMessage = retryMessage?.id
       ? (sourceServer.messages || []).find((item) => item.id === retryMessage.id && item.role === "assistant")
@@ -8141,6 +8254,8 @@ export function useWorkbenchController() {
           serverId,
           assistantMessageId,
         );
+        sourceServer = serverById(serverId) || sourceServer;
+        currentProfile = withKnownPassword(sourceServer.profile || currentProfile);
         uploadedFileCount = uploadedImages.length;
         removeUploadedImageAttachments(pendingFiles, serverId);
         sendStage = "executing";
@@ -8429,6 +8544,7 @@ export function useWorkbenchController() {
       }
     } finally {
       sendingServerIdsRef.current.delete(serverId);
+      cancelledUploadBootstrapServerIdsRef.current.delete(serverId);
       if (!pendingRemoteTask) {
         setServerTaskMetadata(serverId, {
           agentId: finalAgent.id,
@@ -8880,6 +8996,11 @@ export function useWorkbenchController() {
     const runningMessage = lastActiveTaskMessage(server?.messages || []);
     const runningAgentMessage =
       runningMessage?.backend === "agent" && runningMessage.remoteTaskId ? runningMessage : null;
+    const uploadBootstrapRunning =
+      !activeUpload?.uploadId &&
+      sendingServerIdsRef.current.has(serverId) &&
+      !runningAgentMessage &&
+      (runningMessage?.title === "上传中" || /正在上传/.test(String(runningMessage?.body || "")));
     const taskAgent = agentById(runningMessage?.agentId || server?.task?.agentId || currentProfile.agentId, activeAgent);
 
     if (busyRef.current && !runningMessage && !serverTaskRunning(server)) return;
@@ -8888,6 +9009,11 @@ export function useWorkbenchController() {
     setBusy(true);
     setRawOpen(false);
     try {
+      if (uploadBootstrapRunning) {
+        cancelledUploadBootstrapServerIdsRef.current.add(serverId);
+        enqueueTaskNotice({ serverId, title: "正在取消附件上传，附件会保留在输入框", tone: "warning" });
+        return;
+      }
       if (activeUpload?.uploadId) {
         const result = await cancelAgentDirectUpload(activeUpload.uploadId);
         if (result?.active === false && result?.cancelled !== true) {

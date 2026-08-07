@@ -228,7 +228,8 @@ assert.match(controllerSource, /entry\.requestMessageId/);
 assert.match(controllerSource, /entry\.responseMessageId/);
 assert.match(controllerSource, /entry\.turnId/);
 assert.match(controllerSource, /workbenchAgentProtocolSupports\(directHealth, \["tasks"\]\)/);
-assert.match(controllerSource, /workbenchAgentProtocolSupports\(verifiedHealth, \["tasks"\]\)/);
+assert.match(controllerSource, /verifiedAgentDirectHealth\(health, requiredCapabilities\)/);
+assert.match(controllerSource, /requiredCapabilities: \["tasks"\]/);
 assert.doesNotMatch(controllerSource, /protocolVersion === 1/);
 assert.match(sendTaskSource, /消息已保存在本地，但没有发送到远端/);
 

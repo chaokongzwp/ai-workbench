@@ -16,6 +16,11 @@ function jsonOrNull(value) {
   }
 }
 
+function nativeAgentBridgeErrorCode(error, fallback) {
+  const code = text(error?.code);
+  return /^AGENT_TLS_[A-Z0-9_]+$/.test(code) ? code : fallback;
+}
+
 export function normalizeAgentDirectEndpoint(value) {
   const candidate = text(value);
   if (!candidate) return "";
@@ -214,7 +219,9 @@ export async function agentDirectUpload(profile, attachment, {
       return parseAgentUploadResponse(await nativeUpload(payload));
     } catch (error) {
       if (error instanceof AgentDirectRequestError) throw error;
-      throw new AgentDirectRequestError(text(error?.message) || "无法上传附件到 Agent。", { code: "agent_upload_network_error" });
+      throw new AgentDirectRequestError(text(error?.message) || "无法上传附件到 Agent。", {
+        code: nativeAgentBridgeErrorCode(error, "agent_upload_network_error"),
+      });
     }
   }
   if (typeof fetchImpl !== "function") {
@@ -319,7 +326,9 @@ export async function agentDirectRequest(profile, path, { method = "GET", body, 
       return parsed ?? {};
     } catch (error) {
       if (error instanceof AgentDirectRequestError) throw error;
-      throw new AgentDirectRequestError(text(error?.message) || "无法建立安全的 Agent 连接。", { code: "agent_direct_network_error" });
+      throw new AgentDirectRequestError(text(error?.message) || "无法建立安全的 Agent 连接。", {
+        code: nativeAgentBridgeErrorCode(error, "agent_direct_network_error"),
+      });
     }
   }
   if (typeof fetchImpl !== "function") {

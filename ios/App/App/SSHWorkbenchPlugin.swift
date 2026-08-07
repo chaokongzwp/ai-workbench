@@ -1438,8 +1438,108 @@ private final class NativeUploadSessionStore: @unchecked Sendable {
     }
 }
 
+private struct AgentTlsTrustFailure {
+    let code: String
+    let message: String
+    let expectedPrefix: String
+    let actualPrefix: String
+
+    var error: NSError {
+        NSError(
+            domain: "AIWorkbenchAgentTLS",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+}
+
+private final class AgentTlsTrustFailureStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: AgentTlsTrustFailure?
+
+    func record(_ failure: AgentTlsTrustFailure) {
+        lock.lock()
+        if value == nil { value = failure }
+        lock.unlock()
+    }
+
+    func snapshot() -> AgentTlsTrustFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
+private func agentTlsFingerprintPrefix(_ value: String) -> String {
+    let normalized = value
+        .replacingOccurrences(of: "sha256/", with: "", options: [.caseInsensitive])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return String(normalized.prefix(12))
+}
+
+private func resolvePinnedAgentChallenge(
+    _ challenge: URLAuthenticationChallenge,
+    expectedFingerprint: String,
+    failureStore: AgentTlsTrustFailureStore,
+    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+) {
+    guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
+        completionHandler(.performDefaultHandling, nil)
+        return
+    }
+    guard let trust = challenge.protectionSpace.serverTrust,
+          let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
+        failureStore.record(AgentTlsTrustFailure(
+            code: "AGENT_TLS_TRUST_UNAVAILABLE",
+            message: "无法读取 Agent 安全证书，请重新连接后再试。",
+            expectedPrefix: agentTlsFingerprintPrefix(expectedFingerprint),
+            actualPrefix: ""
+        ))
+        completionHandler(.cancelAuthenticationChallenge, nil)
+        return
+    }
+
+    let certificateData = SecCertificateCopyData(certificate) as Data
+    let actualFingerprint = Data(SHA256.hash(data: certificateData)).base64EncodedString()
+    guard !expectedFingerprint.isEmpty, actualFingerprint == expectedFingerprint else {
+        failureStore.record(AgentTlsTrustFailure(
+            code: "AGENT_TLS_FINGERPRINT_MISMATCH",
+            message: "Agent 安全证书已变化，正在使用的连接信息已失效，请重新连接后再试。",
+            expectedPrefix: agentTlsFingerprintPrefix(expectedFingerprint),
+            actualPrefix: agentTlsFingerprintPrefix(actualFingerprint)
+        ))
+        completionHandler(.cancelAuthenticationChallenge, nil)
+        return
+    }
+
+    // The Agent certificate is self-signed and addressed through a private IP.
+    // Exact leaf pinning above establishes identity; anchoring that same leaf
+    // lets newer iOS releases complete trust evaluation without hostname/SAN
+    // fallback or any global ATS exception.
+    let policyStatus = SecTrustSetPolicies(trust, SecPolicyCreateBasicX509())
+    let anchorStatus = SecTrustSetAnchorCertificates(trust, [certificate] as CFArray)
+    SecTrustSetAnchorCertificatesOnly(trust, true)
+    var trustError: CFError?
+    guard policyStatus == errSecSuccess,
+          anchorStatus == errSecSuccess,
+          SecTrustEvaluateWithError(trust, &trustError) else {
+        failureStore.record(AgentTlsTrustFailure(
+            code: "AGENT_TLS_TRUST_EVALUATION_FAILED",
+            message: "Agent 安全证书校验失败，请检查设备时间或重新连接后再试。",
+            expectedPrefix: agentTlsFingerprintPrefix(expectedFingerprint),
+            actualPrefix: agentTlsFingerprintPrefix(actualFingerprint)
+        ))
+        completionHandler(.cancelAuthenticationChallenge, nil)
+        return
+    }
+    completionHandler(.useCredential, URLCredential(trust: trust))
+}
+
 private final class PinnedAgentSessionDelegate: NSObject, URLSessionDelegate {
     private let expectedFingerprint: String
+    private let failureStore = AgentTlsTrustFailureStore()
+
+    var trustFailure: AgentTlsTrustFailure? { failureStore.snapshot() }
 
     init(expectedFingerprint: String) {
         self.expectedFingerprint = expectedFingerprint
@@ -1450,28 +1550,18 @@ private final class PinnedAgentSessionDelegate: NSObject, URLSessionDelegate {
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let trust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        guard let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        let certificateData = SecCertificateCopyData(certificate) as Data
-        let actualFingerprint = Data(SHA256.hash(data: certificateData)).base64EncodedString()
-        guard !expectedFingerprint.isEmpty,
-              actualFingerprint == expectedFingerprint else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        completionHandler(.useCredential, URLCredential(trust: trust))
+        resolvePinnedAgentChallenge(
+            challenge,
+            expectedFingerprint: expectedFingerprint,
+            failureStore: failureStore,
+            completionHandler: completionHandler
+        )
     }
 }
 
 private final class PinnedAgentWebSocketDelegate: NSObject, URLSessionDelegate, URLSessionWebSocketDelegate {
     private let expectedFingerprint: String
+    private let failureStore = AgentTlsTrustFailureStore()
     private let opened: () -> Void
     private let closed: (Error?) -> Void
 
@@ -1486,18 +1576,12 @@ private final class PinnedAgentWebSocketDelegate: NSObject, URLSessionDelegate, 
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let trust = challenge.protectionSpace.serverTrust,
-              let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        let actualFingerprint = Data(SHA256.hash(data: SecCertificateCopyData(certificate) as Data)).base64EncodedString()
-        guard !expectedFingerprint.isEmpty, actualFingerprint == expectedFingerprint else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        completionHandler(.useCredential, URLCredential(trust: trust))
+        resolvePinnedAgentChallenge(
+            challenge,
+            expectedFingerprint: expectedFingerprint,
+            failureStore: failureStore,
+            completionHandler: completionHandler
+        )
     }
 
     func urlSession(
@@ -1522,7 +1606,11 @@ private final class PinnedAgentWebSocketDelegate: NSObject, URLSessionDelegate, 
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error { closed(error) }
+        if let trustFailure = failureStore.snapshot() {
+            closed(trustFailure.error)
+        } else if let error {
+            closed(error)
+        }
     }
 }
 
@@ -1541,6 +1629,7 @@ private final class NativeAgentEventStream {
 
 private final class PinnedAgentUploadDelegate: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate {
     private let expectedFingerprint: String
+    private let failureStore = AgentTlsTrustFailureStore()
     private let progress: (Int64, Int64) -> Void
     private let completion: (Data, HTTPURLResponse?, Error?) -> Void
     private var responseData = Data()
@@ -1555,23 +1644,19 @@ private final class PinnedAgentUploadDelegate: NSObject, URLSessionDataDelegate,
         self.completion = completion
     }
 
+    var trustFailure: AgentTlsTrustFailure? { failureStore.snapshot() }
+
     func urlSession(
         _ session: URLSession,
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let trust = challenge.protectionSpace.serverTrust,
-              let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        let actualFingerprint = Data(SHA256.hash(data: SecCertificateCopyData(certificate) as Data)).base64EncodedString()
-        guard !expectedFingerprint.isEmpty, actualFingerprint == expectedFingerprint else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        completionHandler(.useCredential, URLCredential(trust: trust))
+        resolvePinnedAgentChallenge(
+            challenge,
+            expectedFingerprint: expectedFingerprint,
+            failureStore: failureStore,
+            completionHandler: completionHandler
+        )
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -2354,6 +2439,16 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         session.dataTask(with: request) { data, response, error in
             if let error {
+                if let trustFailure = delegate.trustFailure {
+                    self.appendDiagnosticLog("error", "agent.tls.rejected", fields: [
+                        "operation": "request",
+                        "code": trustFailure.code,
+                        "expectedPrefix": trustFailure.expectedPrefix,
+                        "actualPrefix": trustFailure.actualPrefix
+                    ])
+                    call.reject(trustFailure.message, trustFailure.code, error)
+                    return
+                }
                 call.reject(self.safeErrorMessage(error), "AGENT_REQUEST_FAILED", error)
                 return
             }
@@ -2632,6 +2727,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         request.setValue(contentSHA256, forHTTPHeaderField: "X-AIWB-Content-SHA256")
 
         var session: URLSession?
+        var uploadDelegate: PinnedAgentUploadDelegate?
         let delegate = PinnedAgentUploadDelegate(
             expectedFingerprint: expectedFingerprint,
             progress: { [weak self] sent, total in
@@ -2645,8 +2741,20 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
             },
             completion: { [weak self] data, response, error in
                 self?.agentUploadSessions.finish(uploadId: uploadId)
+                let trustFailure = uploadDelegate?.trustFailure
+                uploadDelegate = nil
                 session = nil
                 if let error {
+                    if let trustFailure {
+                        self?.appendDiagnosticLog("error", "agent.tls.rejected", fields: [
+                            "operation": "upload",
+                            "code": trustFailure.code,
+                            "expectedPrefix": trustFailure.expectedPrefix,
+                            "actualPrefix": trustFailure.actualPrefix
+                        ])
+                        call.reject(trustFailure.message, trustFailure.code, error)
+                        return
+                    }
                     call.reject(self?.safeErrorMessage(error) ?? "附件上传失败。", "AGENT_UPLOAD_FAILED", error)
                     return
                 }
@@ -2656,6 +2764,7 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
                 ])
             }
         )
+        uploadDelegate = delegate
         session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         let task = nativeFileURL.map { session!.uploadTask(with: request, fromFile: $0) }
             ?? session!.uploadTask(with: request, from: content ?? Data())

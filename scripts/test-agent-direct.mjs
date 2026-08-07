@@ -174,6 +174,24 @@ try {
   }
   assert.ok(nativeTimeout instanceof AgentDirectRequestError, "native agentDirectRequest must settle");
   assert.equal(nativeTimeout.code, "agent_direct_timeout");
+
+  window.aiWorkbench.agentRequest = async () => {
+    throw Object.assign(new Error("The network connection was lost."), { code: "AGENT_REQUEST_FAILED" });
+  };
+  await assert.rejects(
+    agentDirectRequest(profile, "/v1/tasks"),
+    (error) => error instanceof AgentDirectRequestError && error.code === "agent_direct_network_error",
+    "generic native bridge codes must retain transient-disconnect recovery semantics",
+  );
+
+  window.aiWorkbench.agentRequest = async () => {
+    throw Object.assign(new Error("Agent 安全证书已变化。"), { code: "AGENT_TLS_FINGERPRINT_MISMATCH" });
+  };
+  await assert.rejects(
+    agentDirectRequest(profile, "/v1/health"),
+    (error) => error instanceof AgentDirectRequestError && error.code === "AGENT_TLS_FINGERPRINT_MISMATCH",
+    "specific TLS pin failures must remain diagnosable",
+  );
 } finally {
   if (savedWindow === undefined) delete globalThis.window;
   else globalThis.window = savedWindow;

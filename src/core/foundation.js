@@ -1441,6 +1441,21 @@ export function normalizeProfile(profile) {
   return normalized;
 }
 
+const deviceLocalProfileKeys = new Set([
+  "agentDirectEndpoint",
+  "agentDirectAccessToken",
+  "agentDirectTlsFingerprint",
+]);
+
+function portableProfile(profile) {
+  const normalized = normalizeProfile(profile || {});
+  return Object.fromEntries(
+    Object.keys(defaultProfile)
+      .filter((key) => !deviceLocalProfileKeys.has(key))
+      .map((key) => [key, normalized[key]]),
+  );
+}
+
 export function normalizeHostAlternates(value, primaryHost = "") {
   const primary = String(primaryHost || "").trim().toLocaleLowerCase();
   const candidates = Array.isArray(value) ? value : String(value || "").split(/[\n,，;；]/);
@@ -2036,7 +2051,7 @@ export function serializeWorkspaceMigrationStore(servers, activeServerId) {
     version: workspaceStoreVersion,
     activeServerId,
     servers: (Array.isArray(servers) ? servers : []).map((server, index) => {
-      const profile = normalizeProfile(server.profile);
+      const profile = portableProfile(server.profile);
       const displayName = serverDisplayName(server, index);
       return {
         id: server.id,
@@ -2083,7 +2098,16 @@ export function parseWorkspaceMigrationText(text) {
       : parsed?.workspace && parsed.workspace.version
         ? parsed.workspace
         : parsed;
-  const store = normalizeWorkspaceStore(workspace);
+  const portableWorkspace = workspaceStoreHasServers(workspace)
+    ? {
+        ...workspace,
+        servers: workspace.servers.map((server) => ({
+          ...server,
+          profile: portableProfile(server?.profile || {}),
+        })),
+      }
+    : workspace;
+  const store = normalizeWorkspaceStore(portableWorkspace);
   if (!Array.isArray(store.servers) || !store.servers.length) {
     throw new Error("配置文件里没有可导入的会话。");
   }
@@ -2121,10 +2145,24 @@ export function mergeImportedServers(currentServers, importedServers) {
   const kept = currentIsOnlyPlaceholder ? [] : current.filter((server) => !incomingIds.has(server.id));
   const mergedIncoming = incoming.map((server, index) => {
     const existing = currentById.get(server.id);
+    const incomingProfile = portableProfile(server?.profile || {});
+    const connectionIdentityChanged =
+      existing &&
+      cloudSyncConnectionIdentity(existing.profile) !== cloudSyncConnectionIdentity(incomingProfile);
+    const mergedProfile =
+      existing && !connectionIdentityChanged
+        ? {
+            ...incomingProfile,
+            agentDirectEndpoint: String(existing.profile?.agentDirectEndpoint || "").trim(),
+            agentDirectAccessToken: String(existing.profile?.agentDirectAccessToken || "").trim(),
+            agentDirectTlsFingerprint: String(existing.profile?.agentDirectTlsFingerprint || "").trim(),
+          }
+        : incomingProfile;
     return createServerSession(
       {
         ...server,
         id: server.id || createServerId(),
+        profile: mergedProfile,
         messages: existing?.messages || [],
         rawOutput: existing?.rawOutput || server.rawOutput,
         task: {},
@@ -2270,12 +2308,12 @@ function cloudSyncServerConfigSignature(server) {
   return JSON.stringify({
     conversationId: cloudSyncConversationIdForServer(server),
     name: String(server?.name || server?.profile?.name || "").trim(),
-    profile: normalizeProfile(server?.profile || {}),
+    profile: portableProfile(server?.profile || {}),
   });
 }
 
 export function sessionShareFromServer(server) {
-  const profile = normalizeProfile(server?.profile || {});
+  const profile = portableProfile(server?.profile || {});
   const conversationId = String(server?.conversationId || "").trim() || createConversationId(profile.workdir || profile.name);
   const syncKey = [
     cloudSyncSessionKeyForProfile(profile),
@@ -2329,12 +2367,12 @@ export function mergeCloudSharedSessions(currentServers, records = []) {
 
   (Array.isArray(records) ? records : []).forEach((record) => {
     const session = record?.session && typeof record.session === "object" ? record.session : record;
-    const profile = normalizeProfile({
+    const profile = normalizeProfile(portableProfile({
       ...(session?.profile || {}),
       openAIAPIKey: "",
       aliyunApiKey: "",
       aliyunWorkspaceId: "",
-    });
+    }));
     const normalizedSession = {
       ...session,
       conversationId: String(session?.conversationId || session?.sessionId || "").trim(),
@@ -2432,7 +2470,7 @@ export function normalizeCloudSyncPlainPayload(value = {}) {
   const workspace = normalizeWorkspaceStore(payload?.workspace || { version: workspaceStoreVersion, servers: [] });
   const servers = (workspace.servers || [])
     .map((server) => {
-      const profile = normalizeProfile(server?.profile || {});
+      const profile = portableProfile(server?.profile || {});
       const syncIdentity = normalizeCloudSyncSessionIdentity(server?.syncIdentity || {}, profile);
       const syncKey = cloudSyncSessionKeyFromIdentity(syncIdentity);
       if (!syncKey) return null;
@@ -2569,13 +2607,21 @@ export function mergeCloudDownloadedServers(currentServers, cloudPayload) {
       }
       const connectionIdentityChanged =
         cloudSyncConnectionIdentity(existing.profile) !== cloudSyncConnectionIdentity(server.profile);
+      const mergedProfile = connectionIdentityChanged
+        ? server.profile
+        : {
+            ...server.profile,
+            agentDirectEndpoint: String(existing.profile?.agentDirectEndpoint || "").trim(),
+            agentDirectAccessToken: String(existing.profile?.agentDirectAccessToken || "").trim(),
+            agentDirectTlsFingerprint: String(existing.profile?.agentDirectTlsFingerprint || "").trim(),
+          };
       const updated = createServerSession(
         {
           ...existing,
           ...server,
           id: existing.id,
           conversationId: existing.conversationId || cloudSyncConversationIdForServer(server),
-          profile: server.profile,
+          profile: mergedProfile,
           connection: connectionIdentityChanged
             ? initialConnectionForProfile(server.profile)
             : existing.connection,
