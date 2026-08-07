@@ -14,7 +14,8 @@
   --ipad-chat-subtle: #9aa2ad;
   position: fixed;
   inset: 0;
-  grid-template-columns: var(--ipad-sidebar-width, 304px) minmax(0, 1fr);
+  --ipad-sidebar-width: clamp(280px, 28vw, 320px);
+  grid-template-columns: var(--ipad-sidebar-width) minmax(0, 1fr);
   width: var(--app-viewport-width, 100vw);
   min-width: 0;
   max-width: 100vw;
@@ -42,6 +43,7 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
 
 .native-app-shell[data-native-form-factor="ipad"] .native-ipad-sidebar {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
 }
@@ -107,8 +109,256 @@ html:has(.native-app-shell[data-native-form-factor="ipad"]) #root {
   display: none;
 }
 
-.native-app-shell[data-native-form-factor="ipad"] .native-session-sheet {
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="regular"] .native-session-sheet {
   display: none !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"] .native-ipad-sidebar {
+  display: none !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"].native-session-open
+  .native-session-sheet {
+  display: grid !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"] .native-sheet-panel {
+  width: min(360px, calc(100% - clamp(20px, 8vw, 48px)));
+  border-right: 1px solid var(--ipad-chat-line);
+  background: var(--ipad-chat-surface);
+  box-shadow: 18px 0 48px rgba(20, 24, 32, 0.18);
+}
+
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"][data-ipad-layout="compact"]
+  .native-sheet-panel {
+  box-shadow: 18px 0 52px rgba(0, 0, 0, 0.42);
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"] .native-sheet-body {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"] .native-title-button {
+  pointer-events: auto;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"]
+  .native-chat-nav
+  .native-ipad-sidebar-toggle {
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar, .native-sheet-body)
+  .session-group-filter {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  padding: 8px 10px 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar, .native-sheet-body)
+  .session-group-filter
+  button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.native-app-shell[data-native-form-factor="ipad"]
+  :is(.native-ipad-sidebar, .native-sheet-body)
+  .server-list {
+  align-content: start;
+  min-width: 0;
+  min-height: 0;
+  gap: 3px;
+  padding: 5px 8px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 62px;
+  gap: 9px;
+  padding: 8px;
+  border: 0;
+  border-radius: 12px;
+  color: var(--ipad-chat-text);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 160ms ease, transform 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-row.active {
+  background: var(--ipad-chat-soft);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-row:active {
+  transform: scale(0.992);
+  background: rgba(118, 118, 128, 0.16);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-row:focus-visible {
+  outline: 2px solid rgba(90, 90, 100, 0.38);
+  outline-offset: -2px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-row .agent-logo {
+  grid-column: 1;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-copy {
+  display: grid;
+  grid-column: 2;
+  min-width: 0;
+  gap: 3px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-copy :is(strong, span) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-copy strong {
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-copy span {
+  color: var(--ipad-chat-muted);
+  font-size: 11px;
+  font-weight: 520;
+  line-height: 1.3;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-actions {
+  display: flex;
+  grid-column: 3;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: 4px;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] :is(.ipad-session-connect, .ipad-session-settings) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 0;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-connect {
+  min-width: 56px;
+  max-width: 68px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: #1f5f9e;
+  background: rgba(0, 122, 255, 0.1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-connect.connected {
+  color: #248a3d;
+  background: rgba(52, 199, 89, 0.11);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-connect.running {
+  color: #8b5d00;
+  background: rgba(255, 159, 10, 0.13);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-connect.error {
+  color: #c9342d;
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-settings {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  color: var(--ipad-chat-muted);
+  background: rgba(118, 118, 128, 0.1);
+}
+
+.native-app-shell[data-theme="dark"][data-native-form-factor="ipad"] .ipad-session-settings {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.native-app-shell[data-native-form-factor="ipad"] .ipad-session-unread {
+  position: absolute;
+  top: 7px;
+  left: 32px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--ipad-chat-surface);
+  border-radius: 50%;
+  background: #34c759;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"]
+  .native-sheet-body
+  .sidebar-toolbar {
+  position: static;
+  justify-content: flex-end;
+  min-height: 44px;
+  padding: 7px 10px 5px;
+  border-bottom: 0;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"]
+  .native-sheet-body
+  .sidebar-toolbar
+  .section-header {
+  display: none;
+}
+
+.native-app-shell[data-native-form-factor="ipad"][data-ipad-layout="compact"]
+  .native-sheet-body
+  .sidebar-actions {
+  position: static;
+  padding: 9px 10px calc(9px + var(--safe-bottom));
+  border-top: 1px solid var(--ipad-chat-line);
+  background: var(--ipad-chat-surface);
 }
 
 .native-app-shell[data-native-form-factor="ipad"] .native-conversation {

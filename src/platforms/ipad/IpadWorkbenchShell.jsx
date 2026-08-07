@@ -1,6 +1,7 @@
-import { useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { Plus } from "@phosphor-icons/react";
 import { NativeWorkbenchShell } from "../native/NativeWorkbenchShell.jsx";
+import { currentIpadViewportWidth, ipadLayoutModeForWidth } from "./ipadLayout.js";
 
 function IpadSidebarEmptyState({ busy, onAddServer }) {
   return (
@@ -38,6 +39,30 @@ function IpadNavigationPanel({ NavigationPanel, ...props }) {
 }
 
 export function IpadWorkbenchShell(props) {
+  const [layoutMode, setLayoutMode] = useState(() => ipadLayoutModeForWidth(currentIpadViewportWidth()));
+
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    let animationFrame = 0;
+    const updateLayoutMode = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        setLayoutMode(ipadLayoutModeForWidth(currentIpadViewportWidth()));
+      });
+    };
+
+    updateLayoutMode();
+    window.addEventListener("resize", updateLayoutMode);
+    window.addEventListener("orientationchange", updateLayoutMode);
+    window.visualViewport?.addEventListener("resize", updateLayoutMode);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", updateLayoutMode);
+      window.removeEventListener("orientationchange", updateLayoutMode);
+      window.visualViewport?.removeEventListener("resize", updateLayoutMode);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return undefined;
 
@@ -106,6 +131,7 @@ export function IpadWorkbenchShell(props) {
       {...props}
       components={ipadComponents}
       nativeFormFactor="ipad"
+      compactNavigation={layoutMode === "compact"}
     />
   );
 }

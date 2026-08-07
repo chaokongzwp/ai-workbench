@@ -8,6 +8,7 @@ import { NativeSshTerminal } from "./NativeSshTerminal.jsx";
 export function NativeWorkbenchShell({
   components,
   nativeFormFactor = "phone",
+  compactNavigation = false,
   embeddedTerminalEnabled = false,
   resolvedTheme,
   appearanceMode,
@@ -156,6 +157,7 @@ export function NativeWorkbenchShell({
   const editingServer = servers.find((server) => server.id === editingServerId) || servers.find((server) => server.id === activeServerId);
   const editingServerIndex = servers.findIndex((server) => server.id === editingServerId);
   const isIpad = nativeFormFactor === "ipad";
+  const useDrawerNavigation = !isIpad || compactNavigation;
   const terminalEnabled = isIpad || embeddedTerminalEnabled;
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -204,6 +206,11 @@ export function NativeWorkbenchShell({
     };
   }, [mobileNavOpen, onCloseSettings, platform, setMobileNavOpen, settingsOpen, terminalOpen]);
 
+  useEffect(() => {
+    if (!isIpad || compactNavigation || !mobileNavOpen) return;
+    setMobileNavOpen?.(false);
+  }, [compactNavigation, isIpad, mobileNavOpen, setMobileNavOpen]);
+
   function handleFileDrop(event) {
     event.preventDefault();
     setDraggingFiles(false);
@@ -212,7 +219,7 @@ export function NativeWorkbenchShell({
   }
 
   function handleSessionTrigger() {
-    if (isIpad) {
+    if (isIpad && !useDrawerNavigation) {
       onToggleSidebar?.();
       return;
     }
@@ -257,12 +264,12 @@ export function NativeWorkbenchShell({
         onTestConnection={onTestConnection}
         onDisconnectServer={onDisconnectServer}
         onRefreshOutput={onRefreshOutput}
-        collapsed={Boolean(sidebarCollapsed)}
+        collapsed={closeAfterAction && isIpad ? false : Boolean(sidebarCollapsed)}
         variant={isIpad ? "ipad" : "default"}
         onToggleCollapse={
           !closeAfterAction
             ? onToggleSidebar
-            : sidebarCollapsed
+            : !isIpad && sidebarCollapsed
               ? () => {
                   onToggleSidebar?.();
                   closeIfNeeded();
@@ -283,6 +290,7 @@ export function NativeWorkbenchShell({
       data-appearance={appearanceMode}
       data-platform={platform}
       data-native-form-factor={nativeFormFactor}
+      data-ipad-layout={isIpad ? (compactNavigation ? "compact" : "regular") : undefined}
     >
       <aside className="native-ipad-sidebar" aria-label="工作会话">
         {renderNavigationPanel()}
@@ -318,17 +326,23 @@ export function NativeWorkbenchShell({
               isIpad ? "native-ipad-sidebar-toggle utility-icon-button" : ""
             }`}
             onClick={handleSessionTrigger}
-            aria-label={isIpad ? (sidebarCollapsed ? "展开侧边栏" : "收起侧边栏") : "打开会话列表"}
+            aria-label={
+              useDrawerNavigation
+                ? "打开会话列表"
+                : sidebarCollapsed
+                  ? "展开侧边栏"
+                  : "收起侧边栏"
+            }
           >
             {isIpad ? <SidebarSimple size={16} weight="bold" aria-hidden="true" /> : "会话"}
           </button>
           <button
             type="button"
             className="native-title-button"
-            onClick={isIpad ? undefined : () => setMobileNavOpen(true)}
+            onClick={useDrawerNavigation ? () => setMobileNavOpen(true) : undefined}
             aria-label={`当前会话：${activeSessionName}`}
-            aria-disabled={isIpad ? "true" : undefined}
-            tabIndex={isIpad ? -1 : undefined}
+            aria-disabled={isIpad && !useDrawerNavigation ? "true" : undefined}
+            tabIndex={isIpad && !useDrawerNavigation ? -1 : undefined}
           >
             <strong>{activeSessionName}</strong>
             <span className={`native-title-status ${sessionConnectionStatus.tone}`}>
