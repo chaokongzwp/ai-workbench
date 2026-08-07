@@ -203,6 +203,8 @@ const {
   isSensitiveDiagnosticKey,
   isSpeechStopPhrase,
   isRetryableSshConnectionError,
+  isSshStaleConnectionError,
+  isSshTransportUnavailableError,
   isTransientSshSyncError,
   isUrlLikeFileCandidate,
   isWindowsProfile,
@@ -373,6 +375,7 @@ const {
   wakeContextForServers,
   wakePhrasesForProfile,
   wakePhrasesFromText,
+  withInteractiveSshConnectTimeout,
   workbenchAgentAvailableFromOutput,
   workbenchAgentScript,
   workbenchAgentVersionNumber,
@@ -700,6 +703,7 @@ export function useWorkbenchController() {
   const startupAgentSyncNoticeRef = useRef(new Set());
   const agentHealthRefreshKeysRef = useRef(new Set());
   const agentHealthInFlightConnectionsRef = useRef(new Set());
+  const agentSetupPromisesRef = useRef(new Map());
   const sessionConnectionPromisesRef = useRef(new Map());
   const startupSessionReconnectRef = useRef("");
   const manualDisconnectSessionIdsRef = useRef(new Set());
@@ -2553,7 +2557,29 @@ export function useWorkbenchController() {
     );
   }
 
-  async function ensureWorkbenchAgentForProfile(
+  function ensureWorkbenchAgentForProfile(targetProfile, options = {}) {
+    const currentProfile = withKnownPassword(normalizeProfile(targetProfile));
+    const connectionKey = agentInstallationKey(currentProfile);
+    const existingPromise = agentSetupPromisesRef.current.get(connectionKey);
+    if (existingPromise) {
+      void appLog("info", "agent.startup.reused", {
+        serverId: options.serverId || "",
+        reason: options.reason || "connect",
+        host: currentProfile.host,
+      });
+      return existingPromise;
+    }
+
+    const setupPromise = ensureWorkbenchAgentForProfileOnce(currentProfile, options).finally(() => {
+      if (agentSetupPromisesRef.current.get(connectionKey) === setupPromise) {
+        agentSetupPromisesRef.current.delete(connectionKey);
+      }
+    });
+    agentSetupPromisesRef.current.set(connectionKey, setupPromise);
+    return setupPromise;
+  }
+
+  async function ensureWorkbenchAgentForProfileOnce(
     targetProfile,
     { serverId = "", onProgress = null, reason = "connect", allowCachedReady = false } = {},
   ) {
@@ -2561,7 +2587,7 @@ export function useWorkbenchController() {
     if (!agentPreferredForProfile(requestedProfile)) {
       return { available: false, skipped: true, output: "", parsed: null, error: null };
     }
-    const currentProfile = withKnownPassword(requestedProfile);
+    const currentProfile = withInteractiveSshConnectTimeout(withKnownPassword(requestedProfile));
 
     const publish = (state, label, detail, mode = "agent") => {
       const next = { state, label, detail, mode };
@@ -2615,16 +2641,17 @@ export function useWorkbenchController() {
       };
     }
 
+    const probeAgentStatus = () => runRemoteCommandForProfile(
+      currentProfile,
+      buildWorkbenchAgentStatusCommand(currentProfile),
+      64_000,
+      30,
+    );
     let probeOutput = "";
     let probe = null;
     let probeError = null;
     try {
-      probeOutput = await runRemoteCommandForProfile(
-        currentProfile,
-        buildWorkbenchAgentStatusCommand(currentProfile),
-        64_000,
-        30,
-      );
+      probeOutput = await probeAgentStatus();
       probe = parseWorkbenchAgentOutput(probeOutput);
     } catch (error) {
       probeError = error;
@@ -2634,6 +2661,49 @@ export function useWorkbenchController() {
         host: currentProfile.host,
         error: shortError(error),
       });
+      if (isSshStaleConnectionError(error)) {
+        void appLog("info", "agent.startup.stale_connection_retry", {
+          serverId,
+          reason,
+          host: currentProfile.host,
+        });
+        try {
+          probeOutput = await probeAgentStatus();
+          probe = parseWorkbenchAgentOutput(probeOutput);
+          probeError = null;
+        } catch (retryError) {
+          probeError = retryError;
+          void appLog("warn", "agent.startup.stale_connection_retry.failed", {
+            serverId,
+            reason,
+            host: currentProfile.host,
+            error: shortError(retryError),
+          });
+        }
+      }
+    }
+
+    if (probeError && isSshTransportUnavailableError(probeError)) {
+      const detail = shortError(probeError);
+      publish("error", "连接失败", detail, "agent");
+      void appLog("warn", "agent.startup.transport_unavailable", {
+        serverId,
+        reason,
+        host: currentProfile.host,
+        connectTimeoutSeconds: currentProfile.connectTimeoutSeconds,
+        error: detail,
+      });
+      return {
+        available: false,
+        taskSubmissionReady: false,
+        skipped: false,
+        installed: false,
+        output: probeOutput,
+        parsed: probe,
+        agentHealth: {},
+        error: probeError,
+        transportUnavailable: true,
+      };
     }
 
     const latestVersionNumber = workbenchAgentVersionNumber(latestWorkbenchAgentVersion);
@@ -5713,15 +5783,17 @@ export function useWorkbenchController() {
         : probeIsFresh
           ? cachedProbe.output
           : "";
+      let routeProbeError = null;
       if (!probeIsFresh) {
         try {
           probeOutput = await runRemoteCommandForProfile(
-            healthResolvedProfile,
+            withInteractiveSshConnectTimeout(healthResolvedProfile),
             buildWorkbenchAgentStatusCommand(healthResolvedProfile),
             64_000,
             20,
           );
         } catch (error) {
+          routeProbeError = error;
           void appLog("warn", "agent.probe.failed", {
             serverId,
             agentId: agent.id,
@@ -5731,6 +5803,13 @@ export function useWorkbenchController() {
       }
 
       if (!taskSubmissionReadyFromOutput(probeOutput)) {
+        if (
+          routeProbeError &&
+          isSshTransportUnavailableError(routeProbeError) &&
+          !isSshStaleConnectionError(routeProbeError)
+        ) {
+          throw routeProbeError;
+        }
         void appLog("info", "agent.route.ensure", {
           serverId,
           agentId: agent.id,
@@ -6917,7 +6996,7 @@ export function useWorkbenchController() {
   async function syncAgentConversationForServer(server, options = {}) {
     if (!server?.id) return false;
     const latestServer = serverById(server.id) || server;
-    const currentProfile = withKnownPassword(latestServer.profile);
+    const currentProfile = withInteractiveSshConnectTimeout(withKnownPassword(latestServer.profile));
     if (profileIssue(currentProfile)) return false;
     const conversationId = String(latestServer.conversationId || "").trim();
     if (!conversationId) return false;
