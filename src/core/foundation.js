@@ -1448,12 +1448,9 @@ const deviceLocalProfileKeys = new Set([
 ]);
 
 function portableProfile(profile) {
-  const normalized = normalizeProfile(profile || {});
-  return Object.fromEntries(
-    Object.keys(defaultProfile)
-      .filter((key) => !deviceLocalProfileKeys.has(key))
-      .map((key) => [key, normalized[key]]),
-  );
+  const portable = { ...normalizeProfile(profile || {}) };
+  deviceLocalProfileKeys.forEach((key) => delete portable[key]);
+  return portable;
 }
 
 export function normalizeHostAlternates(value, primaryHost = "") {

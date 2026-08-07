@@ -17,6 +17,11 @@ const directFields = {
   agentDirectTlsFingerprint: "sha256/local-device-fingerprint",
 };
 
+const revisionFields = {
+  machineProfileUpdatedAt: 1_785_700_001_000,
+  sshIdentityUpdatedAt: 1_785_700_002_000,
+};
+
 const local = createServerSession({
   id: "local-session",
   conversationId: "local-runtime",
@@ -29,6 +34,7 @@ const local = createServerSession({
     password: "password",
     workdir: "/Users/a0/Documents/x",
     agentId: "claude",
+    ...revisionFields,
     ...directFields,
   },
 });
@@ -43,11 +49,14 @@ assertDirectFieldsExcluded(
   buildCloudSyncPlainPayload([local], local.id).workspace.servers[0].profile,
   "cloud sync",
 );
-assertDirectFieldsExcluded(
-  buildWorkspaceMigrationPayload([local], local.id).workspace.servers[0].profile,
-  "migration export",
-);
+const cloudProfile = buildCloudSyncPlainPayload([local], local.id).workspace.servers[0].profile;
+const migrationProfile = buildWorkspaceMigrationPayload([local], local.id).workspace.servers[0].profile;
+assertDirectFieldsExcluded(migrationProfile, "migration export");
 assertDirectFieldsExcluded(sessionShareFromServer(local).profile, "session share");
+for (const [key, value] of Object.entries(revisionFields)) {
+  assert.equal(cloudProfile[key], value, `cloud sync must retain ${key}`);
+  assert.equal(migrationProfile[key], value, `migration export must retain ${key}`);
+}
 
 const hostileShare = sessionShareFromServer(local);
 hostileShare.profile = { ...hostileShare.profile, ...directFields };
