@@ -687,7 +687,7 @@ export const cloudSyncSettingsStorageKey = "ai-workbench-cloud-sync-settings-v1"
 
 export const cloudSyncPayloadKind = "ai-workbench-cloud-config";
 
-export const cloudSyncPayloadVersion = 2;
+export const cloudSyncPayloadVersion = 3;
 
 export const cloudSyncEncryptionKind = "ai-workbench-cloud-config-encrypted";
 
@@ -2236,6 +2236,34 @@ export function cloudSyncSessionKeyForServer(server) {
   return String(server?.syncKey || server?.cloudSyncKey || "").trim();
 }
 
+function cloudSyncConversationIdForServer(server) {
+  return String(server?.conversationId || server?.sessionId || "").trim();
+}
+
+function cloudSyncServerMatchKey(server) {
+  const conversationId = cloudSyncConversationIdForServer(server);
+  return conversationId ? `conversation:${conversationId}` : `identity:${cloudSyncSessionKeyForServer(server)}`;
+}
+
+function cloudSyncConnectionIdentity(profile = {}) {
+  const normalized = normalizeProfile(profile);
+  return [
+    normalized.platform,
+    normalized.wslDistro,
+    normalized.host.toLocaleLowerCase(),
+    normalized.port,
+    normalized.username,
+  ].join("|");
+}
+
+function cloudSyncServerConfigSignature(server) {
+  return JSON.stringify({
+    conversationId: cloudSyncConversationIdForServer(server),
+    name: String(server?.name || server?.profile?.name || "").trim(),
+    profile: normalizeProfile(server?.profile || {}),
+  });
+}
+
 export function sessionShareFromServer(server) {
   const profile = normalizeProfile(server?.profile || {});
   const conversationId = String(server?.conversationId || "").trim() || createConversationId(profile.workdir || profile.name);
@@ -2369,7 +2397,7 @@ export function buildCloudSyncPlainPayload(servers, activeServerId) {
     exportedAt: new Date().toISOString(),
     includesSecrets: true,
     includesChatHistory: false,
-    uniqueBy: ["host", "username", "workdir", "agentId"],
+    uniqueBy: ["conversationId"],
     workspace: {
       ...workspace,
       servers: cloudServers,
@@ -2417,7 +2445,7 @@ export function normalizeCloudSyncPlainPayload(value = {}) {
     exportedAt: String(payload?.exportedAt || "").trim() || new Date().toISOString(),
     includesSecrets: true,
     includesChatHistory: false,
-    uniqueBy: ["host", "username", "workdir", "agentId"],
+    uniqueBy: ["conversationId"],
     workspace: {
       version: workspaceStoreVersion,
       activeServerId: servers.some((server) => server.id === workspace.activeServerId)
@@ -2435,21 +2463,47 @@ export function normalizeCloudSyncPlainPayload(value = {}) {
 export function mergeCloudSyncPayloads(remotePayload, localPayload) {
   const remote = normalizeCloudSyncPlainPayload(remotePayload || {});
   const local = normalizeCloudSyncPlainPayload(localPayload || {});
-  const existingKeys = new Set(remote.workspace.servers.map((server) => cloudSyncSessionKeyForServer(server)));
+  const servers = [...remote.workspace.servers];
+  const serverIndexByKey = new Map(
+    servers.map((server, index) => [cloudSyncServerMatchKey(server), index]).filter(([key]) => !key.endsWith("identity:")),
+  );
   const addedServers = [];
+  const updatedServers = [];
   const skippedServers = [];
 
   local.workspace.servers.forEach((server) => {
-    const key = cloudSyncSessionKeyForServer(server);
-    if (!key || existingKeys.has(key)) {
+    const key = cloudSyncServerMatchKey(server);
+    if (!key || key.endsWith("identity:")) {
       skippedServers.push(server);
       return;
     }
-    existingKeys.add(key);
+    const existingIndex = serverIndexByKey.get(key);
+    if (existingIndex !== undefined) {
+      const existing = servers[existingIndex];
+      if (cloudSyncServerConfigSignature(existing) === cloudSyncServerConfigSignature(server)) {
+        skippedServers.push(server);
+        return;
+      }
+      const updated = {
+        ...server,
+        id: existing.id || server.id,
+        conversationId: cloudSyncConversationIdForServer(server),
+      };
+      servers[existingIndex] = updated;
+      updatedServers.push(updated);
+      return;
+    }
+    serverIndexByKey.set(key, servers.length);
+    servers.push(server);
     addedServers.push(server);
   });
 
-  const servers = [...remote.workspace.servers, ...addedServers];
+  const localActiveConversationId = cloudSyncConversationIdForServer(
+    local.workspace.servers.find((server) => server.id === local.workspace.activeServerId),
+  );
+  const localActiveCloudId = localActiveConversationId
+    ? servers.find((server) => cloudSyncConversationIdForServer(server) === localActiveConversationId)?.id
+    : "";
   return {
     payload: {
       ...local,
@@ -2457,10 +2511,10 @@ export function mergeCloudSyncPayloads(remotePayload, localPayload) {
       workspace: {
         version: workspaceStoreVersion,
         activeServerId:
-          remote.workspace.activeServerId && servers.some((server) => server.id === remote.workspace.activeServerId)
-            ? remote.workspace.activeServerId
-            : local.workspace.activeServerId && servers.some((server) => server.id === local.workspace.activeServerId)
-              ? local.workspace.activeServerId
+          localActiveCloudId
+            ? localActiveCloudId
+            : remote.workspace.activeServerId && servers.some((server) => server.id === remote.workspace.activeServerId)
+              ? remote.workspace.activeServerId
               : servers[0]?.id || "",
         servers,
       },
@@ -2468,6 +2522,7 @@ export function mergeCloudSyncPayloads(remotePayload, localPayload) {
       manualWorkdirHistory: mergeManualWorkdirHistory(remote.manualWorkdirHistory, local.manualWorkdirHistory),
     },
     addedServers,
+    updatedServers,
     skippedServers,
   };
 }
@@ -2480,39 +2535,80 @@ export function mergeCloudDownloadedServers(currentServers, cloudPayload) {
     (current[0]?.id === "default-server" || serverDisplayName(current[0], 0) === "默认服务器") &&
     !String(current[0]?.profile?.host || "").trim();
   const kept = currentIsOnlyPlaceholder ? [] : current;
-  const existingKeys = new Set(kept.map((server) => cloudSyncSessionKeyForServer(server)).filter(Boolean));
-  const existingIds = new Set(kept.map((server) => server.id).filter(Boolean));
+  const servers = [...kept];
+  const serverIndexByKey = new Map(
+    servers.map((server, index) => [cloudSyncServerMatchKey(server), index]).filter(([key]) => !key.endsWith("identity:")),
+  );
+  const existingIds = new Set(servers.map((server) => server.id).filter(Boolean));
   const addedServers = [];
+  const updatedServers = [];
   const skippedServers = [];
 
   cloud.workspace.servers.forEach((server) => {
-    const key = cloudSyncSessionKeyForServer(server);
-    if (!key || existingKeys.has(key)) {
+    const key = cloudSyncServerMatchKey(server);
+    if (!key || key.endsWith("identity:")) {
       skippedServers.push(server);
       return;
     }
-    existingKeys.add(key);
+    const existingIndex = serverIndexByKey.get(key);
+    if (existingIndex !== undefined) {
+      const existing = servers[existingIndex];
+      if (cloudSyncServerConfigSignature(existing) === cloudSyncServerConfigSignature(server)) {
+        skippedServers.push(server);
+        return;
+      }
+      const connectionIdentityChanged =
+        cloudSyncConnectionIdentity(existing.profile) !== cloudSyncConnectionIdentity(server.profile);
+      const updated = createServerSession(
+        {
+          ...existing,
+          ...server,
+          id: existing.id,
+          conversationId: existing.conversationId || cloudSyncConversationIdForServer(server),
+          profile: server.profile,
+          connection: connectionIdentityChanged
+            ? initialConnectionForProfile(server.profile)
+            : existing.connection,
+          diagnostics: existing.diagnostics,
+          discovery: existing.discovery,
+          messages: existing.messages,
+          rawOutput: existing.rawOutput,
+          task: existing.task,
+          unreadResult: existing.unreadResult,
+          shared: existing.shared || server.shared,
+          pendingIdentityEdit: existing.pendingIdentityEdit,
+          agentHistoryCursor: existing.agentHistoryCursor,
+          agentHistoryHasMore: existing.agentHistoryHasMore,
+        },
+        existingIndex,
+      );
+      servers[existingIndex] = updated;
+      updatedServers.push(updated);
+      return;
+    }
     const nextId = existingIds.has(server.id) ? createServerId() : server.id || createServerId();
     existingIds.add(nextId);
-    addedServers.push(
-      createServerSession(
-        {
-          ...server,
-          id: nextId,
-          messages: [],
-          rawOutput: "",
-          task: {},
-          unreadResult: null,
-          connection: initialConnectionForProfile(server.profile),
-        },
-        kept.length + addedServers.length,
-      ),
+    const added = createServerSession(
+      {
+        ...server,
+        id: nextId,
+        messages: [],
+        rawOutput: "",
+        task: {},
+        unreadResult: null,
+        connection: initialConnectionForProfile(server.profile),
+      },
+      servers.length,
     );
+    serverIndexByKey.set(key, servers.length);
+    servers.push(added);
+    addedServers.push(added);
   });
 
   return {
-    servers: [...kept, ...addedServers],
+    servers,
     addedServers,
+    updatedServers,
     skippedServers,
     cloud,
   };

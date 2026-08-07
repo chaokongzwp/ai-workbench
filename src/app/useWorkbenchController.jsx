@@ -3340,14 +3340,16 @@ export function useWorkbenchController() {
       const mergedConfig = mergeCloudDownloadedServers(currentServers, cloudPayload);
       const mergedShared = mergeCloudSharedSessions(mergedConfig.servers, incomingShares);
       const addedCount = mergedConfig.addedServers.length + mergedShared.addedServers.length;
+      const updatedCount = mergedConfig.updatedServers.length;
       const skippedCount = mergedConfig.skippedServers.length + mergedShared.skippedShares.length;
       const cloudSessionCount = cloudPayload.workspace?.servers?.length || 0;
 
-      if (!addedCount) {
+      if (!addedCount && !updatedCount) {
         return {
           added: 0,
+          updated: 0,
           skipped: skippedCount,
-          message: `云端找到 ${cloudSessionCount} 个会话，本机都已存在；没有重复添加。`,
+          message: `云端找到 ${cloudSessionCount} 个会话，没有可同步的配置变化。`,
         };
       }
 
@@ -3378,8 +3380,9 @@ export function useWorkbenchController() {
 
       return {
         added: addedCount,
+        updated: updatedCount,
         skipped: skippedCount,
-        message: `云端找到 ${cloudSessionCount} 个会话，已新增 ${addedCount} 个；${skippedCount} 个本机已存在，已跳过。`,
+        message: `云端找到 ${cloudSessionCount} 个会话，已更新 ${updatedCount} 个、新增 ${addedCount} 个。`,
       };
     } finally {
       setBusy(false);
@@ -3437,13 +3440,15 @@ export function useWorkbenchController() {
       const remotePayload = encryptedPayload ? await decryptCloudSyncPayload(encryptedPayload, password) : null;
       const merged = mergeCloudSyncPayloads(remotePayload, localPayload);
       const addedCount = merged.addedServers.length;
+      const updatedCount = merged.updatedServers.length;
       const skippedCount = merged.skippedServers.length;
 
-      if (!addedCount && revision > 0) {
+      if (!addedCount && !updatedCount && revision > 0) {
         return {
           added: 0,
+          updated: 0,
           skipped: skippedCount,
-          message: `云端已经包含本机这 ${skippedCount} 个会话，没有重复上传。`,
+          message: "本机没有可上传的会话配置变化。",
         };
       }
 
@@ -3458,9 +3463,10 @@ export function useWorkbenchController() {
 
       return {
         added: addedCount,
+        updated: updatedCount,
         skipped: skippedCount,
         revision: putResult?.revision,
-        message: `配置已上传到云端，新增 ${addedCount} 个会话；${skippedCount} 个云端已存在，已跳过。`,
+        message: `配置已上传到云端，已更新 ${updatedCount} 个、新增 ${addedCount} 个会话。`,
       };
     } finally {
       setBusy(false);

@@ -2094,8 +2094,8 @@ export function SettingsPanel({
               <SettingsStatusRow
                 icon={Info}
                 title="识别同一个会话"
-                detail="按 IP/域名、登录账号、会话路径判断。本机已经存在的会话会跳过，不会重复添加。"
-                value="不覆盖"
+                detail="优先按会话 ID 判断。已存在的会话会更新配置，同时保留本机聊天记录和任务状态。"
+                value="更新配置"
                 tone="neutral"
               />
               <SettingsStatusRow
@@ -2108,7 +2108,7 @@ export function SettingsPanel({
             </SettingsSection>
             <SettingsSection
               title="操作"
-              footer="上传和下载都不会重复添加同一个会话。云端保存的是加密后的配置，不包含聊天记录。"
+              footer="上传和下载会更新同一会话的配置，不会覆盖本机聊天记录。云端保存的是加密配置，不包含聊天记录。"
             >
               <SettingsActionRow
                 icon={DownloadSimple}
