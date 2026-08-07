@@ -254,6 +254,29 @@ export async function cancelAgentDirectUpload(uploadId) {
     : { ok: true, cancelled: false, active: false, uploadId: text(uploadId) };
 }
 
+// The native bridge (Electron `agentRequest`, iOS `SSHWorkbench.agentRequest`)
+// is trusted to honor `timeoutMs`, but a dropped iOS URLSession completion can
+// orphan the promise and hang the send forever. The browser fetch branch already
+// aborts on a client deadline; give the native branch the same guarantee so a
+// stuck request always settles and the sender can hand off to the status sweep.
+export async function raceAgentDirectTimeout(promise, timeoutMs) {
+  const limitMs = Math.max(1_000, Number(timeoutMs) || 12_000);
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new AgentDirectRequestError("连接 Agent 超时。", { code: "agent_direct_timeout" })),
+          limitMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function agentDirectRequest(profile, path, { method = "GET", body, timeoutMs = 12_000, fetchImpl = globalThis.fetch } = {}) {
   const { endpoint, accessToken, enabled, tlsFingerprint } = agentDirectConfig(profile);
   if (!enabled) {
@@ -263,16 +286,19 @@ export async function agentDirectRequest(profile, path, { method = "GET", body, 
   const nativeRequest = desktopBridge()?.agentRequest || (nativePlatform ? SSHWorkbench?.agentRequest : null);
   if (typeof nativeRequest === "function") {
     try {
-      const response = await nativeRequest({
-        endpoint,
-        accessToken,
-        tlsFingerprint,
-        allowInsecure: false,
-        path,
-        method,
-        body,
+      const response = await raceAgentDirectTimeout(
+        nativeRequest({
+          endpoint,
+          accessToken,
+          tlsFingerprint,
+          allowInsecure: false,
+          path,
+          method,
+          body,
+          timeoutMs,
+        }),
         timeoutMs,
-      });
+      );
       const raw = String(response?.body || "");
       const parsed = jsonOrNull(raw);
       const status = Number(response?.status || 0);

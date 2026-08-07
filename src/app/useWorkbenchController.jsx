@@ -8234,7 +8234,14 @@ export function useWorkbenchController() {
       const uploadCancelled = uploadFailed && /AIWB_UPLOAD_CANCELLED|cancelled|canceled|已取消|取消上传/i.test(
         String(error?.code || error?.message || error || ""),
       );
-      const transientAgentDisconnect = !uploadFailed && agentMode && isTransientSshSyncError(error);
+      // A direct-transport request that timed out or dropped its connection may
+      // still have created the task on the Agent. Treat it like a transient SSH
+      // disconnect so a known remoteTaskId hands off to the background sweep
+      // instead of being reported as a hard failure that loses a running task.
+      const directTransportRecoverable =
+        agentMode && ["agent_direct_timeout", "agent_direct_network_error"].includes(String(error?.code || ""));
+      const transientAgentDisconnect =
+        !uploadFailed && agentMode && (isTransientSshSyncError(error) || directTransportRecoverable);
       const executionTimedOut =
         !uploadFailed &&
         /SSH command timed out|远端任务执行时间太长/i.test(String(error?.message || error || ""));
