@@ -177,6 +177,10 @@ function parseAgentUploadResponse(response) {
   return parsed.file;
 }
 
+export function agentUploadAttachmentReady(attachment) {
+  return Boolean(text(attachment?.nativeAttachmentId) || String(attachment?.base64 || "").replace(/\s+/g, ""));
+}
+
 export async function agentDirectUpload(profile, attachment, {
   uploadId,
   workdir,
@@ -196,10 +200,11 @@ export async function agentDirectUpload(profile, attachment, {
     name: text(attachment?.name) || "attachment.bin",
     mime: text(attachment?.mime) || "application/octet-stream",
     size: Number(attachment?.size || 0),
+    nativeAttachmentId: text(attachment?.nativeAttachmentId),
     base64: String(attachment?.base64 || ""),
     timeoutMs,
   };
-  if (!payload.uploadId || !payload.workdir || !payload.base64) {
+  if (!payload.uploadId || !payload.workdir || (!payload.nativeAttachmentId && !payload.base64)) {
     throw new AgentDirectRequestError("附件上传参数不完整。", { code: "agent_upload_invalid" });
   }
   const nativePlatform = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
@@ -214,6 +219,9 @@ export async function agentDirectUpload(profile, attachment, {
   }
   if (typeof fetchImpl !== "function") {
     throw new AgentDirectRequestError("当前平台不支持 Agent 附件上传。", { code: "agent_direct_fetch_unavailable" });
+  }
+  if (payload.nativeAttachmentId && !payload.base64) {
+    throw new AgentDirectRequestError("原生附件只能由 iPhone 或 iPad App 上传。", { code: "agent_upload_native_only" });
   }
   const bytes = base64Bytes(payload.base64);
   const expectedSha256 = await sha256Hex(bytes);

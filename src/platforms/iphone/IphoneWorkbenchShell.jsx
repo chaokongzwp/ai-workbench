@@ -167,6 +167,7 @@ function IphoneComposer({
   onOpenVoiceSettings,
   onAttachFiles,
   onAttachImages,
+  onPickNativeAttachments,
   onPasteClipboard,
   onRemoveImageAttachment,
   onOpenDownloadFile,
@@ -404,7 +405,10 @@ function IphoneComposer({
                   <button
                     type="button"
                     className="iphone-icon-button attachment-button"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={async () => {
+                      const handled = await onPickNativeAttachments?.();
+                      if (!handled) fileInputRef.current?.click();
+                    }}
                     disabled={disabled}
                     aria-label="添加文件"
                     title="添加文件"
@@ -486,7 +490,7 @@ function IphoneComposer({
           </div>
         ) : null}
         {voiceInputEnabled && wakeError ? <p className="iphone-voice-error">{wakeError}</p> : null}
-        {voiceInputEnabled && voiceError ? <p className="iphone-voice-error">{voiceError}</p> : null}
+        {voiceError ? <p className="iphone-voice-error">{voiceError}</p> : null}
       </section>
     </footer>
   );
@@ -583,6 +587,7 @@ export function IphoneWorkbenchShell({
   setComposer,
   onAttachFiles,
   onAttachImages,
+  onPickNativeAttachments,
   onPasteClipboard,
   onRemoveImageAttachment,
   onSend,
@@ -922,6 +927,7 @@ export function IphoneWorkbenchShell({
 	            onOpenSettings={onAddServer}
 	            onOpenVoiceSettings={onOpenVoiceSettings}
             onAttachFiles={onAttachFiles || onAttachImages}
+            onPickNativeAttachments={onPickNativeAttachments}
             onPasteClipboard={onPasteClipboard}
             onRemoveImageAttachment={onRemoveImageAttachment}
             onOpenDownloadFile={onOpenRemoteDownload}

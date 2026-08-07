@@ -5,6 +5,7 @@ import {
   agentDirectEventUrl,
   agentDirectRequest,
   agentDirectUpload,
+  agentUploadAttachmentReady,
   agentDirectTaskLifecycle,
   agentDirectTaskNeedsSync,
   agentDirectTaskStatusSnapshot,
@@ -39,6 +40,9 @@ assert.equal(agentDirectEventUrl(profile), "wss://agent.example.com/v1/events");
 assert.equal(agentDirectConfig({ ...profile, agentDirectTlsFingerprint: "" }).enabled, false);
 const httpProfile = { agentDirectEndpoint: "http://agent.example.com", agentDirectAccessToken: "secret" };
 assert.equal(agentDirectConfig(httpProfile).enabled, false);
+assert.equal(agentUploadAttachmentReady({ base64: " Zm9v\n" }), true);
+assert.equal(agentUploadAttachmentReady({ nativeAttachmentId: "native-1", base64: "" }), true);
+assert.equal(agentUploadAttachmentReady({ base64: "", nativeAttachmentId: "" }), false);
 assert.equal(agentDirectEventUrl(httpProfile), "");
 assert.equal(workbenchAgentProtocolSupports({ protocolVersion: 1 }, ["tasks"]), true);
 assert.equal(

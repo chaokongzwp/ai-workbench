@@ -66,6 +66,7 @@ const {
   agentById,
   agentCommand,
   agentDirectConfig,
+  agentUploadAttachmentReady,
   createAgentDirectEventStream,
   agentDirectRequest,
   agentDirectUpload,
@@ -793,6 +794,10 @@ export function useWorkbenchController() {
     attachments.forEach((attachment) => {
       const url = String(attachment?.previewUrl || "");
       if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
+      const nativeAttachmentId = String(attachment?.nativeAttachmentId || "").trim();
+      if (nativeAttachmentId && Capacitor.getPlatform() === "ios" && Capacitor.isNativePlatform()) {
+        void SSHWorkbench.releaseAttachment({ nativeAttachmentId }).catch(() => {});
+      }
     });
   }
 
@@ -847,6 +852,43 @@ export function useWorkbenchController() {
     } catch (error) {
       setVoiceError(shortError(error));
     }
+  }
+
+  async function pickNativeAttachments() {
+    if (Capacitor.getPlatform() !== "ios" || !Capacitor.isNativePlatform()) return false;
+    const serverId = activeServerIdRef.current;
+    try {
+      const result = await SSHWorkbench.pickAttachments({ maxCount: 10, maxBytes: 20 * 1024 * 1024 });
+      const nextItems = Array.from(result?.attachments || [])
+        .filter((item) => String(item?.nativeAttachmentId || "").trim())
+        .map((item) => {
+          const mime = String(item.mime || "application/octet-stream");
+          const previewMime = String(item.previewMime || "image/jpeg");
+          const previewBase64 = cleanBase64Payload(item.previewBase64);
+          return {
+            id: item.id || `native-file-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            nativeAttachmentId: String(item.nativeAttachmentId),
+            name: item.name || "附件",
+            mime,
+            size: Number(item.size || 0),
+            base64: "",
+            isImage: item.isImage === true || mime.startsWith("image/"),
+            previewUrl: previewBase64 ? `data:${previewMime};base64,${previewBase64}` : "",
+          };
+        });
+      if (nextItems.length) {
+        updateImageAttachmentsForSession(serverId, (items) => {
+          const combined = [...items, ...nextItems];
+          const dropped = combined.slice(0, Math.max(0, combined.length - 10));
+          revokeImagePreviews(dropped);
+          return combined.slice(-10);
+        });
+        setVoiceError("");
+      }
+    } catch (error) {
+      setVoiceError(shortError(error));
+    }
+    return true;
   }
 
   function addPreparedAttachments(attachments = [], serverId = activeServerIdRef.current) {
@@ -2831,7 +2873,7 @@ export function useWorkbenchController() {
     serverId = "",
     assistantMessageId = "",
   ) {
-    const items = attachments.filter((item) => cleanBase64Payload(item?.base64));
+    const items = attachments.filter(agentUploadAttachmentReady);
     if (!items.length) return [];
     const current = withKnownPassword(targetProfile);
     if (!agentDirectConfig(current).enabled) {
@@ -7772,7 +7814,7 @@ export function useWorkbenchController() {
 
   async function sendTask(textOverride, options = {}) {
     const retryMessage = options?.retryMessage && typeof options.retryMessage === "object" ? options.retryMessage : null;
-    const pendingFiles = imageAttachmentsRef.current.filter((item) => cleanBase64Payload(item?.base64));
+    const pendingFiles = imageAttachmentsRef.current.filter(agentUploadAttachmentReady);
     const rawText = taskTextFromValue(textOverride, composerRef.current || composer);
     const text = rawText || (pendingFiles.length ? "请查看这些附件。" : "");
     if (!text) return;
@@ -9154,6 +9196,7 @@ export function useWorkbenchController() {
     setComposer,
     onAttachFiles: addImageAttachments,
     onAttachImages: addImageAttachments,
+    onPickNativeAttachments: pickNativeAttachments,
     onPasteClipboard: pasteClipboardAttachments,
     onRemoveImageAttachment: removeImageAttachment,
     onSend: sendTask,

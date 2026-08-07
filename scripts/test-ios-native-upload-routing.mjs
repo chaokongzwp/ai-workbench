@@ -14,6 +14,7 @@ const uploadEnd = controllerSource.indexOf("async function routeUserIntent", upl
 const uploadSource = controllerSource.slice(uploadStart, uploadEnd);
 assert.doesNotMatch(uploadSource, /SSHWorkbench\.uploadFile|buildRemoteImageUploadCommand|runRemoteCommandForProfile/);
 assert.match(uploadSource, /agentDirectConfig\(current\)\.enabled/);
+assert.match(uploadSource, /attachments\.filter\(agentUploadAttachmentReady\)/);
 assert.match(uploadSource, /workdir: current\.workdir/);
 
 const sendStart = controllerSource.indexOf("async function sendTask");
@@ -36,6 +37,8 @@ assert.equal(
 assert.match(controllerSource, /SSHWorkbench\.addListener\(["']uploadProgress["']/);
 assert.match(controllerSource, /cancelAgentDirectUpload\(activeUpload\.uploadId\)/);
 assert.match(foundationSource, /async agentUpload\(payload\)/);
+assert.match(foundationSource, /async pickAttachments\(payload = \{\}\)/);
+assert.match(foundationSource, /async releaseAttachment\(payload = \{\}\)/);
 assert.match(foundationSource, /async cancelAgentUpload\(payload\)/);
 
 console.log("Agent binary upload routing tests passed");

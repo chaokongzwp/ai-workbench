@@ -81,6 +81,16 @@ export const SSHWorkbench = registerPlugin("SSHWorkbench", {
       if (bridge?.agentUpload) return bridge.agentUpload(payload);
       throw new Error("当前环境不支持安全的 Agent 附件上传。");
     },
+    async pickAttachments(payload = {}) {
+      const bridge = desktopBridge();
+      if (bridge?.pickAttachments) return bridge.pickAttachments(payload);
+      return { attachments: [], native: false };
+    },
+    async releaseAttachment(payload = {}) {
+      const bridge = desktopBridge();
+      if (bridge?.releaseAttachment) return bridge.releaseAttachment(payload);
+      return { ok: true, released: false };
+    },
     async cancelAgentUpload(payload) {
       const bridge = desktopBridge();
       if (bridge?.cancelAgentUpload) return bridge.cancelAgentUpload(payload);

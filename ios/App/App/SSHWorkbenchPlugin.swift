@@ -1,6 +1,9 @@
 import Foundation
 import Security
 import CryptoKit
+import ImageIO
+import PhotosUI
+import UniformTypeIdentifiers
 import AVFoundation
 import Capacitor
 import Citadel
@@ -1620,8 +1623,63 @@ private final class AgentUploadSessionStore: @unchecked Sendable {
     }
 }
 
+private final class NativeAttachmentStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var files: [String: URL] = [:]
+    private let directory: URL
+
+    init() {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("AIWorkbenchAttachments", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let urls = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            let expiry = Date().addingTimeInterval(-24 * 60 * 60)
+            for url in urls {
+                let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                if modified < expiry { try? FileManager.default.removeItem(at: url) }
+            }
+        }
+    }
+
+    func importFile(from source: URL, displayName: String) throws -> (String, URL) {
+        let cleanName = displayName
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+        let fileName = cleanName.isEmpty ? "attachment.bin" : String(cleanName.prefix(180))
+        let attachmentId = UUID().uuidString.lowercased()
+        let target = directory.appendingPathComponent("\(attachmentId)-\(fileName)")
+        try FileManager.default.copyItem(at: source, to: target)
+        lock.lock()
+        files[attachmentId] = target
+        lock.unlock()
+        return (attachmentId, target)
+    }
+
+    func url(for attachmentId: String) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let url = files[attachmentId], FileManager.default.fileExists(atPath: url.path) else {
+            files.removeValue(forKey: attachmentId)
+            return nil
+        }
+        return url
+    }
+
+    func release(_ attachmentId: String) -> Bool {
+        lock.lock()
+        let url = files.removeValue(forKey: attachmentId)
+        lock.unlock()
+        guard let url else { return false }
+        try? FileManager.default.removeItem(at: url)
+        return true
+    }
+}
+
 @objc(SSHWorkbenchPlugin)
-public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
+public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate, PHPickerViewControllerDelegate {
     public let identifier = "SSHWorkbenchPlugin"
     public let jsName = "SSHWorkbench"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -1636,6 +1694,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "stopAgentEventStream", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "agentUpload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancelAgentUpload", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickAttachments", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "releaseAttachment", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeTerminal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resizeTerminal", returnType: CAPPluginReturnPromise),
@@ -1661,6 +1721,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
     private let terminalSessions = NativeTerminalSessionStore()
     private let uploadSessions = NativeUploadSessionStore()
     private let agentUploadSessions = AgentUploadSessionStore()
+    private let nativeAttachments = NativeAttachmentStore()
+    private var pendingAttachmentPickerCall: CAPPluginCall?
     private var agentEventStreams: [String: NativeAgentEventStream] = [:]
     private static let crc32Table: [UInt32] = {
         (0..<256).map { index in
@@ -2306,6 +2368,199 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         }.resume()
     }
 
+    private func nativeAttachmentMimeType(_ url: URL) -> String {
+        guard !url.pathExtension.isEmpty,
+              let type = UTType(filenameExtension: url.pathExtension),
+              let mime = type.preferredMIMEType else {
+            return "application/octet-stream"
+        }
+        return mime
+    }
+
+    private func nativeAttachmentPreview(_ url: URL, mime: String) -> [String: Any] {
+        guard mime.hasPrefix("image/"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return [:] }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 320,
+            kCGImageSourceShouldCacheImmediately: false
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              let data = UIImage(cgImage: image).jpegData(compressionQuality: 0.76) else { return [:] }
+        return ["previewMime": "image/jpeg", "previewBase64": data.base64EncodedString()]
+    }
+
+    @objc func pickAttachments(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard self.pendingAttachmentPickerCall == nil else {
+                call.reject("文件选择器已经打开。", "ATTACHMENT_PICKER_ACTIVE")
+                return
+            }
+            guard let viewController = self.bridge?.viewController else {
+                call.reject("无法打开文件选择器。", "ATTACHMENT_PICKER_UNAVAILABLE")
+                return
+            }
+            self.pendingAttachmentPickerCall = call
+            let chooser = UIAlertController(title: "添加附件", message: nil, preferredStyle: .actionSheet)
+            chooser.addAction(UIAlertAction(title: "照片", style: .default) { _ in
+                var configuration = PHPickerConfiguration(photoLibrary: .shared())
+                configuration.filter = .any(of: [.images, .videos])
+                configuration.selectionLimit = max(1, min(call.getInt("maxCount", 10), 10))
+                let picker = PHPickerViewController(configuration: configuration)
+                picker.delegate = self
+                viewController.present(picker, animated: true)
+            })
+            chooser.addAction(UIAlertAction(title: "文件", style: .default) { _ in
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+                picker.delegate = self
+                picker.allowsMultipleSelection = true
+                picker.modalPresentationStyle = .formSheet
+                viewController.present(picker, animated: true)
+            })
+            chooser.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in
+                self.pendingAttachmentPickerCall = nil
+                call.resolve(["attachments": [], "native": true])
+            })
+            if let popover = chooser.popoverPresentationController {
+                popover.sourceView = viewController.view
+                popover.sourceRect = CGRect(x: viewController.view.bounds.midX, y: viewController.view.bounds.maxY - 1, width: 1, height: 1)
+            }
+            viewController.present(chooser, animated: true)
+        }
+    }
+
+    private func nativeAttachmentItem(
+        source: URL,
+        displayName: String,
+        maxBytes: Int64
+    ) throws -> ([String: Any], String) {
+        let size = Int64(try agentUploadFileSize(source))
+        guard size > 0 else { throw NSError(domain: "AIWorkbench", code: 2, userInfo: [NSLocalizedDescriptionKey: "文件为空，无法发送。"]) }
+        guard size <= maxBytes else {
+            throw NSError(domain: "AIWorkbench", code: 3, userInfo: [NSLocalizedDescriptionKey: "文件太大，当前单个文件最多支持 \(maxBytes / 1024 / 1024)MB。"])
+        }
+        let (attachmentId, copiedURL) = try nativeAttachments.importFile(from: source, displayName: displayName)
+        let mime = nativeAttachmentMimeType(copiedURL)
+        var item: [String: Any] = [
+            "id": "native-file-\(attachmentId)",
+            "nativeAttachmentId": attachmentId,
+            "name": displayName,
+            "mime": mime,
+            "size": size,
+            "isImage": mime.hasPrefix("image/")
+        ]
+        nativeAttachmentPreview(copiedURL, mime: mime).forEach { item[$0.key] = $0.value }
+        return (item, attachmentId)
+    }
+
+    public func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        guard let call = pendingAttachmentPickerCall else { return }
+        pendingAttachmentPickerCall = nil
+        picker.dismiss(animated: true)
+        guard !results.isEmpty else {
+            call.resolve(["attachments": [], "native": true])
+            return
+        }
+        let maxBytes = Int64(max(1, min(call.getInt("maxBytes", 20 * 1024 * 1024), 64 * 1024 * 1024)))
+        let group = DispatchGroup()
+        let resultLock = NSLock()
+        var attachments: [(Int, [String: Any], String)] = []
+        var firstError: Error?
+
+        for (index, result) in results.enumerated() {
+            let provider = result.itemProvider
+            let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
+                UTType($0)?.conforms(to: .image) == true || UTType($0)?.conforms(to: .movie) == true
+            }) ?? provider.registeredTypeIdentifiers.first ?? UTType.data.identifier
+            group.enter()
+            provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { source, error in
+                defer { group.leave() }
+                do {
+                    if let error { throw error }
+                    guard let source else { throw NSError(domain: "AIWorkbench", code: 5, userInfo: [NSLocalizedDescriptionKey: "无法读取所选照片。"]) }
+                    let type = UTType(typeIdentifier)
+                    let fallbackExtension = type?.preferredFilenameExtension ?? source.pathExtension
+                    var name = provider.suggestedName ?? source.deletingPathExtension().lastPathComponent
+                    if URL(fileURLWithPath: name).pathExtension.isEmpty, !fallbackExtension.isEmpty {
+                        name += ".\(fallbackExtension)"
+                    }
+                    let (item, attachmentId) = try self.nativeAttachmentItem(source: source, displayName: name, maxBytes: maxBytes)
+                    resultLock.lock()
+                    attachments.append((index, item, attachmentId))
+                    resultLock.unlock()
+                } catch {
+                    resultLock.lock()
+                    if firstError == nil { firstError = error }
+                    resultLock.unlock()
+                }
+            }
+        }
+        group.notify(queue: .main) {
+            if let error = firstError {
+                attachments.forEach { _ = self.nativeAttachments.release($0.2) }
+                call.reject(self.safeErrorMessage(error), "ATTACHMENT_PICKER_FAILED", error)
+                return
+            }
+            call.resolve([
+                "attachments": attachments.sorted { $0.0 < $1.0 }.map { $0.1 },
+                "native": true
+            ])
+        }
+    }
+
+    public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let call = pendingAttachmentPickerCall else { return }
+        pendingAttachmentPickerCall = nil
+        let maxCount = max(1, min(call.getInt("maxCount", 10), 10))
+        let maxBytes = Int64(max(1, min(call.getInt("maxBytes", 20 * 1024 * 1024), 64 * 1024 * 1024)))
+        var importedIds: [String] = []
+        var attachments: [[String: Any]] = []
+
+        do {
+            for source in urls.prefix(maxCount) {
+                let accessGranted = source.startAccessingSecurityScopedResource()
+                defer { if accessGranted { source.stopAccessingSecurityScopedResource() } }
+                let values = try source.resourceValues(forKeys: [.fileSizeKey, .nameKey, .isRegularFileKey])
+                guard values.isRegularFile == true else { throw NSError(domain: "AIWorkbench", code: 1, userInfo: [NSLocalizedDescriptionKey: "只能选择普通文件。"])}
+                let name = values.name ?? source.lastPathComponent
+                let (item, attachmentId) = try nativeAttachmentItem(source: source, displayName: name, maxBytes: maxBytes)
+                importedIds.append(attachmentId)
+                attachments.append(item)
+            }
+            call.resolve(["attachments": attachments, "native": true])
+        } catch {
+            importedIds.forEach { _ = nativeAttachments.release($0) }
+            call.reject(safeErrorMessage(error), "ATTACHMENT_PICKER_FAILED", error)
+        }
+    }
+
+    public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        let call = pendingAttachmentPickerCall
+        pendingAttachmentPickerCall = nil
+        call?.resolve(["attachments": [], "native": true])
+    }
+
+    @objc func releaseAttachment(_ call: CAPPluginCall) {
+        let attachmentId = (call.getString("nativeAttachmentId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        call.resolve(["ok": true, "released": !attachmentId.isEmpty && nativeAttachments.release(attachmentId)])
+    }
+
+    private func agentUploadFileSize(_ url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    private func agentUploadFileSHA256(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let data = try handle.read(upToCount: 256 * 1024), !data.isEmpty {
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     private func agentUploadHeader(_ value: String) -> String {
         Data(value.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
@@ -2323,14 +2578,38 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         let expectedFingerprint = (call.getString("tlsFingerprint") ?? "")
             .replacingOccurrences(of: "sha256/", with: "", options: [.caseInsensitive])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let nativeAttachmentId = (call.getString("nativeAttachmentId") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard let baseURL = URL(string: endpoint), !accessToken.isEmpty, !uploadId.isEmpty, !workdir.isEmpty,
-              let content = Data(base64Encoded: call.getString("base64") ?? "", options: [.ignoreUnknownCharacters]),
               let url = URL(string: call.getString("path") ?? "/v1/files", relativeTo: baseURL)?.absoluteURL else {
             call.reject("Agent 附件上传参数不完整。", "AGENT_UPLOAD_INVALID")
             return
         }
-        let declaredSize = call.getInt("size", content.count)
-        guard declaredSize == content.count else {
+        let nativeFileURL = nativeAttachmentId.isEmpty ? nil : nativeAttachments.url(for: nativeAttachmentId)
+        let content = nativeFileURL == nil
+            ? Data(base64Encoded: call.getString("base64") ?? "", options: [.ignoreUnknownCharacters])
+            : nil
+        guard nativeFileURL != nil || content != nil else {
+            call.reject("附件临时文件已失效，请重新选择文件。", "AGENT_UPLOAD_ATTACHMENT_EXPIRED")
+            return
+        }
+        let actualSize: Int
+        let contentSHA256: String
+        do {
+            if let nativeFileURL {
+                actualSize = try agentUploadFileSize(nativeFileURL)
+                contentSHA256 = try agentUploadFileSHA256(nativeFileURL)
+            } else if let content {
+                actualSize = content.count
+                contentSHA256 = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
+            } else {
+                throw NSError(domain: "AIWorkbench", code: 4, userInfo: [NSLocalizedDescriptionKey: "附件内容不存在。"])
+            }
+        } catch {
+            call.reject("附件读取失败，请重新选择文件。", "AGENT_UPLOAD_ATTACHMENT_READ_FAILED", error)
+            return
+        }
+        let declaredSize = call.getInt("size", actualSize)
+        guard declaredSize == actualSize else {
             call.reject("附件读取不完整，请重新选择文件。", "AGENT_UPLOAD_INVALID")
             return
         }
@@ -2345,12 +2624,12 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        request.setValue(String(content.count), forHTTPHeaderField: "Content-Length")
+        request.setValue(String(actualSize), forHTTPHeaderField: "Content-Length")
         request.setValue(uploadId, forHTTPHeaderField: "X-AIWB-Upload-Id")
         request.setValue(agentUploadHeader(workdir), forHTTPHeaderField: "X-AIWB-Workdir")
         request.setValue(agentUploadHeader(name), forHTTPHeaderField: "X-AIWB-File-Name")
         request.setValue(mime, forHTTPHeaderField: "X-AIWB-File-Mime")
-        request.setValue(SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined(), forHTTPHeaderField: "X-AIWB-Content-SHA256")
+        request.setValue(contentSHA256, forHTTPHeaderField: "X-AIWB-Content-SHA256")
 
         var session: URLSession?
         let delegate = PinnedAgentUploadDelegate(
@@ -2378,7 +2657,8 @@ public class SSHWorkbenchPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         )
         session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        let task = session!.uploadTask(with: request, from: content)
+        let task = nativeFileURL.map { session!.uploadTask(with: request, fromFile: $0) }
+            ?? session!.uploadTask(with: request, from: content ?? Data())
         guard agentUploadSessions.insert(uploadId: uploadId, session: session!, task: task) else {
             session?.invalidateAndCancel()
             call.reject("相同编号的附件正在上传。", "AGENT_UPLOAD_DUPLICATE")

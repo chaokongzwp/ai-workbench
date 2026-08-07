@@ -13,9 +13,16 @@ assert.match(swift, /@objc func cancelUpload\(_ call: CAPPluginCall\)/);
 assert.match(swift, /notifyListeners\("uploadProgress"/);
 assert.match(swift, /CAPPluginMethod\(name: "agentUpload"/);
 assert.match(swift, /CAPPluginMethod\(name: "cancelAgentUpload"/);
+assert.match(swift, /CAPPluginMethod\(name: "pickAttachments"/);
+assert.match(swift, /CAPPluginMethod\(name: "releaseAttachment"/);
 assert.match(swift, /@objc func agentUpload\(_ call: CAPPluginCall\)/);
+assert.match(swift, /UIDocumentPickerViewController\(forOpeningContentTypes: \[\.item\], asCopy: true\)/);
+assert.match(swift, /PHPickerViewController\(configuration: configuration\)/);
+assert.match(swift, /nativeAttachmentId/);
+assert.match(swift, /uploadTask\(with: request, fromFile:/);
+assert.match(swift, /agentUploadFileSHA256/);
 assert.match(swift, /X-AIWB-Content-SHA256/);
-assert.match(swift, /uploadTask\(with: request, from: content\)/);
+assert.match(swift, /uploadTask\(with: request, from: content \?\? Data\(\)\)/);
 
 const uploadStart = swift.indexOf("private func performNativeUpload(");
 const uploadEnd = swift.indexOf("private func decodeUploadBase64", uploadStart);
