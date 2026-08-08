@@ -7,11 +7,15 @@ assert.match(css, /\.iphone-shell:not\(\[data-theme="dark"\]\)[\s\S]*?\.iphone-i
 assert.match(css, /\.iphone-icon-button\.active:not\(\.danger\):not\(:disabled\)[\s\S]*?color: #0b5cb8 !important;/);
 assert.match(css, /--iphone-readable-blue: #165a94;/);
 assert.match(css, /\.message-header \.task-timer\.running/);
-assert.match(css, /\.agent-failure-real-error \.copy-agent-error/);
-assert.match(css, /\.raw-output \.connection-mode-badge\.ssh/);
+assert.match(css, /\.iphone-shell:not\(\[data-theme="dark"\]\) \.agent-failure-real-error \.copy-agent-error/);
+assert.match(css, /\.iphone-shell:not\(\[data-theme="dark"\]\) \.agent-failure-actions button\.primary/);
+assert.match(css, /\.iphone-shell \.raw-output \.connection-mode-badge\.ssh \{[\s\S]*?color: #ffffff;[\s\S]*?background: #165a94;/);
 assert.match(css, /\.agent-task-item\.active em/);
 assert.match(css, /\.task-status-actions button:first-child/);
 assert.match(css, /\.settings-inline-button:not\(\.primary\):not\(\.danger\):not\(:disabled\)/);
+assert.match(css, /\.session-cli-panel[\s\S]*?color: var\(--settings-secondary\);/);
+assert.match(css, /\.session-agent-panel[\s\S]*?color: var\(--settings-secondary\);/);
+assert.match(css, /\.iphone-shell \.settings-panel \.settings-inline-button:disabled \{[\s\S]*?color: var\(--settings-tertiary\);[\s\S]*?opacity: 1;/);
 assert.match(css, /\.directory-method-action:not\(:disabled\)/);
 assert.match(css, /\.manual-directory[\s\S]*?button:not\(:disabled\)/);
 assert.match(css, /\.rich-message a \{[\s\S]*?color: var\(--iphone-text\);[\s\S]*?text-decoration: underline;/);

@@ -841,6 +841,8 @@
 }
 
 .iphone-shell:not([data-theme="dark"]) .task-status-actions button:first-child,
+.iphone-shell:not([data-theme="dark"]) .agent-failure-real-error .copy-agent-error,
+.iphone-shell:not([data-theme="dark"]) .agent-failure-actions button.primary,
 .iphone-shell:not([data-theme="dark"])
   .settings-panel
   .settings-inline-button:not(.primary):not(.danger):not(:disabled),
@@ -855,6 +857,8 @@
 }
 
 .iphone-shell:not([data-theme="dark"]) .task-status-actions button:first-child,
+.iphone-shell:not([data-theme="dark"]) .agent-failure-real-error .copy-agent-error,
+.iphone-shell:not([data-theme="dark"]) .agent-failure-actions button.primary,
 .iphone-shell:not([data-theme="dark"])
   .settings-panel.add-session-mode
   .directory-method-action:not(:disabled),
@@ -866,9 +870,26 @@
 }
 
 .iphone-shell:not([data-theme="dark"])
-  :is(.session-cli-panel, .session-agent-panel)
-  .settings-inline-button:not(:disabled) {
+  .settings-panel
+  .session-cli-panel
+  .settings-inline-button:not(.primary):not(.danger):not(:disabled),
+.iphone-shell:not([data-theme="dark"])
+  .settings-panel
+  .session-agent-panel
+  .settings-inline-button:not(.primary):not(.danger):not(:disabled) {
   color: var(--settings-secondary);
+}
+
+.iphone-shell .settings-panel .settings-inline-button:disabled {
+  color: var(--settings-tertiary);
+  background: color-mix(in srgb, var(--settings-control) 70%, transparent);
+  opacity: 1;
+}
+
+.iphone-shell .raw-output .connection-mode-badge.ssh {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  background: #165a94;
 }
 
 .iphone-shell .rich-message a {
@@ -924,7 +945,6 @@
 .iphone-shell[data-theme="dark"] .task-status-actions button:first-child,
 .iphone-shell[data-theme="dark"] .agent-failure-real-error .copy-agent-error,
 .iphone-shell[data-theme="dark"] .agent-failure-actions button.primary,
-.iphone-shell[data-theme="dark"] .raw-output .connection-mode-badge.ssh,
 .iphone-shell[data-theme="dark"] .agent-task-item.active em {
   border-color: rgba(255, 255, 255, 0.2);
   color: #ffffff;
