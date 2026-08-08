@@ -387,7 +387,7 @@ export function Composer({
   });
   const disabled = inputLock.locked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
-  const hasDraft = Boolean(composer || imageAttachments.length);
+  const hasTextDraft = Boolean(composer);
   const stopMode = taskLocked;
   const stopDisabled = !ready;
   const sendDisabled = sendConnecting || inputLock.sendBlocked || !hasPayload;
@@ -641,15 +641,15 @@ export function Composer({
                     <Paperclip size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
                   )}
                 </button>
-                {hasDraft ? (
+                {hasTextDraft ? (
                   <button
                     type="button"
                     className={`clear-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""}`}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={handleClearClick}
                     disabled={disabled || sendConnecting || voiceActive}
-                    aria-label="清空输入内容和附件"
-                    title="清空输入内容和附件"
+                    aria-label="清空输入文字"
+                    title="清空输入文字"
                   >
                     {macIcons ? (
                       <LucideX size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />

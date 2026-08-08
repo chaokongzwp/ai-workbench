@@ -12,18 +12,15 @@ const clearDraft = controller.slice(
   controller.indexOf("  async function addImageAttachments", controller.indexOf("  function clearComposerDraft() {")),
 );
 
-assert.match(clearDraft, /sendingServerIdsRef\.current\.has\(serverId\)/);
-assert.match(clearDraft, /activeUploadByServerRef\.current\.has\(serverId\)/);
 assert.match(clearDraft, /voiceStateRef\.current !== "idle"/);
 assert.match(clearDraft, /composerDraftsRef\.current\.set\(serverId, ""\)/);
-assert.match(clearDraft, /invalidateAttachmentDraft\(serverId\)/);
-assert.match(clearDraft, /revokeImagePreviews\(items\)/);
-assert.match(clearDraft, /return \[\]/);
+assert.doesNotMatch(clearDraft, /updateImageAttachmentsForSession/);
+assert.doesNotMatch(clearDraft, /revokeImagePreviews/);
 assert.match(controller, /onClearComposer: clearComposerDraft/);
-assert.match(controller, /attachmentDraftVersion\(serverId\) !== draftVersion/);
 
 for (const source of [composer, iphone]) {
-  assert.match(source, /aria-label="清空输入内容和附件"/);
+  assert.match(source, /const hasTextDraft = Boolean\(composer\)/);
+  assert.match(source, /aria-label="清空输入文字"/);
   assert.match(source, /onPointerDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(source, /onClearComposer\?\.\(\)/);
 }

@@ -195,7 +195,7 @@ function IphoneComposer({
   });
   const disabled = inputLock.locked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
-  const hasDraft = Boolean(composer || imageAttachments.length);
+  const hasTextDraft = Boolean(composer);
   const stopMode = taskLocked;
   const stopDisabled = !profileReady;
   const sendDisabled = sendConnecting || inputLock.sendBlocked || !hasPayload;
@@ -421,15 +421,15 @@ function IphoneComposer({
                   >
                     <Paperclip size={17} weight="regular" aria-hidden="true" />
                   </button>
-                  {hasDraft ? (
+                  {hasTextDraft ? (
                     <button
                       type="button"
                       className="iphone-icon-button clear-button"
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={handleClearClick}
                       disabled={disabled || sendConnecting || voiceActive}
-                      aria-label="清空输入内容和附件"
-                      title="清空输入内容和附件"
+                      aria-label="清空输入文字"
+                      title="清空输入文字"
                     >
                       <X size={17} weight="regular" aria-hidden="true" />
                     </button>
