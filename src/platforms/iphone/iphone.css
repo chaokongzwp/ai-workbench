@@ -808,3 +808,96 @@
 .iphone-shell .settings-panel .settings-section-footer {
   margin: 6px 8px 0 !important;
 }
+
+/*
+ * iPhone contrast repair.
+ * Shared desktop rules used pale accent colors that are readable on the Mac
+ * canvas but fall below phone contrast targets when reused inside compact
+ * buttons and status pills.
+ */
+.iphone-shell:not([data-theme="dark"])
+  .iphone-composer-actions
+  .iphone-icon-button:not(:disabled) {
+  color: #4b5563 !important;
+}
+
+.iphone-shell:not([data-theme="dark"])
+  .iphone-composer-actions
+  .iphone-icon-button:is(:hover, :focus-visible):not(:disabled) {
+  color: #111216 !important;
+  background: rgba(60, 60, 67, 0.12) !important;
+}
+
+.iphone-shell:not([data-theme="dark"])
+  .iphone-composer-actions
+  .iphone-icon-button.active:not(.danger):not(:disabled) {
+  color: #0b5cb8 !important;
+  background: rgba(0, 122, 255, 0.14) !important;
+}
+
+.iphone-shell:not([data-theme="dark"]) .agent-task-item.active em {
+  color: #0b5cb8;
+  background: rgba(0, 122, 255, 0.14);
+}
+
+.iphone-shell .rich-message a {
+  color: var(--iphone-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 48%, transparent);
+  text-underline-offset: 2px;
+}
+
+.iphone-shell .rich-message code:not(pre code) {
+  border-color: var(--iphone-line);
+  color: var(--iphone-text);
+  background: var(--iphone-soft);
+  font-weight: 600;
+}
+
+.iphone-shell .rich-message pre {
+  border-color: var(--iphone-line);
+  color: var(--iphone-text);
+  background: rgba(118, 118, 128, 0.08);
+}
+
+.iphone-shell .rich-message pre code {
+  border: 0;
+  color: inherit;
+  background: transparent;
+}
+
+.iphone-shell[data-theme="dark"] {
+  --iphone-readable-blue: #165a94;
+  --iphone-readable-blue-pressed: #1b6ca8;
+}
+
+.iphone-shell[data-theme="dark"] .rich-message pre {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.iphone-shell[data-theme="dark"] .message-header .streaming,
+.iphone-shell[data-theme="dark"] .message-header .task-timer {
+  color: #f2f4f8;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.iphone-shell[data-theme="dark"]
+  .message-header
+  .streaming:is(.submitting, .accepted, .running, .syncing),
+.iphone-shell[data-theme="dark"] .message-header .task-timer.running,
+.iphone-shell[data-theme="dark"] .task-status-actions button:first-child,
+.iphone-shell[data-theme="dark"] .agent-failure-real-error .copy-agent-error,
+.iphone-shell[data-theme="dark"] .agent-failure-actions button.primary,
+.iphone-shell[data-theme="dark"] .raw-output .connection-mode-badge.ssh,
+.iphone-shell[data-theme="dark"] .agent-task-item.active em {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  background: var(--iphone-readable-blue);
+}
+
+.iphone-shell[data-theme="dark"] .agent-failure-real-error .copy-agent-error:hover,
+.iphone-shell[data-theme="dark"] .agent-failure-actions button.primary:hover,
+.iphone-shell[data-theme="dark"] .task-status-actions button:first-child:hover {
+  color: #ffffff;
+  background: var(--iphone-readable-blue-pressed);
+}
