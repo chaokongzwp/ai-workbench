@@ -361,6 +361,7 @@ export function Composer({
   onAttachImages,
   onPasteClipboard,
   onRemoveImageAttachment,
+  onClearComposer,
   onOpenDownloadFile,
   onOpenRemoteDirectory,
   onSend,
@@ -386,6 +387,7 @@ export function Composer({
   });
   const disabled = inputLock.locked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
+  const hasDraft = Boolean(composer || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !ready;
   const sendDisabled = sendConnecting || inputLock.sendBlocked || !hasPayload;
@@ -446,6 +448,10 @@ export function Composer({
       return;
     }
     onWake?.();
+  }
+
+  function handleClearClick() {
+    onClearComposer?.();
   }
 
   return (
@@ -635,6 +641,23 @@ export function Composer({
                     <Paperclip size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
                   )}
                 </button>
+                {hasDraft ? (
+                  <button
+                    type="button"
+                    className={`clear-button composer-icon-button ${utilityControls ? "utility-icon-button" : ""}`}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={handleClearClick}
+                    disabled={disabled || sendConnecting || voiceActive}
+                    aria-label="清空输入内容和附件"
+                    title="清空输入内容和附件"
+                  >
+                    {macIcons ? (
+                      <LucideX size={toolIconSize} strokeWidth={1.9} aria-hidden="true" />
+                    ) : (
+                      <X size={toolIconSize} weight={toolIconWeight} aria-hidden="true" />
+                    )}
+                  </button>
+                ) : null}
                 {showVoiceControls ? (
                   <button
                     type="button"

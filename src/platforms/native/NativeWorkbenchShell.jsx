@@ -102,6 +102,7 @@ export function NativeWorkbenchShell({
   onAttachImages,
   onPasteClipboard,
   onRemoveImageAttachment,
+  onClearComposer,
   onSend,
   onVoice,
   onWake,
@@ -469,6 +470,7 @@ export function NativeWorkbenchShell({
               onAttachFiles={onAttachFiles || onAttachImages}
               onPasteClipboard={onPasteClipboard}
               onRemoveImageAttachment={onRemoveImageAttachment}
+              onClearComposer={onClearComposer}
               onOpenDownloadFile={onOpenRemoteDownload}
               onOpenRemoteDirectory={onOpenRemoteDirectory}
               onSend={onSend}

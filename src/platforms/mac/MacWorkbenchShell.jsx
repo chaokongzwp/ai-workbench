@@ -105,6 +105,7 @@ export function MacWorkbenchShell({
   onAttachImages,
   onPasteClipboard,
   onRemoveImageAttachment,
+  onClearComposer,
   onSend,
   onVoice,
   onWake,
@@ -343,6 +344,7 @@ export function MacWorkbenchShell({
               onAttachFiles={onAttachFiles || onAttachImages}
               onPasteClipboard={onPasteClipboard}
               onRemoveImageAttachment={onRemoveImageAttachment}
+              onClearComposer={onClearComposer}
               onOpenDownloadFile={onOpenRemoteDownload}
               onOpenRemoteDirectory={onOpenRemoteDirectory}
               onSend={onSend}

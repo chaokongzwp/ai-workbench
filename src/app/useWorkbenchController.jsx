@@ -657,6 +657,7 @@ export function useWorkbenchController() {
   const composerServerIdRef = useRef("");
   const imageAttachmentsRef = useRef(imageAttachments);
   const attachmentDraftsRef = useRef(new Map());
+  const attachmentDraftVersionsRef = useRef(new Map());
   const attachmentServerIdRef = useRef("");
   const voiceBaseTextRef = useRef("");
   const voiceRecognitionSessionIdRef = useRef("");
@@ -816,6 +817,16 @@ export function useWorkbenchController() {
     return nextItems;
   }
 
+  function attachmentDraftVersion(serverId) {
+    return Number(attachmentDraftVersionsRef.current.get(String(serverId || "").trim()) || 0);
+  }
+
+  function invalidateAttachmentDraft(serverId) {
+    const sessionId = String(serverId || "").trim();
+    if (!sessionId) return;
+    attachmentDraftVersionsRef.current.set(sessionId, attachmentDraftVersion(sessionId) + 1);
+  }
+
   function removeUploadedImageAttachments(uploadedAttachments = [], serverId = attachmentServerIdRef.current) {
     const uploadedIds = new Set(uploadedAttachments.map((item) => String(item?.id || "")).filter(Boolean));
     const uploadedItems = new Set(uploadedAttachments);
@@ -837,12 +848,43 @@ export function useWorkbenchController() {
     });
   }
 
+  function clearComposerDraft() {
+    const serverId = String(activeServerId || "").trim();
+    if (
+      !serverId ||
+      sendingServerIdsRef.current.has(serverId) ||
+      activeUploadByServerRef.current.has(serverId) ||
+      voiceStateRef.current !== "idle"
+    ) {
+      return false;
+    }
+
+    composerDraftsRef.current.set(serverId, "");
+    if (composerServerIdRef.current === serverId) {
+      composerRef.current = "";
+      setComposerState("");
+    }
+    voiceBaseTextRef.current = "";
+    invalidateAttachmentDraft(serverId);
+    updateImageAttachmentsForSession(serverId, (items) => {
+      revokeImagePreviews(items);
+      return [];
+    });
+    setVoiceError("");
+    return true;
+  }
+
   async function addImageAttachments(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
     const serverId = activeServerIdRef.current;
+    const draftVersion = attachmentDraftVersion(serverId);
     try {
       const nextItems = await Promise.all(list.map((file) => fileToImageAttachment(file)));
+      if (attachmentDraftVersion(serverId) !== draftVersion) {
+        revokeImagePreviews(nextItems);
+        return;
+      }
       updateImageAttachmentsForSession(serverId, (items) => {
         const combined = [...items, ...nextItems].slice(-10);
         const dropped = [...items, ...nextItems].slice(0, Math.max(0, items.length + nextItems.length - 10));
@@ -858,6 +900,7 @@ export function useWorkbenchController() {
   async function pickNativeAttachments() {
     if (Capacitor.getPlatform() !== "ios" || !Capacitor.isNativePlatform()) return false;
     const serverId = activeServerIdRef.current;
+    const draftVersion = attachmentDraftVersion(serverId);
     try {
       const result = await SSHWorkbench.pickAttachments({ maxCount: 10, maxBytes: 20 * 1024 * 1024 });
       const nextItems = Array.from(result?.attachments || [])
@@ -877,6 +920,10 @@ export function useWorkbenchController() {
             previewUrl: previewBase64 ? `data:${previewMime};base64,${previewBase64}` : "",
           };
         });
+      if (attachmentDraftVersion(serverId) !== draftVersion) {
+        revokeImagePreviews(nextItems);
+        return true;
+      }
       if (nextItems.length) {
         updateImageAttachmentsForSession(serverId, (items) => {
           const combined = [...items, ...nextItems];
@@ -925,8 +972,10 @@ export function useWorkbenchController() {
     const bridge = desktopBridge();
     if (!bridge?.readClipboardAttachments) return false;
     const serverId = activeServerIdRef.current;
+    const draftVersion = attachmentDraftVersion(serverId);
     try {
       const result = await bridge.readClipboardAttachments();
+      if (attachmentDraftVersion(serverId) !== draftVersion) return false;
       return addPreparedAttachments(result?.attachments || [], serverId);
     } catch (error) {
       setVoiceError(shortError(error));
@@ -9325,6 +9374,7 @@ export function useWorkbenchController() {
     onPickNativeAttachments: pickNativeAttachments,
     onPasteClipboard: pasteClipboardAttachments,
     onRemoveImageAttachment: removeImageAttachment,
+    onClearComposer: clearComposerDraft,
     onSend: sendTask,
     onVoice: toggleVoiceInput,
     onPushToTalkStart: startPushToTalk,

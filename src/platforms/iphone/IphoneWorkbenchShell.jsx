@@ -170,6 +170,7 @@ function IphoneComposer({
   onPickNativeAttachments,
   onPasteClipboard,
   onRemoveImageAttachment,
+  onClearComposer,
   onOpenDownloadFile,
   onOpenRemoteDirectory,
   onSend,
@@ -194,6 +195,7 @@ function IphoneComposer({
   });
   const disabled = inputLock.locked;
   const hasPayload = Boolean(composer.trim() || imageAttachments.length);
+  const hasDraft = Boolean(composer || imageAttachments.length);
   const stopMode = taskLocked;
   const stopDisabled = !profileReady;
   const sendDisabled = sendConnecting || inputLock.sendBlocked || !hasPayload;
@@ -277,6 +279,10 @@ function IphoneComposer({
       return;
     }
     onWake?.();
+  }
+
+  function handleClearClick() {
+    onClearComposer?.();
   }
 
   return (
@@ -415,6 +421,19 @@ function IphoneComposer({
                   >
                     <Paperclip size={17} weight="regular" aria-hidden="true" />
                   </button>
+                  {hasDraft ? (
+                    <button
+                      type="button"
+                      className="iphone-icon-button clear-button"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={handleClearClick}
+                      disabled={disabled || sendConnecting || voiceActive}
+                      aria-label="清空输入内容和附件"
+                      title="清空输入内容和附件"
+                    >
+                      <X size={17} weight="regular" aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className={`iphone-icon-button ${voiceActive ? "active danger" : ""} ${!voiceInputEnabled ? "muted" : ""}`}
@@ -590,6 +609,7 @@ export function IphoneWorkbenchShell({
   onPickNativeAttachments,
   onPasteClipboard,
   onRemoveImageAttachment,
+  onClearComposer,
   onSend,
   onVoice,
   onPushToTalkStart,
@@ -930,6 +950,7 @@ export function IphoneWorkbenchShell({
             onPickNativeAttachments={onPickNativeAttachments}
             onPasteClipboard={onPasteClipboard}
             onRemoveImageAttachment={onRemoveImageAttachment}
+            onClearComposer={onClearComposer}
             onOpenDownloadFile={onOpenRemoteDownload}
             onOpenRemoteDirectory={onOpenRemoteDirectory}
             onSend={onSend}
