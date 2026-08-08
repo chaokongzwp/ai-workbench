@@ -840,6 +840,37 @@
   background: rgba(0, 122, 255, 0.14);
 }
 
+.iphone-shell:not([data-theme="dark"]) .task-status-actions button:first-child,
+.iphone-shell:not([data-theme="dark"])
+  .settings-panel
+  .settings-inline-button:not(.primary):not(.danger):not(:disabled),
+.iphone-shell:not([data-theme="dark"])
+  .settings-panel.add-session-mode
+  .directory-method-action:not(:disabled),
+.iphone-shell:not([data-theme="dark"])
+  .settings-panel.add-session-mode
+  .manual-directory
+  button:not(:disabled) {
+  color: #0b5cb8;
+}
+
+.iphone-shell:not([data-theme="dark"]) .task-status-actions button:first-child,
+.iphone-shell:not([data-theme="dark"])
+  .settings-panel.add-session-mode
+  .directory-method-action:not(:disabled),
+.iphone-shell:not([data-theme="dark"])
+  .settings-panel.add-session-mode
+  .manual-directory
+  button:not(:disabled) {
+  background: rgba(0, 122, 255, 0.14);
+}
+
+.iphone-shell:not([data-theme="dark"])
+  :is(.session-cli-panel, .session-agent-panel)
+  .settings-inline-button:not(:disabled) {
+  color: var(--settings-secondary);
+}
+
 .iphone-shell .rich-message a {
   color: var(--iphone-text);
   text-decoration: underline;
@@ -873,6 +904,11 @@
 
 .iphone-shell[data-theme="dark"] .rich-message pre {
   background: rgba(255, 255, 255, 0.055);
+}
+
+.iphone-shell[data-theme="dark"] .model-choice-actions button + button {
+  color: var(--iphone-text);
+  background: var(--iphone-soft);
 }
 
 .iphone-shell[data-theme="dark"] .message-header .streaming,

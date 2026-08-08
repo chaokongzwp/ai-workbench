@@ -10,10 +10,15 @@ assert.match(css, /\.message-header \.task-timer\.running/);
 assert.match(css, /\.agent-failure-real-error \.copy-agent-error/);
 assert.match(css, /\.raw-output \.connection-mode-badge\.ssh/);
 assert.match(css, /\.agent-task-item\.active em/);
+assert.match(css, /\.task-status-actions button:first-child/);
+assert.match(css, /\.settings-inline-button:not\(\.primary\):not\(\.danger\):not\(:disabled\)/);
+assert.match(css, /\.directory-method-action:not\(:disabled\)/);
+assert.match(css, /\.manual-directory[\s\S]*?button:not\(:disabled\)/);
 assert.match(css, /\.rich-message a \{[\s\S]*?color: var\(--iphone-text\);[\s\S]*?text-decoration: underline;/);
 assert.match(css, /\.rich-message code:not\(pre code\) \{[\s\S]*?color: var\(--iphone-text\);/);
 assert.match(css, /\.rich-message pre \{[\s\S]*?color: var\(--iphone-text\);/);
 assert.match(css, /\.rich-message pre code \{[\s\S]*?color: inherit;[\s\S]*?background: transparent;/);
+assert.match(css, /\.model-choice-actions button \+ button \{[\s\S]*?color: var\(--iphone-text\);/);
 
 function relativeLuminance(hex) {
   const channels = hex
